@@ -83,6 +83,13 @@ export class AgentDeletingError extends ResourceConflictError {
   }
 }
 
+export class WorkspaceDefaultsChangedError extends ResourceConflictError {
+  constructor() {
+    super("Workspace defaults changed. Reload the create form before submitting.");
+    this.name = "WorkspaceDefaultsChangedError";
+  }
+}
+
 export class NamespaceNotEmptyError extends ResourceConflictError {
   constructor(message = "The Namespace must be empty before deletion.") {
     super(message);

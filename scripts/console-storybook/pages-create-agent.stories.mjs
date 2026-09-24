@@ -115,3 +115,8 @@ export const CreatePasswordPresetDenied = {
   ...story("createPasswordPresetDenied"),
   name: "Password Secret creation denied",
 };
+export const CreateConfigurationRetry = {
+  ...story("createConfigurationRetry"),
+  name: "Draft Configuration retry",
+};
+export const CreateAgentRetry = { ...story("createAgentRetry"), name: "Draft Agent retry" };

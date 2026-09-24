@@ -42,6 +42,10 @@ const CONSOLE_ASSETS = new Map(
       path: new URL("agents/presets.mjs", CONSOLE_ROOT),
       contentType: "text/javascript; charset=utf-8",
     },
+    "/console/agents/create-recovery.mjs": {
+      path: new URL("agents/create-recovery.mjs", CONSOLE_ROOT),
+      contentType: "text/javascript; charset=utf-8",
+    },
     "/console/agents/create.mjs": {
       path: new URL("agents/create.mjs", CONSOLE_ROOT),
       contentType: "text/javascript; charset=utf-8",

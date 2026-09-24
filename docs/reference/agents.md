@@ -50,6 +50,9 @@ exact Configuration. A selected model credential requires separate permissions;
 see [Harness authentication](#harness-authentication). [Authentication](authentication.md)
 establishes the caller; [authorization](authorization.md) defines its grants.
 
+For safe creation retries, supply `idempotencyKey`; see the
+[shared recovery contract](configuration.md#recover-an-interrupted-create).
+
 ## Deployment status
 
 The `deploymentId` for status polling is the admitted AgentRevision ID returned

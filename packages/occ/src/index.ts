@@ -61,6 +61,7 @@ import type {
 import {
   normalizeInitialWorkspaceFiles,
   normalizeWorkspaceDefaultsId,
+  WORKSPACE_DEFAULTS_ID,
   DRIVER_CAPABILITIES,
   RESOURCE_KINDS,
   SANDBOX_FACETS,
@@ -87,7 +88,14 @@ import {
   RepositoryOptionsUnavailableError,
   ResourceConflictError,
   ScopeViolationError,
+  WorkspaceDefaultsChangedError,
 } from "./errors.ts";
+import {
+  CreationRequestConflictError,
+  creationRequestIdentity,
+  findCreationResult,
+  recordCreationResult,
+} from "./creation-requests.ts";
 import {
   assertConfiguredProvider,
   providerDefinitionMap,
@@ -149,7 +157,9 @@ export {
   RepositoryOptionsUnavailableError,
   ResourceConflictError,
   ScopeViolationError,
+  WorkspaceDefaultsChangedError,
 } from "./errors.ts";
+export { CreationRequestConflictError } from "./creation-requests.ts";
 export {
   providerDefinitionMap,
   validateProviderDefinitions,
@@ -197,6 +207,7 @@ export type {
 } from "./ports/repository-sessions.ts";
 export {
   PostgresPlatformState,
+  PostgresCommitOutcomeUnknownError,
   PostgresPlatformStateStore,
   type PersistedNativeIAMState,
   type PostgresClient,
@@ -264,6 +275,7 @@ export interface CreateNamespaceInput {
 }
 
 export interface CreateAgentInput {
+  readonly idempotencyKey?: string;
   readonly initialWorkspaceFiles?: InitialWorkspaceFiles;
   readonly workspaceDefaultsId?: string;
   readonly namespaceId: string;
@@ -323,6 +335,7 @@ export interface UpdateSecretInput {
 }
 
 export interface CreateConfigurationInput {
+  readonly idempotencyKey?: string;
   readonly namespaceId: string;
   readonly kind: Configuration["kind"];
   readonly values: Readonly<OpenClawConfigurationDocument>;
@@ -2325,16 +2338,29 @@ export class OpenClawController {
       throw new ScopeViolationError("The Configuration kind must identify an Agent.");
     }
     const values = frozenValues(input.values);
+    const request = creationRequestIdentity(principalId, "createConfiguration", input);
     return this.mutate(async (state) => {
       const namespace = await this.lockNamespace(state, input.namespaceId);
-      if (namespace.status !== "provisioning" && namespace.status !== "ready") {
-        throw new ResourceConflictError("The Namespace does not accept new Configurations.");
-      }
       await this.authorize(principalId, "create", {
         kind: "configuration",
         id: namespace.id,
         namespaceId: namespace.id,
       });
+      const previousId = await findCreationResult(state, request);
+      if (previousId !== undefined) {
+        await this.authorize(principalId, "read", {
+          kind: "configuration",
+          id: previousId,
+          namespaceId: namespace.id,
+        });
+        if (!(await state.configurations.findConfiguration(namespace.id, previousId))) {
+          throw new CreationRequestConflictError("unavailable");
+        }
+        return this.getConfiguration(principalId, namespace.id, previousId);
+      }
+      if (namespace.status !== "provisioning" && namespace.status !== "ready") {
+        throw new ResourceConflictError("The Namespace does not accept new Configurations.");
+      }
       if (namespace.existingNamespace !== undefined && namespace.status !== "ready") {
         throw new NamespaceNotReadyError();
       }
@@ -2362,7 +2388,9 @@ export class OpenClawController {
       this.registerRollback(async () =>
         driver.delete({ id: configuration.id, namespaceId: configuration.namespaceId }),
       );
-      return this.exactConfiguration(result, metadata);
+      const created = this.exactConfiguration(result, metadata);
+      await recordCreationResult(state, request, created);
+      return created;
     });
   }
 
@@ -2695,19 +2723,36 @@ export class OpenClawController {
     if (!validExecutionMode(executionMode)) {
       throw new ScopeViolationError("The Agent Harness execution mode is invalid.");
     }
-    const providerId = this.providerId(input.providerId);
     const plugins = normalizeAgentPlugins(input.plugins);
+    const request = creationRequestIdentity(principalId, "createAgent", input);
     return this.mutate(async (state) => {
       const namespace = await this.lockNamespace(state, input.namespaceId);
-      if (namespace.status !== "provisioning" && namespace.status !== "ready") {
-        throw new ResourceConflictError("The Namespace does not accept new Agents.");
-      }
       const target: ResourceRef = {
         kind: "agent",
         id: namespace.id,
         namespaceId: namespace.id,
       };
       await this.authorize(principalId, "create", target);
+      const previousId = await findCreationResult(state, request);
+      if (previousId !== undefined) {
+        await this.authorize(principalId, "read", {
+          kind: "agent",
+          id: previousId,
+          namespaceId: namespace.id,
+        });
+        const previous = await state.agents.findAgent(namespace.id, previousId);
+        if (previous === undefined) {
+          throw new CreationRequestConflictError("unavailable");
+        }
+        return previous;
+      }
+      if (namespace.status !== "provisioning" && namespace.status !== "ready") {
+        throw new ResourceConflictError("The Namespace does not accept new Agents.");
+      }
+      if (workspaceDefaultsId !== undefined && workspaceDefaultsId !== WORKSPACE_DEFAULTS_ID) {
+        throw new WorkspaceDefaultsChangedError();
+      }
+      const providerId = this.providerId(input.providerId);
       await this.authorize(principalId, "read", {
         kind: "configuration",
         id: input.configurationId,
@@ -2761,6 +2806,7 @@ export class OpenClawController {
           completed: false,
         });
       }
+      await recordCreationResult(state, request, agent);
       return agent;
     });
   }

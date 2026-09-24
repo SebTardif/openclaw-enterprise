@@ -8,7 +8,7 @@ export function createApiClient({ lifetime, hasSession, onExpired }) {
       method,
       credentials: "same-origin",
       cache: "no-store",
-      signal: AbortSignal.any([signal, AbortSignal.timeout(15_000)]),
+      signal: AbortSignal.any([signal, lifetime.signal, AbortSignal.timeout(15_000)]),
       ...(body === undefined
         ? {}
         : { headers: { "content-type": "application/json" }, body: JSON.stringify(body) }),

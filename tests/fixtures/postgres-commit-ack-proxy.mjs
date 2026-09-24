@@ -20,6 +20,7 @@ export async function commitAckProxy(databaseUrl) {
     throw new Error("The commit fault requires an explicitly non-TLS PostgreSQL connection.");
   }
   let armed = false;
+  let requiredStatement;
   let observed = false;
   const sockets = new Set();
   const server = net.createServer((client) => {
@@ -35,6 +36,7 @@ export async function commitAckProxy(databaseUrl) {
     let backend = Buffer.alloc(0);
     let startup = true;
     let dropping = false;
+    let matchedStatement = false;
     const close = () => {
       client.destroy();
       upstream.destroy();
@@ -59,9 +61,21 @@ export async function commitAckProxy(databaseUrl) {
         frontend = frontend.subarray(size);
         if (
           !startup &&
+          armed &&
+          requiredStatement !== undefined &&
+          (frame[0] === 81 || frame[0] === 80)
+        ) {
+          // Extended queries put the statement after the Parse message's name.
+          const start = frame[0] === 80 ? frame.indexOf(0, 5) + 1 : 5;
+          const end = frame.indexOf(0, start);
+          matchedStatement ||= frame.subarray(start, end).toString().includes(requiredStatement);
+        }
+        if (
+          !startup &&
           frame[0] === 81 &&
           frame.subarray(5, -1).toString().trim().toUpperCase() === "COMMIT" &&
-          armed
+          armed &&
+          (requiredStatement === undefined || matchedStatement)
         ) {
           dropping = true;
           armed = false;
@@ -101,11 +115,12 @@ export async function commitAckProxy(databaseUrl) {
   proxyUrl.searchParams.delete("port");
   return {
     url: proxyUrl.toString(),
-    arm() {
+    arm(options = {}) {
       if (armed || observed) {
         throw new Error("The single-use fault is already armed or consumed.");
       }
       armed = true;
+      requiredStatement = options.afterStatement;
     },
     get observedCommit() {
       return observed;

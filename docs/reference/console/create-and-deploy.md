@@ -117,14 +117,22 @@ has no managed Secret storage or model-key delivery. Saving a key does not prove
 provider acceptance or runtime readiness. See
 [harness authentication](../agents.md#harness-authentication).
 
-For ordinary draft creation, saves are separate operations. After a successful step, the form retains its
-resource ID and freezes the saved inputs, including the authentication method. Correct a conflicting Agent name or
-restore the required permission, then retry to reuse the saved resources. If the
-Agent was saved but its model or Slack Secret grant failed, select **Retry credential access** to finish grants on that same Agent, or ask an administrator to check the saved Secret grants.
-An uncertain response blocks another creation attempt. Check the displayed saved
-IDs and the Agents list before starting again; give the displayed request ID to
-your operator if the outcome cannot be established. Leaving the form does not
-remove resources that were already saved.
+Ordinary draft creation saves the Configuration and Agent separately. After an
+interrupted reply, **Try again** makes one attempt at each remaining create using
+the same [request identity](../configuration.md#recover-an-interrupted-create)
+and inputs, reusing the confirmed Configuration. There are no automatic retries.
+Inputs stay fixed after an uncertain outcome, including after later permission or
+validation errors. Saved settings, including authentication and Harness, stay fixed.
+
+If the Agent was saved but its model or Slack Secret grant failed, select
+**Retry credential access** to finish grants on that Agent, or ask an administrator
+to check its saved Secret grants. Request keys cover Configuration and Agent
+creates, not Secret saves or IAM grants.
+
+Keep the form open: refreshing, navigating away, or signing out loses recovery.
+Cancelled requests do not prove rollback; leaving does not delete saved resources.
+Inspect unresolved writes before starting over; give any displayed request ID to
+your operator.
 
 If provisioning admission loses its response, **Retry provisioning request** resubmits
 the same request ID and saved Secret references. An acknowledged job is retried through
@@ -159,11 +167,10 @@ optional repository discovery is unavailable. Even on a provisioning-capable Ded
 write and offer retry. Denial and Namespace lifecycle conflict remain distinct.
 This preflight does not replace authorization on either subsequent write.
 
-If the Configuration saves but Agent creation fails, the form shows its ID and
-keeps its JSON and Secret bindings fixed. After a known rejection of an ordinary
-zero-binding Agent, correct the editable Agent fields and retry directly. The
-retry reuses the saved Configuration and does not depend on repository choices
-or a Repo Driver.
+If the Configuration saves but Agent creation fails, its JSON and Secret bindings
+stay fixed. After an initial rejection without repository bindings, correct the
+editable Agent fields and retry with a new Agent request key. This reuses the
+Configuration without depending on repository choices or a Repo Driver.
 
 After a known rejection of a repository-scoped Agent, **Reload repository choices**
 clears selections and refreshes Namespace policy while retaining the saved
@@ -173,13 +180,10 @@ Agent. Failed reloads keep creation disabled and the Configuration ID visible.
 Expiry returns to sign-in. **Start a new draft** opens a new form and leaves the
 Configuration saved. Neither action deletes saved resources.
 
-If the Agent response is lost or otherwise unknown, the save may have succeeded.
-The form disables further creation and does not expose the known-rejection
-recovery actions. Check the **Agents** list and, if the form showed a
-Configuration ID, the
-[exact Configuration](../configuration.md#create-read-update-and-delete) before
-starting again. If you cannot determine the outcome, give the displayed request
-ID, if available, to your operator.
+An interrupted Agent reply keeps the submitted repository selection fixed and
+offers **Try again** with the same request identity. Repository reload and
+new-draft actions remain unavailable, including after a later permission denial;
+only a confirmed initial rejection permits changing those inputs.
 
 ## Use repositories and Slack on the same Agent
 

@@ -217,6 +217,13 @@
     },
     {
       "path": "tests/integration/postgres-repository-sessions.test.mjs"
+    },
+    {
+      "path": "tests/integration/postgres-creation-idempotency.test.mjs",
+      "expectedTests": [
+        "PostgreSQL HTTP creation retries survive concurrency, restart, and result deletion",
+        "a lost PostgreSQL creation COMMIT reply returns UNKNOWN_OUTCOME and recovers the committed resource"
+      ]
     }
   ]
 }

@@ -292,6 +292,7 @@ export const CreateIAMAccessBindingBody = Type.Object(
 
 export const CreateConfigurationBody = Type.Object(
   {
+    idempotencyKey: Type.Optional(Type.String({ pattern: "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$" })),
     kind: ConfigurationKindSchema,
     values: ConfigurationValues,
     secretBindings: Type.Optional(SecretBindings),
@@ -372,6 +373,7 @@ export const RepositoryBindingSelectionsSchema = Type.Array(RepositoryBindingSel
 
 export const CreateAgentBody = Type.Object(
   {
+    idempotencyKey: Type.Optional(Type.String({ pattern: "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$" })),
     initialWorkspaceFiles: Type.Optional(
       Type.Object(
         Object.fromEntries(

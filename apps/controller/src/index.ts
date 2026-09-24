@@ -61,6 +61,8 @@ import {
   AuthorizationDeniedError,
   BOOTSTRAP_DEFAULT_NAMESPACE_NAME,
   DependencyUnavailableError,
+  CreationRequestConflictError,
+  PostgresCommitOutcomeUnknownError,
   ModelDiscoveryError,
   NamespaceNotEmptyError,
   NamespaceNotReadyError,
@@ -68,6 +70,7 @@ import {
   RepositoryOptionsUnavailableError,
   ResourceConflictError,
   ScopeViolationError,
+  WorkspaceDefaultsChangedError,
   type DeploymentStatusResult,
   type AgentProvisioningProgress,
   type ProvisionAgentInput,
@@ -874,6 +877,19 @@ function isDependencyUnavailable(error: unknown): boolean {
 function requestFailure(error: unknown): RequestFailure {
   if (error instanceof RequestFailure) {
     return error;
+  }
+  if (error instanceof PostgresCommitOutcomeUnknownError) {
+    return failure(
+      503,
+      "UNKNOWN_OUTCOME",
+      "The platform could not confirm whether the write completed.",
+    );
+  }
+  if (
+    error instanceof CreationRequestConflictError ||
+    error instanceof WorkspaceDefaultsChangedError
+  ) {
+    return failure(409, "RESOURCE_CONFLICT", error.message);
   }
   if (error instanceof ModelDiscoveryError) {
     switch (error.reason) {
@@ -2323,19 +2339,12 @@ export function createFastifyApp(options: ControllerAppOptions): FastifyInstance
           "Initial workspace files must use the four allowed names and valid Unicode without NUL, within 16 KiB per file.",
         );
       }
-      if (
-        body?.workspaceDefaultsId !== undefined &&
-        body.workspaceDefaultsId !== WORKSPACE_DEFAULTS_ID
-      ) {
-        throw failure(
-          409,
-          "RESOURCE_CONFLICT",
-          "Workspace defaults changed. Reload the create form before submitting.",
-        );
-      }
       const agent = await controller.transact(async (unit) => {
         const created = await controller!.createAgent(context.actorId, {
           namespaceId,
+          ...(body?.idempotencyKey === undefined
+            ? {}
+            : { idempotencyKey: body.idempotencyKey as string }),
           ...(body?.initialWorkspaceFiles === undefined
             ? {}
             : { initialWorkspaceFiles: body.initialWorkspaceFiles as InitialWorkspaceFiles }),

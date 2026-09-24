@@ -89,6 +89,12 @@ Teams credentials remain operator-managed; the console blocks deployment while T
 See [Create and deploy in the console](../reference/console/create-and-deploy.md)
 for the supported installation workflow and prerequisites.
 
+In **Draft Configuration retry** and **Draft Agent retry**, a simulated 503 freezes
+draft inputs until **Try again** is clicked; wait first to confirm there is no
+automatic retry. The Agent story reuses its saved Configuration. Leaving or
+refreshing loses recovery. These stories prove UI controls; browser/API and
+PostgreSQL coverage establish lost-response recovery and deduplication.
+
 Repository previews cover shared access levels, empty or pending discovery,
 optional service unavailability, denied or unverified authorization, and reselection
 after a rejected save. The recovery story retains its saved Configuration and
