@@ -759,6 +759,7 @@
               "flows/container-package-bootstrap",
               "flows/container-publication",
               "flows/github-actions-testing/preparation",
+              "testing/platform-audit",
               "testing/postgresql",
               "testing/images",
               "testing/docker",
