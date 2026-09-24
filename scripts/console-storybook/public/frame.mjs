@@ -23,7 +23,7 @@ history.replaceState(
 // Otherwise the first interaction can reset a preselected Preset before it becomes a form.
 window.focus();
 if (scenario.component === "plugins") {
-  // Catalog discovery is not wired to Create Agent yet. Preview its real component directly.
+  // Isolated previews pass fixture catalogs and capabilities to the real component.
   const { createPluginFields } = await import("/console/agents/plugin-fields.mjs");
   const input = document.createElement("textarea");
   input.id = "agent-plugins";

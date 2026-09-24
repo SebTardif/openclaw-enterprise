@@ -5,12 +5,17 @@ const approvalOptions = [
   ["prompt", "Ask for approval"],
   ["approve", "Approve"],
 ];
+const reviewerOptions = [
+  ["human", "Human"],
+  ["auto", "Automatic review"],
+];
 const isObject = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
 function validToolPolicy(value) {
   return (
     isObject(value) &&
     (value.enabled === undefined || typeof value.enabled === "boolean") &&
-    (value.approval === undefined || approvalOptions.some(([mode]) => mode === value.approval))
+    (value.approval === undefined || approvalOptions.some(([mode]) => mode === value.approval)) &&
+    (value.reviewer === undefined || reviewerOptions.some(([mode]) => mode === value.reviewer))
   );
 }
 
@@ -134,6 +139,12 @@ export function createPluginFields({
     const toolApprovals = approvalOptions.filter(([mode]) =>
       capabilities?.tools.approval.includes(mode),
     );
+    const defaultReviewers = reviewerOptions.filter(([mode]) =>
+      capabilities?.toolDefaults.reviewer?.includes(mode),
+    );
+    const toolReviewers = reviewerOptions.filter(([mode]) =>
+      capabilities?.tools.reviewer?.includes(mode),
+    );
     feedback.textContent =
       values === null
         ? "Fix Plugin selections JSON to use the controls. Check plugin enablement and tool policies. Your JSON has been kept."
@@ -254,6 +265,11 @@ export function createPluginFields({
               { className: "plugin-tool", disabled: !selected.enabled },
               element("legend", {}, "Tool defaults"),
               element(
+                "p",
+                { className: "hint" },
+                "Approval controls when review is required. Reviewer selects who reviews; automatic review may deny a call.",
+              ),
+              element(
                 "div",
                 { className: "plugin-controls" },
                 select(
@@ -273,6 +289,14 @@ export function createPluginFields({
                   [["", "Inherit default policy"], ...defaultApprovals],
                   (value) => writeDefault("approval", value || undefined),
                   defaultApprovals.length > 0,
+                ),
+                select(
+                  `${entry.name} default reviewer`,
+                  defaults.reviewer ?? "",
+                  [["", "Inherit Harness reviewer"], ...defaultReviewers],
+                  (value) => writeDefault("reviewer", value || undefined),
+                  Boolean(capabilities) &&
+                    (defaultReviewers.length > 0 || defaults.reviewer !== undefined),
                 ),
               ),
             ),
@@ -438,6 +462,14 @@ export function createPluginFields({
                 [["", "Inherit plugin policy"], ...toolApprovals],
                 (value) => writeTool("approval", value || undefined),
                 toolApprovals.length > 0,
+              ),
+              select(
+                `${tool.name} reviewer`,
+                policy.reviewer ?? "",
+                [["", "Inherit plugin or Harness reviewer"], ...toolReviewers],
+                (value) => writeTool("reviewer", value || undefined),
+                Boolean(capabilities) &&
+                  (toolReviewers.length > 0 || policy.reviewer !== undefined),
               ),
             ),
           );

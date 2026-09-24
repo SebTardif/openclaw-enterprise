@@ -112,9 +112,12 @@ visibility does not establish that a plugin or tool can be invoked.
 **Components/Plugins** previews the draft plugin policy editor with a simulated
 catalog and capability descriptor: available plugins, selected tool overrides, unknown tools, empty,
 loading, denied, and unavailable states. Search for a plugin or tool, expand its
-card, and select **Add**. Review its default tool enablement and approval settings.
-Tool fields independently inherit or override those defaults; inspect **Plugin
-selections JSON** to see changes. Adding a plugin leaves its tool defaults omitted.
+card, and select **Add**. Review its tool enablement, approval, and reviewer settings.
+Each field inherits independently; inspect **Plugin selections JSON** to see changes.
+Adding a plugin leaves its tool defaults omitted. Reviewer omission inherits the
+Harness reviewer, and automatic review can deny a call. The Codex fixture offers
+reviewer selection at the plugin default scope only. **Unsupported saved tool
+reviewer** keeps an unsupported override visible and lets you clear it to inherit.
 
 **Create Agent / Edit existing plugin policies** exercises that editor in the
 actual form with simulated policy capabilities. These previews do not verify live

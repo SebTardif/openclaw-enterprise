@@ -21,17 +21,16 @@ const passwordPresetForm = [
 const repositoryForm = [...readyForm, { selector: "#agent-name", value: "Repository assistant" }];
 const pluginCapabilities = {
   driver: { id: "codex-plugin", implementation: "occ/codex-plugin" },
-  toolDefaults: { enabled: true, approval: ["native", "prompt", "approve"] },
-  tools: { enabled: true, approval: ["native", "prompt", "approve"] },
+  toolDefaults: {
+    enabled: true,
+    approval: ["native", "prompt", "approve"],
+    reviewer: ["human", "auto"],
+  },
+  tools: { enabled: true, approval: ["native", "prompt", "approve"], reviewer: [] },
   driverPolicySchema: {
     type: "object",
     properties: {
       destructiveEnabled: { type: "boolean", title: "Destructive tools" },
-      approvalsReviewer: {
-        type: "string",
-        enum: ["user", "auto_review"],
-        title: "Approval reviewer",
-      },
     },
     additionalProperties: false,
   },
@@ -81,7 +80,7 @@ const pluginSelections = JSON.stringify(
   {
     "codex-plugin:calendar@openai-curated-remote": {
       enabled: true,
-      toolDefaults: { approval: "native" },
+      toolDefaults: { approval: "native", reviewer: "auto" },
       tools: {
         "app_calendar/create_event": { approval: "prompt" },
         "app_calendar/delete_event": { enabled: false },
@@ -489,7 +488,7 @@ export const scenarios = {
     steps: [
       "Search for Documents or a tool such as Create event, then clear the search.",
       "Expand Calendar and click Add Calendar. Its tool defaults remain omitted until you change them.",
-      "Choose the default tool availability and approval behavior, or keep the runtime defaults.",
+      "Choose the default tool availability, approval behavior, and reviewer, or keep the runtime defaults.",
       "Review the Driver-specific policy fields supplied by the capability descriptor.",
       "Change a tool setting and inspect Plugin selections JSON for the result.",
     ],
@@ -504,7 +503,34 @@ export const scenarios = {
     pluginSelections,
     actions: [{ selector: ".plugin-card summary", click: true }],
     description:
-      "Calendar is enabled with native approval as its tool default and explicit overrides for creating and deleting events. Tools without overrides inherit the plugin defaults.",
+      "Calendar uses native approval and automatic review as its tool defaults, with explicit overrides for creating and deleting events. Tool reviewers inherit because this Driver advertises reviewer selection only at the default scope.",
+    steps: [
+      "Change Calendar's default reviewer to Human and inspect toolDefaults.reviewer in Plugin selections JSON.",
+      "Choose inheritance to omit the reviewer field without changing default approval or tool overrides.",
+      "Inspect each tool's inherited reviewer. Per-tool reviewer selection is unavailable for this Driver.",
+    ],
+    gap: pluginPreviewGap,
+  },
+  pluginsUnsupportedToolReviewer: {
+    group: "Components/Plugins",
+    name: "Unsupported saved tool reviewer",
+    component: "plugins",
+    pluginCatalog,
+    pluginCapabilities,
+    pluginSelections: JSON.stringify(
+      {
+        "codex-plugin:calendar@openai-curated-remote": {
+          enabled: true,
+          toolDefaults: { approval: "native", reviewer: "auto" },
+          tools: { "app_calendar/create_event": { approval: "prompt", reviewer: "auto" } },
+        },
+      },
+      null,
+      2,
+    ),
+    actions: [{ selector: ".plugin-card summary", click: true }],
+    description:
+      "An explicit saved tool reviewer is unsupported when the Driver advertises no per-tool reviewer values, even when it equals the default reviewer. The editor preserves the value without treating it as inherited or enabling new unsupported choices.",
     gap: pluginPreviewGap,
   },
   pluginsUnknownTools: {
@@ -592,8 +618,8 @@ export const scenarios = {
     },
     pluginCapabilities: {
       driver: { id: "occ-plugin", implementation: "occ/openclaw-plugin" },
-      toolDefaults: { enabled: true, approval: ["native", "approve"] },
-      tools: { enabled: true, approval: ["native", "approve"] },
+      toolDefaults: { enabled: true, approval: ["native", "approve"], reviewer: [] },
+      tools: { enabled: true, approval: ["native", "approve"], reviewer: [] },
       driverPolicySchema: { type: "object", properties: {}, additionalProperties: false },
     },
     pluginSelections: JSON.stringify(

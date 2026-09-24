@@ -4,6 +4,7 @@ export default { title: "Components/Plugins" };
 
 export const Available = story("pluginsAvailable");
 export const Selected = story("pluginsSelected");
+export const UnsupportedToolReviewer = story("pluginsUnsupportedToolReviewer");
 export const UnknownTools = story("pluginsUnknownTools");
 export const Empty = story("pluginsEmpty");
 export const Loading = story("pluginsLoading");

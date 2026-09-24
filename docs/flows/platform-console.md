@@ -147,90 +147,81 @@ failure return errors.
 
 `apps/controller/src/console/agents/create.mjs:renderCreateAgent` selects Provider,
 then Harness. OpenAI defaults to Codex (Dedicated) and offers OpenClaw (Embedded);
-Anthropic offers OpenClaw. Codex accepts API keys or **Service Accounts**
-(`codex_pat`); OpenClaw accepts API keys. Provider changes reset harness,
-credential, and model. Switching an unsaved service account token to OpenClaw
-clears token/model and selects API-key auth; API-key harness changes retain both.
-Credential hints link to the token console and show expected prefixes.
+Anthropic offers OpenClaw. Codex accepts API keys or **Service Accounts** (`codex_pat`);
+OpenClaw accepts API keys. Provider changes reset Harness, credential, and model.
+Switching an unsaved PAT to OpenClaw clears token/model and selects API-key auth;
+API-key Harness changes retain both. Credential hints link to token creation and
+show prefixes.
 
-Presets fix saved credential providers and reject cross-provider JSON before
-writes. Saved service account tokens lock Codex; operator-managed credentials
-lock OpenClaw across provider changes. Installation Provider discovery is hidden. The [creation reference](../reference/console/create-and-deploy.md)
-owns permissions and partial-save recovery.
+Presets reject cross-provider JSON: credentials fix Provider; PATs fix
+Codex; operator-managed credentials fix OpenClaw. Installation Provider
+discovery is hidden. The [creation reference](../reference/console/create-and-deploy.md)
+owns permissions and recovery.
 
-The form starts with native JSON, optional plugins, and no model.
-`agents/plugin-fields.mjs:createPluginFields` renders the Agent-owned plugin map
-from `#agent-plugins`. Structured changes write back to that same JSON input;
-manual JSON edits rerender the controls. Invalid JSON keeps its bytes and blocks
-structured edits. Unedited fields, undiscovered selections, and tool overrides
-are retained. Removing an inherited tool field deletes only that override.
-Installation discovery supplies `capabilities.pluginPolicies` to the editor.
-It filters approval choices, gates tool/default enablement, and renders boolean
-or string-enum Driver policy fields from the supplied schema. Missing capabilities
-leave policy controls disabled without changing JSON.
-The form locks the editor during submission or an uncertain outcome. Discovery in `create.mjs:loadPluginCatalog` posts the entered PAT to
-`/namespaces/:namespaceId/agents/plugins`; `loadPluginTools` posts the returned
-remote identity to `/agents/plugins/details`. Credential, provider, and Harness
-changes invalidate outstanding responses and clear the browser catalog. Requests
-do not persist the PAT. The selected Plugin Driver owns upstream calls; see the
-[plugin discovery flow](agent-plugins.md#credential-scoped-discovery). Storybook
-catalogs remain simulated inputs. Agent creation submits the selection map through the existing
-`plugins` field, independently of native Configuration values.
+Initial inputs are native JSON and optional plugins, without a model.
+`agents/plugin-fields.mjs:createPluginFields` edits the Agent-owned `plugins` map
+through `#agent-plugins`, separately from Configuration. It preserves invalid JSON,
+unedited fields, and undiscovered selections; clearing a tool override restores
+inheritance. Submission, uncertain outcomes, or invalid JSON lock structured edits.
+`capabilities.pluginPolicies` gates enablement and independently filters approval
+and reviewer choices at default/tool scope. Omitted defaults inherit the Harness
+reviewer; tools inherit plugin defaults. Unsupported saved reviewers remain visible
+and clearable. Driver policy fields
+use the supplied boolean/string-enum schema. Policy integration remains pending;
+missing capabilities disable controls without changing JSON.
+
+`create.mjs:loadPluginCatalog` and `loadPluginTools` implement
+[transient PAT discovery](agent-plugins.md#credential-scoped-discovery).
+Credential, provider, and Harness changes clear the catalog and invalidate pending
+responses. The Plugin Driver owns upstream access; Storybook uses fixtures.
 
 `POST /namespaces/:namespaceId/agents/models` reaches
-`OpenClawController.discoverAgentModels`, which authorizes Namespace Agent creation
-and calls Compute outside a state transaction. `compute/model-discovery.ts` uses
-fixed provider URLs, bounded responses and pagination, and returns IDs/labels.
-`authMethod` selects API-key or service-account discovery; OpenAI API-key results
-exclude valid `shutdown_date` values on or before today (UTC). Discovery writes
-nothing. Empty/error results allow manual entry; credential/provider/method
-changes invalidate pending results. Model and key edits preserve provider transport
-and Codex plugin settings. Provider or Harness changes regenerate those entries
-while preserving unrelated JSON; reset restores the selected starter.
+`OpenClawController.discoverAgentModels`: authorize Namespace Agent creation, then
+call Compute outside a transaction. `compute/model-discovery.ts` returns IDs/labels
+using fixed URLs and bounded pagination/responses. `authMethod` selects API-key or
+service-account discovery; OpenAI API-key results exclude valid `shutdown_date`
+values through today (UTC). Discovery writes nothing; empty/error results permit
+manual entry. Credential/provider/method changes invalidate pending results.
+Model/key edits preserve transport and Codex plugin settings; Provider/Harness
+changes regenerate them, preserving unrelated JSON. Reset restores the starter.
 
 `configurationTemplate` enables Control UI with loopback origins on port 18789.
 Compute supplies gateway authentication from Installation trust; Presets replace
-the starter unchanged. [OCE native admin access](agent-native-admin.md) still
-requires isolated HTTPS origins. [Agent editing](platform-console/agent-editing.md#4-render-draft-revision-or-channels)
+the starter unchanged. [Native admin access](agent-native-admin.md) requires isolated
+HTTPS origins. [Agent editing](platform-console/agent-editing.md#4-render-draft-revision-or-channels)
 traces Slack Secret selection/creation. **Apply channel settings** copies values
-and bindings into the form. Channel sender access is stored on each selected
-Slack channel; the drawer does not edit direct-message `allowFrom`. Cancellation
-discards selections but retains Secrets already created in the Namespace.
-Pending grants accumulate across drawer applications.
+and bindings; grants accumulate across applications. Sender access belongs to each
+selected channel, leaving direct-message `allowFrom` unchanged. Cancellation discards
+selections but retains created Namespace Secrets.
 
 `GET /namespaces/:namespaceId/agents/repository-options` discovers approved choices.
-The Console submits opaque references and an explicit common profile. Only
+Console submits opaque references and an explicit common profile. Only
 `503 REPOSITORY_OPTIONS_UNAVAILABLE` permits a fresh draft without bindings;
-it never enables provisioning. Other failures block submission until retry succeeds.
+other failures block submission. Retry discovery before provisioning.
 
-For supported Dedicated runtimes with successful repository discovery, submission
-sends the inline Configuration, selected repository bindings and ordinary Secret references to the [provisioning API](agent-provisioning.md).
-Console polls the accepted job before an Agent exists, then opens the returned
-Agent revision. The worker creates resources and exact Secret grants before
-admitting deployment; Console does not duplicate those grants.
+Supported Dedicated runtimes with successful repository discovery submit inline
+Configuration, repository bindings, and Secret references to
+[provisioning](agent-provisioning.md). Console polls the job, then opens its Agent
+revision. The worker creates resources and exact Secret grants before deployment
+admission; Console does not duplicate grants.
 
-Ordinary draft creation posts `{kind: "agent", values, secretBindings}` to
-`POST /namespaces/:namespaceId/configurations`, then sends its returned ID to
-`POST /namespaces/:namespaceId/agents` with plugins, `initialWorkspaceFiles`, and
-`workspaceDefaultsId`. Success opens `revision=draft`. All four seeded workspace
-textareas, including unchanged/empty values, are submitted. OCC stages them
-outside Agent/Configuration; [workspace setup](workspace-files.md) applies them
-before execution.
+Ordinary drafts post `{kind: "agent", values, secretBindings}` to
+`POST /namespaces/:namespaceId/configurations`, then submit its ID, plugins,
+`initialWorkspaceFiles`, and `workspaceDefaultsId` to
+`POST /namespaces/:namespaceId/agents`. Success opens `revision=draft`.
+OCC stages all four workspace textareas, including unchanged/empty values, outside
+Agent/Configuration for [workspace setup](workspace-files.md).
 
-`create.mjs:grantConfigurationSecretAccess` grants the returned Agent exact
-Secret `operate` through separate Namespace IAM writes. Only final same-Namespace
-`env` bindings receive grants; superseded selections receive none. Failure keeps
-the Agent and enables **Retry credential access**, which rereads exact grants
-without duplicating resources; the saved Agent link permits manual recovery.
-Failed Agent writes retain the Configuration ID and lock JSON/Harness; explicit
-retries reuse it. Writes never retry automatically. Draft creation neither
-admits revisions, validates the plugin catalog, nor starts runtime work.
+`create.mjs:grantConfigurationSecretAccess` grants exact Secret `operate` through
+Namespace IAM writes for final same-Namespace `env` bindings only. Failure retains
+the Agent: **Retry credential access** rereads grants without duplication; its link
+supports manual recovery. Failed Agent writes retain Configuration ID and lock
+JSON/Harness for explicit reuse. Writes never retry automatically. Drafts admit no
+revision, validate no plugin catalog, and start no runtime.
 
-`apps/controller/src/console/agents/harness-auth.mjs:createHarnessAuthFields`
-masks the existing Secret ID input in the Credentials editor.
-`harnessAuthDescription` reports a configured Secret without displaying its ID
-in draft or revision summaries. Native Configuration displays unresolved
-references; the console does not fetch Secret values for these views.
+`agents/harness-auth.mjs:createHarnessAuthFields` masks existing Secret IDs;
+`harnessAuthDescription` omits them from draft/revision summaries. Configuration
+shows unresolved references; these views never fetch Secret values.
 
 ### 4–6. Edit the Agent and access runtime files
 
