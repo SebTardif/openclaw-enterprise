@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
-import { access, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { access, lstat, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir, userInfo } from "node:os";
 import { join, resolve } from "node:path";
@@ -156,6 +156,46 @@ test(
       lifecycleActive = true;
       try {
         return await run(executable, args, timeout);
+      } catch (error) {
+        let uncertainMarker = "unknown";
+        try {
+          await lstat(join(stateDirectory, "subprocess-outcome-uncertain"));
+          uncertainMarker = "present";
+        } catch (lookupError) {
+          if (lookupError.code === "ENOENT") {
+            uncertainMarker = "absent";
+          }
+        }
+        // Report only known progress labels, never the CLI output or resource names.
+        const progress = new Map([
+          [
+            "Starting the Compose database, migration, and bootstrap services...",
+            "compose-services",
+          ],
+          [`Creating k3d cluster ${name}...`, "k3d-cluster"],
+          ["Starting the Compose controller and Kubernetes worker...", "controller-worker"],
+        ]);
+        const lastProgress = String(error.stdout ?? "")
+          .split("\n")
+          .map((line) => progress.get(line.trim()))
+          .filter(Boolean)
+          .at(-1);
+        let outcome = "command-failure";
+        if (error.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER") {
+          outcome = "output-limit";
+        } else if (typeof error.signal === "string") {
+          outcome = "terminated";
+        }
+        error.openclawCiDiagnostic = {
+          kind: "development-lifecycle",
+          operation: args[1],
+          lastProgress: lastProgress ?? "unknown",
+          exitCode: Number.isInteger(error.code) ? error.code : undefined,
+          signal: error.signal,
+          outcome,
+          uncertainMarker,
+        };
+        throw error;
       } finally {
         lifecycleActive = false;
       }
