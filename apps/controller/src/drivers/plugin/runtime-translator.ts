@@ -547,26 +547,38 @@ export function createPluginRuntimeTranslator(nativeCatalog: readonly OpenClawPl
       if (selection.destructiveActions !== undefined || selection.writes !== undefined) {
         throw new Error("OpenClaw plugin category policy is unsupported.");
       }
-      const pluginEnabled = selectionEnabledAfterFailures(pluginId, selection, failedPluginIds);
-      if (selection.tools !== undefined) {
-        if (!isRecord(selection.tools)) {
-          throw new Error("OpenClaw plugin tool policies must be an object.");
+      const toolPolicies = selection.tools === undefined ? {} : selection.tools;
+      if (!isRecord(toolPolicies)) {
+        throw new Error("OpenClaw plugin tool policies must be an object.");
+      }
+      for (const toolId of Object.keys(toolPolicies)) {
+        if (!descriptor.toolNames.includes(toolId)) {
+          throw new Error("Unknown OpenClaw plugin tool selection.");
         }
-        for (const [toolId, policy] of Object.entries(selection.tools)) {
-          if (!descriptor.toolNames.includes(toolId)) {
-            throw new Error("Unknown OpenClaw plugin tool selection.");
-          }
-          if (
-            !isRecord(policy) ||
-            typeof policy.enabled !== "boolean" ||
-            policy.approvalMode !== undefined
-          ) {
-            throw new Error("OpenClaw plugin tool policy supports only enablement.");
-          }
-          if (pluginEnabled && !policy.enabled) {
-            deny.push(toolId);
-          }
+      }
+      const deniedTools: string[] = [];
+      for (const toolId of descriptor.toolNames) {
+        const policy = Object.hasOwn(toolPolicies, toolId) ? toolPolicies[toolId] : {};
+        if (!isRecord(policy)) {
+          throw new Error("OpenClaw plugin tool policy must be an object.");
         }
+        const toolEnabled = enabled(policy);
+        const toolMode = policy.approvalMode === undefined ? mode : pluginApprovalMode(policy);
+        if (!["always", "never"].includes(toolMode)) {
+          throw new Error("OpenClaw plugin tool approval policy is unsupported.");
+        }
+        if (!toolEnabled || toolMode === "never") {
+          deniedTools.push(toolId);
+        }
+      }
+      // A tool exception can enable a default-denied plugin. Enumerate every
+      // declared tool so unspecified siblings keep inheriting the default deny.
+      const pluginEnabled =
+        enabled(selection) &&
+        !failedPluginIds.has(pluginId) &&
+        (mode !== "never" || deniedTools.length < descriptor.toolNames.length);
+      if (pluginEnabled) {
+        deny.push(...deniedTools);
       }
       entries[nativeId] = {
         enabled: pluginEnabled,

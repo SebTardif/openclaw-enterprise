@@ -248,6 +248,17 @@ test("OpenClaw startup composes exact tool disablement with operator denies", ()
   }
 });
 
+test("OpenClaw startup keeps native denies when a tool overrides plugin default never", () => {
+  const { files } = runOpenClawRuntimeHelper(
+    openClawRuntime({ approvalMode: "never", tools: { diffs: { approvalMode: "always" } } }),
+    installedPluginResponses(),
+    { baseConfig: { tools: { allow: ["read"], deny: ["exec", "diffs"] } } },
+  );
+  const effective = JSON.parse(files.get("/home/node/.openclaw/openclaw.json"));
+  assert.equal(effective.plugins.entries.diffs.enabled, true);
+  assert.deepEqual(effective.tools, { allow: ["read", "diffs"], deny: ["exec", "diffs"] });
+});
+
 for (const [field, plugins] of [
   ["plugins.enabled", { enabled: false }],
   ["plugins.deny", { deny: ["diffs"] }],

@@ -123,56 +123,66 @@ test(
       resultPattern,
     });
 
-    // Keep the plugin loaded while denying its tool, then rebuild policy from
-    // the reusable Configuration on redeploy so only the generated deny disappears.
-    await fixture.updatePluginPolicy(primary.id, pluginId, {
-      tools: { [toolName]: { enabled: false } },
-    });
-    const toolDisabled = await fixture.deployAndWait(primary);
-    assert.equal(toolDisabled.revision.plugins.plugins[pluginId].tools[toolName].enabled, false);
-    assert.deepEqual(await fixture.readOpenClawPluginPolicy(primary, nativePluginId), {
-      plugins: { allow: allowedPlugins, enabled: true },
-      tools: { allow: ["read", nativePluginId], deny: ["exec", toolName] },
-    });
-    const toolDisabledSession = `agent:main:tool-disabled-${randomUUID()}`;
-    const toolDisabledMarker = `TOOL_DISABLED_${randomUUID()}`;
-    await fixture.normalGatewayTurn({
-      agent: primary,
-      gatewayPassword: toolDisabled.gatewayPassword,
-      sessionKey: toolDisabledSession,
-      prompt: `Try to use the Diffs tool. If unavailable, answer ${toolDisabledMarker}.`,
-      expectedPatterns: [toolDisabledMarker],
-      secrets: [modelSecret],
-    });
-    await fixture.assertNoSessionToolCallEvidence(primary, {
-      sessionKey: toolDisabledSession,
-      turnMarker: toolDisabledMarker,
-      toolName,
-    });
+    // Exercise enablement and approval overrides through the same deployment
+    // lifecycle; each revision removes only the prior generated deny.
+    for (const [blockedPolicy, allowedPolicy] of [
+      [
+        { approvalMode: "always", tools: { [toolName]: { enabled: false } } },
+        { approvalMode: "always", tools: { [toolName]: { enabled: true } } },
+      ],
+      [
+        { approvalMode: "always", tools: { [toolName]: { approvalMode: "never" } } },
+        { approvalMode: "never", tools: { [toolName]: { approvalMode: "always" } } },
+      ],
+    ]) {
+      await fixture.updatePluginPolicy(primary.id, pluginId, blockedPolicy);
+      const toolDisabled = await fixture.deployAndWait(primary);
+      assert.deepEqual(toolDisabled.revision.plugins.plugins[pluginId], {
+        enabled: true,
+        ...blockedPolicy,
+      });
+      assert.deepEqual(await fixture.readOpenClawPluginPolicy(primary, nativePluginId), {
+        plugins: { allow: allowedPlugins, enabled: true },
+        tools: { allow: ["read", nativePluginId], deny: ["exec", toolName] },
+      });
+      const toolDisabledSession = `agent:main:tool-disabled-${randomUUID()}`;
+      const toolDisabledMarker = `TOOL_DISABLED_${randomUUID()}`;
+      await fixture.normalGatewayTurn({
+        agent: primary,
+        gatewayPassword: toolDisabled.gatewayPassword,
+        sessionKey: toolDisabledSession,
+        prompt: `Try to use the Diffs tool. If unavailable, answer ${toolDisabledMarker}.`,
+        expectedPatterns: [toolDisabledMarker],
+        secrets: [modelSecret],
+      });
+      await fixture.assertNoSessionToolCallEvidence(primary, {
+        sessionKey: toolDisabledSession,
+        turnMarker: toolDisabledMarker,
+        toolName,
+      });
 
-    await fixture.updatePluginPolicy(primary.id, pluginId, {
-      tools: { [toolName]: { enabled: true } },
-    });
-    const toolEnabled = await fixture.deployAndWait(primary);
-    assert.deepEqual(await fixture.readOpenClawPluginPolicy(primary, nativePluginId), {
-      plugins: { allow: allowedPlugins, enabled: true },
-      tools: { allow: ["read", nativePluginId], deny: ["exec"] },
-    });
-    const toolEnabledSession = `agent:main:tool-enabled-${randomUUID()}`;
-    await fixture.normalGatewayTurn({
-      agent: primary,
-      gatewayPassword: toolEnabled.gatewayPassword,
-      sessionKey: toolEnabledSession,
-      prompt,
-      expectedPatterns,
-      secrets: [modelSecret],
-    });
-    await fixture.assertSessionToolCallEvidence(primary, {
-      sessionKey: toolEnabledSession,
-      turnMarker,
-      toolName,
-      resultPattern,
-    });
+      await fixture.updatePluginPolicy(primary.id, pluginId, allowedPolicy);
+      const toolEnabled = await fixture.deployAndWait(primary);
+      assert.deepEqual(await fixture.readOpenClawPluginPolicy(primary, nativePluginId), {
+        plugins: { allow: allowedPlugins, enabled: true },
+        tools: { allow: ["read", nativePluginId], deny: ["exec"] },
+      });
+      const toolEnabledSession = `agent:main:tool-enabled-${randomUUID()}`;
+      await fixture.normalGatewayTurn({
+        agent: primary,
+        gatewayPassword: toolEnabled.gatewayPassword,
+        sessionKey: toolEnabledSession,
+        prompt,
+        expectedPatterns,
+        secrets: [modelSecret],
+      });
+      await fixture.assertSessionToolCallEvidence(primary, {
+        sessionKey: toolEnabledSession,
+        turnMarker,
+        toolName,
+        resultPattern,
+      });
+    }
 
     const disabled = await fixture.updatePluginPolicy(primary.id, pluginId, { enabled: false });
     assert.equal(disabled.enabled, false);

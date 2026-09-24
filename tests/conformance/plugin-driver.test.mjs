@@ -187,7 +187,8 @@ test("OpenClaw plugin startup translation rejects unsupported policies", () => {
     occSelection({ approvalMode: "auto" }),
     occSelection({ approvalsReviewer: "auto_review" }),
     occSelection({ destructiveActions: "never" }),
-    occSelection({ tools: { diffs: { approvalMode: "never" } } }),
+    occSelection({ tools: { diffs: { approvalMode: "prompt" } } }),
+    occSelection({ tools: { diffs: { approvalMode: "auto" } } }),
     occSelection({ tools: { exec: { enabled: false } } }),
     { "occ-plugin:unknown": { enabled: true, approvalMode: "always" } },
   ]) {
@@ -253,6 +254,35 @@ test("native tool translation uses the admitted package inventory across multipl
   );
 });
 
+test("native approval exceptions leave unspecified sibling tools denied", () => {
+  const translator = createPluginRuntimeTranslator([
+    nativeDescriptor("notes", ["notes_read", "notes_write", "notes_delete", "constructor"]),
+  ]);
+  const selection = {
+    "occ-plugin:notes": {
+      enabled: true,
+      approvalMode: "never",
+      tools: {
+        notes_read: { approvalMode: "always" },
+        notes_delete: { enabled: false, approvalMode: "always" },
+      },
+    },
+  };
+  const artifact = translator.openClawRuntimeArtifact(selection);
+  assert.deepEqual(artifact.configuration, {
+    plugins: { entries: { notes: { enabled: true } } },
+    tools: { alsoAllow: ["notes"], deny: ["notes_write", "notes_delete", "constructor"] },
+  });
+  for (const [desired, failures] of [
+    [{ "occ-plugin:notes": { ...selection["occ-plugin:notes"], enabled: false } }, []],
+    [selection, [{ pluginId: "occ-plugin:notes" }]],
+  ]) {
+    const blocked = translator.openClawRuntimeArtifact(desired, failures);
+    assert.equal(blocked.configuration.plugins.entries.notes.enabled, false);
+    assert.equal(Object.hasOwn(blocked.configuration, "tools"), false);
+  }
+});
+
 test("native tool denial cannot silently block an allowed sibling through its owner ID", () => {
   const translator = createPluginRuntimeTranslator([
     nativeDescriptor("notes", ["notes", "notes_write"]),
@@ -300,6 +330,35 @@ test("native catalog admission rejects names with broader native policy meanings
   ]) {
     assert.throws(() => createPluginRuntimeTranslator(descriptors), /unambiguous/);
   }
+});
+
+test("OpenClaw explicit tool modes override defaults but cannot override disablement", () => {
+  for (const [overrides, pluginEnabled, toolDenied] of [
+    [{ approvalMode: "never", tools: { diffs: { approvalMode: "always" } } }, true, false],
+    [{ tools: { diffs: { approvalMode: "never" } } }, true, true],
+    [{ tools: { diffs: { enabled: false, approvalMode: "always" } } }, true, true],
+    [{ enabled: false, tools: { diffs: { approvalMode: "always" } } }, false, false],
+    [
+      { approvalMode: "never", tools: { diffs: { enabled: false, approvalMode: "always" } } },
+      false,
+      false,
+    ],
+  ]) {
+    const artifact = openClawRuntimeArtifact(occSelection(overrides));
+    assert.equal(artifact.configuration.plugins.entries.diffs.enabled, pluginEnabled);
+    assert.deepEqual(
+      artifact.configuration.tools,
+      pluginEnabled
+        ? { alsoAllow: ["diffs"], ...(toolDenied ? { deny: ["diffs"] } : {}) }
+        : undefined,
+    );
+  }
+  const failed = openClawRuntimeArtifact(
+    occSelection({ approvalMode: "never", tools: { diffs: { approvalMode: "always" } } }),
+    [{ pluginId: "occ-plugin:diffs" }],
+  );
+  assert.equal(failed.configuration.plugins.entries.diffs.enabled, false);
+  assert.equal(failed.configuration.tools, undefined);
 });
 
 test("Codex curated catalog discovery projects arbitrary marketplace entries", () => {

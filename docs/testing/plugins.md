@@ -21,8 +21,9 @@ commit, selected suite, nonsecret image references, native runtime versions,
 model, pass/fail/skip counts, and relevant sanitized log path for every claimed
 proof.
 
-Native tool enablement uses the trusted pinned catalog's declared tool names.
-Check ownership and ambiguous native deny handling in translator/startup tests.
+Native tool policy uses the trusted pinned catalog's complete declared tool names.
+Check ownership, ambiguous native denies, and default denial of unspecified
+sibling tools in translator/startup tests.
 Diffs remains the only admitted native entry and the real-runtime test case;
 synthetic catalog fixtures do not establish support for additional packages.
 
@@ -86,8 +87,11 @@ source revision; verify the flag in the selected packaged image. The extended
 scenario checks explicit tool allowlist
 composition and disables then re-enables the Diffs tool through Agent updates
 and redeployment, checking ordinary turns and preservation of operator tool
-denies. It also checks preserved plugin deny policy on a disabled deployment and
-rejection of a later conflicting enabled selection before the replacement becomes ready.
+denies. It repeats the blocked/allowed turns with tool `never` under plugin
+`always`, then tool `always` under plugin `never`. Whole-plugin disablement must
+still block the explicitly allowed tool. It also checks preserved plugin deny
+policy on a disabled deployment and rejection of a later conflicting enabled
+selection before the replacement becomes ready.
 
 Codex scenarios additionally need a Codex runtime image via
 `OCC_TEST_KUBERNETES_AGENT_IMAGE` or `OCC_TEST_KUBERNETES_CODEX_IMAGE`, an
@@ -132,9 +136,9 @@ identifiers.
 ## Current proof notes
 
 Policy composition, installation without enablement changes, and native per-tool
-enablement have not been verified in a real Kubernetes Agent deployment. The
-extended scenario requires a compatible packaged runtime plus the cluster,
-database, image, and credentials above. The tool-enablement scenario was not run
+enablement and approval overrides have not been verified in a real Kubernetes
+Agent deployment. The extended scenario requires a compatible packaged runtime
+plus the cluster, database, image, and credentials above. The tool-policy scenario was not run
 on 2026-09-23 because no cluster or image was configured. The proofs below predate
 these changes and do not cover them.
 

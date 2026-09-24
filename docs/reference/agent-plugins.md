@@ -14,10 +14,10 @@ approval policy.
 
 ## Current support
 
-For embedded OpenClaw, the Driver translates plugin enablement, `always` and
-`never` plugin policies, and per-tool enablement using its trusted pinned
+For embedded OpenClaw, the Driver translates plugin and tool enablement and
+their `always` and `never` approval modes using its trusted pinned
 catalog's declared tool names. Diffs is the only admitted native plugin; its
-tool is `diffs`. Tool approval modes, category overrides, and reviewer selection
+tool is `diffs`. `auto`, `prompt`, category overrides, and reviewer selection
 still prevent startup, as do unknown tools or ambiguous native deny names.
 Deployment requires a compatible runtime image; see the
 [native mappings and prerequisites](drivers/plugin-bundled.md#native-mappings-and-limits).
@@ -187,9 +187,12 @@ To keep the Diffs plugin enabled while blocking its tool on the next deployment:
 ```
 
 Set the tool's `enabled` value to `true` in a later update and redeploy to remove
-that restriction. Other plugin and native tool restrictions still apply. This
-mapping requires the [runtime prerequisites](drivers/plugin-bundled.md#preparation-and-security);
-its real deployment proof is [pending](../testing/plugins.md#current-proof-notes).
+that restriction. To allow the tool under plugin `approvalMode: "never"`, set
+`tools.diffs` to `{"enabled": true, "approvalMode": "always"}`. Conversely, tool
+`approvalMode: "never"` blocks it under plugin `always`. Explicit plugin or tool
+disablement, failed installation, and native denies still block execution.
+These mappings require the [runtime prerequisites](drivers/plugin-bundled.md#preparation-and-security);
+their real deployment proof is [pending](../testing/plugins.md#current-proof-notes).
 
 ### Response fields
 
@@ -266,8 +269,9 @@ The API saves structurally valid policy without proving that the selected
 Driver can represent it exactly. Startup performs that validation. See
 [native mappings and current limits](drivers/plugin-bundled.md#native-mappings-and-limits).
 Incomplete tool classifications produce `tools:null`. Verified tool identities
-in the trusted native catalog permit enablement translation without those
-classifications; unsupported tool and category policies still fail startup.
+in the trusted native catalog permit enablement and `always`/`never` translation
+without those classifications; unsupported tool and category policies still
+fail startup.
 
 ## Failures and boundaries
 

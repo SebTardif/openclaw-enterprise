@@ -7,7 +7,7 @@ owns policy semantics; the [Driver feature matrix](../../../../../docs/reference
 records the supported product surface. This page owns the implementation gaps
 and proposed iteration order.
 
-Translator reviewed 2026-09-23 against OCE `21c77bee` (#312), OpenClaw `9a15bd82af`, and Codex
+Translator reviewed 2026-09-23 against OCE `d47d7df6` (#313), OpenClaw `9a15bd82af`, and Codex
 `e4d0ba4e92`. Harness capability below is source evidence, not deployment proof.
 The [runtime image](../../../../../deploy/runtime/Dockerfile) now builds OpenClaw
 from source commit `2765f7a3341b8be4835afacbff3d04c6e3c3c79b` and pins Codex
@@ -29,18 +29,18 @@ Codex plugin scope is concrete hosted apps from `plugin/read` in the curated
 marketplace. Native OpenClaw scope is the admitted catalog, currently Diffs.
 Neither column implies arbitrary plugin-package support.
 
-| OCE policy                                         | Codex plugins: translated          | Codex harness: remaining work                                                    | Native OC plugins: translated | OC harness: remaining work                                                                                    |
-| -------------------------------------------------- | ---------------------------------- | -------------------------------------------------------------------------------- | ----------------------------- | ------------------------------------------------------------------------------------------------------------- |
-| Plugin enable/disable                              | Yes                                | Existing app/plugin controls                                                     | Yes                           | Existing plugin enablement and tool filters                                                                   |
-| `always`: no added approval                        | Yes, except explicit `auto_review` | Existing `approve` mode; other restrictions still apply                          | Yes                           | Existing execution path; other restrictions still apply                                                       |
-| `never`: block plugin calls                        | Yes, by disabling the plugin       | Separate default denial from plugin disablement when adding tool exceptions      | Yes, by disabling the plugin  | Same distinction needed for tool exceptions                                                                   |
-| `auto`: decide whether review is needed            | Yes                                | Native annotation and remembered-approval behavior                               | No                            | **Runtime work:** annotation trigger, metadata, and native remembered-grant semantics                         |
-| `prompt` with human reviewer                       | No                                 | **Translation:** native every-call `prompt`; pending PRs below                   | No                            | **Integration:** trusted tool policy plus existing human approval transport                                   |
-| Select `auto_review` reviewer                      | Yes with `auto`; `prompt` rejected | **Translation** for `prompt`; native per-app reviewer already exists             | No                            | **Runtime work:** extend the reviewer to arbitrary native tool calls                                          |
-| Per-tool enable/disable                            | No                                 | **Translation:** native app tool settings; discover exact tool identities        | Yes (#312)                    | Exact-tool denies from trusted pinned ownership; real deployment verification pending                         |
-| Per-tool approval modes                            | No                                 | **Translation:** native tool approval/enablement settings                        | No                            | **Integration** for `always`/`never`/human `prompt`; **runtime work** for `auto`/automatic review             |
-| `writes` / `destructiveActions` category overrides | No                                 | **Translation + metadata:** compile effective category policy into tool settings | No                            | **Integration + metadata:** evaluate categories in the trusted policy gate; automatic review remains separate |
-| Tool exceptions to plugin/category defaults        | No                                 | **Translation:** preserve OCE precedence and independent enablement              | No                            | **Integration:** same precedence, without bypassing native denies                                             |
+| OCE policy                                         | Codex plugins: translated          | Codex harness: remaining work                                                    | Native OC plugins: translated                 | OC harness: remaining work                                                                                    |
+| -------------------------------------------------- | ---------------------------------- | -------------------------------------------------------------------------------- | --------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| Plugin enable/disable                              | Yes                                | Existing app/plugin controls                                                     | Yes                                           | Existing plugin enablement and tool filters                                                                   |
+| `always`: no added approval                        | Yes, except explicit `auto_review` | Existing `approve` mode; other restrictions still apply                          | Yes                                           | Existing execution path; other restrictions still apply                                                       |
+| `never`: block plugin calls by default             | Yes, by disabling the plugin       | Separate default denial from plugin disablement when adding tool exceptions      | Yes, with explicit `always` exceptions (#313) | Plugin default denial is independent of explicit disablement; real deployment verification pending            |
+| `auto`: decide whether review is needed            | Yes                                | Native annotation and remembered-approval behavior                               | No                                            | **Runtime work:** annotation trigger, metadata, and native remembered-grant semantics                         |
+| `prompt` with human reviewer                       | No                                 | **Translation:** native every-call `prompt`; pending PRs below                   | No                                            | **Integration:** trusted tool policy plus existing human approval transport                                   |
+| Select `auto_review` reviewer                      | Yes with `auto`; `prompt` rejected | **Translation** for `prompt`; native per-app reviewer already exists             | No                                            | **Runtime work:** extend the reviewer to arbitrary native tool calls                                          |
+| Per-tool enable/disable                            | No                                 | **Translation:** native app tool settings; discover exact tool identities        | Yes (#312)                                    | Exact-tool denies from trusted pinned ownership; real deployment verification pending                         |
+| Per-tool approval modes                            | No                                 | **Translation:** native tool approval/enablement settings                        | Partial: `always`/`never` (#313)              | **Integration** for human `prompt`; **runtime work** for `auto`/automatic review                              |
+| `writes` / `destructiveActions` category overrides | No                                 | **Translation + metadata:** compile effective category policy into tool settings | No                                            | **Integration + metadata:** evaluate categories in the trusted policy gate; automatic review remains separate |
+| Tool exceptions to plugin/category defaults        | No                                 | **Translation:** preserve OCE precedence and independent enablement              | Partial: plugin defaults (#313)               | Category translation remains missing; explicit disablement and native denies remain terminal                  |
 
 `auto` selects **when** to review; `auto_review` selects **who** reviews. Human
 approval can therefore ship before generic automatic review. An omitted reviewer
@@ -71,17 +71,18 @@ argument schema or from the model provider.
 
 ## Implement easier policies first
 
-| Slice                                                   | Implementation                                                                                                                                                                                                                                | Status                                                          |
-| ------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
-| Generic native per-tool enablement                      | [OCE #312](https://github.com/openclaw/openclaw-enterprise/pull/312): translate trusted pinned catalog tool identities into native denies, preserving operator restrictions. Diffs remains the only admitted entry.                           | Implemented here; real deployment proof pending.                |
-| Native per-tool `always`/`never` and default precedence | [OCE #313](https://github.com/openclaw/openclaw-enterprise/pull/313), stacked on #312: apply explicit tool mode before plugin default, deny unspecified siblings, and keep explicit disablement, install failure, and native denies terminal. | Follow-up; not in this revision. Real deployment proof pending. |
+| Slice                                                   | Implementation                                                                                                                                                                                                                                | Status                                           |
+| ------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------ |
+| Generic native per-tool enablement                      | [OCE #312](https://github.com/openclaw/openclaw-enterprise/pull/312): translate trusted pinned catalog tool identities into native denies, preserving operator restrictions. Diffs remains the only admitted entry.                           | Implemented here; real deployment proof pending. |
+| Native per-tool `always`/`never` and default precedence | [OCE #313](https://github.com/openclaw/openclaw-enterprise/pull/313), stacked on #312: apply explicit tool mode before plugin default, deny unspecified siblings, and keep explicit disablement, install failure, and native denies terminal. | Implemented here; real deployment proof pending. |
 
-Translator implementation in this revision: #312 `21c77bee`. Follow-up #313 was
-reviewed at `d47d7df6`. Adding an admitted native plugin requires verified package
-and tool metadata, not a plugin-specific policy branch. #312 accepts tool
-`enabled` only; plugin default `never`, explicit plugin disablement, installation
-failure, and operator native denies remain terminal. Unknown tool identities and
-denials that would also block allowed sibling tools are rejected.
+Translator implementations in this revision: #312 `21c77bee` and #313 `d47d7df6`.
+Adding an admitted native plugin requires verified package and tool metadata,
+not a plugin-specific policy branch. An enabled tool's explicit `always` can
+override plugin default `never`; unspecified siblings remain denied. Explicit
+plugin/tool disablement, installation failure, and operator native denies remain
+terminal. Unknown tool identities and denials that would also block allowed
+sibling tools are rejected.
 
 The ordering below is proposed; it does not select a new configuration or
 storage contract. Finish and verify each supported slice before enabling it.
@@ -93,10 +94,11 @@ storage contract. Finish and verify each supported slice before enabling it.
    real Agent deployment proof remains pending. The public catalog stays
    `tools:null` until truthful action classifications are available. Codex still
    needs exact tool-to-app identities before translating its native tool settings.
-3. **Finish native per-tool `always`/`never` overrides.** Draft #313 reuses
-   those identities to distinguish a plugin's default denial from explicit disablement. An
-   allowed tool exception must leave unspecified sibling tools denied; plugin
-   or tool `enabled:false`, installation failure, and native denies remain terminal.
+3. **Verify native per-tool `always`/`never` overrides.** Default precedence is
+   implemented here using the complete tool inventory. Run the real Agent flow
+   for tool denial, explicit `always` under default `never`, and preserved native
+   denies before promoting deployment support; see the
+   [runtime proof notes](../../../../../docs/testing/plugins.md).
 4. **Add per-tool Codex approval translation and OC human prompting.** Codex
    has native controls; OC has reusable approval delivery and wait/resolve APIs.
    OC needs trusted ownership and approval bound to the exact executed call.

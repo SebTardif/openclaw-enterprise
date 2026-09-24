@@ -88,10 +88,11 @@ Agent thread retains it.
 | Surface                                       | Current behavior                                                                                                                                                        |
 | --------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | OpenClaw `always` and enable/disable          | Set `plugins.entries.<id>.enabled`; extend a nonempty `tools.allow`, otherwise `tools.alsoAllow`, while preserving other native restrictions.                           |
-| OpenClaw `never`                              | Disable the selected plugin, blocking its owned execution surfaces.                                                                                                     |
-| OpenClaw `tools.<toolId>.enabled`             | For an enabled plugin, `false` adds the declared tool to native `tools.deny`; `true` adds no deny. Existing operator denies remain effective.                           |
+| OpenClaw `never`                              | Disable the selected plugin unless an enabled tool explicitly overrides the default with `always`. Explicit plugin disablement still wins.                              |
+| OpenClaw `tools.<toolId>.enabled`             | `false` blocks the tool; `true` follows its effective approval mode. While the plugin stays enabled, blocked tools are added to native `tools.deny`.                    |
+| OpenClaw tool `always` / `never`              | Override the plugin default for that tool. `always` adds no approval step; `never` blocks execution. Other restrictions still apply.                                    |
 | OpenClaw `prompt`, `auto`, reviewer           | Startup failure; no equivalent generic native plugin approval control is implemented.                                                                                   |
-| OpenClaw tool approval modes and categories   | Startup failure; only per-tool enablement is translated. Unknown tool IDs and ambiguous native deny names are rejected.                                                 |
+| OpenClaw categories and unknown tool IDs      | Startup failure. Ambiguous native deny names are also rejected.                                                                                                         |
 | Codex internal `listCatalog`                  | Reads native `openai-curated-remote` entries when the optional catalog reader is configured; saved selections remain on Agent reads. No HTTP inventory endpoint exists. |
 | Codex selected-app `auto`                     | Render native Codex apps/plugins enablement with the selected app `enabled:true`, plus a selected-only OpenClaw Codex bridge entry.                                     |
 | Codex selected-app `never` or `enabled:false` | Render the resolved install identity while omitting the native app entry and disabling the selected bridge entry so execution remains blocked.                          |
@@ -106,9 +107,13 @@ sibling, such as a tool sharing a multi-tool plugin's ID. The pinned Diffs packa
 declares only `diffs` in `contracts.tools`, so that name also matching its plugin ID
 is unambiguous. Verified names do not supply the public catalog's required action
 classifications: it still returns `tools:null` and does not infer categories.
-Tool enablement cannot override a disabled plugin, plugin `never`, an installation
-failure, or an operator's native tool deny. Redeployment with the tool enabled
-removes only the deny generated from the prior Agent selection.
+An explicit tool mode takes precedence over the plugin default. Under plugin
+`never`, an enabled tool with `always` keeps the plugin enabled, while every
+other declared tool still inherits denial unless explicitly allowed. Without an
+allowed exception, plugin `never` disables the plugin. Explicit plugin or tool
+`enabled:false`, installation failure, and operator native denies still block
+execution. Redeployment removes only obsolete denies generated from the prior
+Agent selection, retaining operator restrictions.
 
 The Codex boundary is separate from approval-mode translation. Marketplace
 visibility does not prove Agent support. The inspected `rust-v0.149.0` native
@@ -147,8 +152,9 @@ For Codex, a differing
 with Driver ownership. Identical managed entries are accepted. An enabled native
 plugin entry also conflicts with `plugins.enabled:false`, a matching
 `plugins.deny` entry, or a nonempty `plugins.allow` that excludes it. This includes
-the Codex transport plugin required by selected Codex apps. Disabled and `never`
-OpenClaw selections can remain denied. Gateway startup rejects these conflicts
+the Codex transport plugin required by selected Codex apps. Disabled OpenClaw
+selections, including `never` without an allowed tool exception, can remain denied.
+Gateway startup rejects these conflicts
 before OpenClaw package installation or starting the Gateway; Agent writes still
 save structurally valid desired state. Native configuration outside managed
 fields, including tool denies and profiles, is retained.
