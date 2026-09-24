@@ -7,7 +7,7 @@ and use the suite-specific infrastructure below.
 ## Start a reusable development environment
 
 From the repository root, use the developer launcher to prepare a private,
-reusable OpenShell `v0.1.0-pre.5` environment:
+reusable OpenShell `v0.1.0-pre.7` environment:
 
 ```sh
 ./scripts/openshell up
@@ -45,8 +45,11 @@ Remove the owned environment when finished:
 ./scripts/openshell down
 ```
 
-Cleanup permanently deletes this helper's cluster and test database. A partial
-setup remains recorded for safe cleanup; run `down` before retrying. Set the
+Cleanup permanently deletes this helper's cluster and test database. Concurrent
+lifecycle commands fail rather than modifying the same resources. If interrupted
+stale-lock recovery leaves `lifecycle-recovery` in the state directory, verify
+that no OpenShell commands or their child processes remain before removing that
+empty directory and retrying. A partial setup remains recorded for safe cleanup; run `down` before retrying. Set the
 absolute `OCC_OPENSHELL_STATE_DIR` before every command to keep multiple
 checkouts separate. Set `OCC_OPENSHELL_CONTAINER_ENGINE=docker` or `podman` when
 automatic engine selection is ambiguous. If `k3d` on `PATH` is an inactive
@@ -54,7 +57,7 @@ version-manager shim, set `OCC_OPENSHELL_K3D_BIN` to an absolute working
 executable. Use `OCC_OPENSHELL_COREPACK_BIN` for the same problem with corepack.
 
 This launcher does not start a supported production Installation or an
-interactive OCC Agent. Stock pre.5 still lacks the workload projections needed
+interactive OCC Agent. Stock pre.7 still lacks the workload projections needed
 by the regular Agent path.
 
 ## OpenShell Sandbox

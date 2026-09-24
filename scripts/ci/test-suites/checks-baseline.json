@@ -338,7 +338,8 @@
         "OpenShell launcher runs the positive compatibility proof with the selected credential",
         "OpenShell launcher accepts a private credential file without persisting it",
         "OpenShell launcher reports non-secret state and cleans only its recorded resources",
-        "OpenShell launcher rejects prepared state from another checkout"
+        "OpenShell launcher rejects prepared state from another checkout",
+        "OpenShell launcher serializes contenders recovering a stale lifecycle lock"
       ]
     }
   ]

@@ -12,7 +12,7 @@ usage: ./scripts/openshell [up|test|info|down|help]
        ./scripts/openshell get <field>
 
 Commands:
-  up    Prepare or reuse an owned OpenShell v0.1.0-pre.5 development
+  up    Prepare or reuse an owned OpenShell v0.1.0-pre.7 development
         environment. This is the default command.
   test  Prepare or reuse the environment, then run the real model, identity,
         filesystem, network, replacement, and cleanup proof.
@@ -34,7 +34,7 @@ for it, or set OCC_OPENSHELL_ENV_FILE to an absolute private dotenv file.
 OCC_TEST_OPENAI_MODEL defaults to gpt-6-astra.
 
 This workflow uses the verification-only compatibility bridge for OpenShell
-v0.1.0-pre.5. It does not make OpenShell a supported production Agent runtime.
+v0.1.0-pre.7. It does not make OpenShell a supported production Agent runtime.
 EOF
 }
 
@@ -89,7 +89,13 @@ validate_credential_env_file() {
     if (!info.isFile()) throw new Error("credential environment path must be a file");
     if ((info.mode & 0o777) !== 0o600) throw new Error("credential environment file must have mode 0600");
   ' "$credential_env_file" || fail "OCC_OPENSHELL_ENV_FILE must name a mode-0600 file"
+  # Node gives inherited variables precedence over dotenv, even when empty.
+  if [ -z "${OPENAI_API_KEY:-}" ]; then
+    unset OPENAI_API_KEY
+  fi
   node_command=(node "--env-file=$credential_env_file")
+  "${node_command[@]}" -e 'if (!process.env.OPENAI_API_KEY) process.exit(1)' ||
+    fail "credential environment file must supply OPENAI_API_KEY"
 }
 
 prompt_openai_api_key() {
@@ -212,7 +218,7 @@ unset OCC_TEST_OPENSHELL_SANDBOX_IMAGE
 unset OCC_TEST_OPENSHELL_SUPERVISOR_IMAGE
 
 state_base="${XDG_STATE_HOME:-${HOME}/.local/state}"
-state_dir="${OCC_OPENSHELL_STATE_DIR:-$state_base/openclaw-enterprise/openshell-$engine-pre5}"
+state_dir="${OCC_OPENSHELL_STATE_DIR:-$state_base/openclaw-enterprise/openshell-$engine-pre7}"
 case "$state_dir" in
   /*) ;;
   *) fail "OCC_OPENSHELL_STATE_DIR must be absolute" ;;
@@ -309,6 +315,11 @@ release_lifecycle_lock() {
 acquire_lifecycle_lock() {
   lifecycle_owner="$$:$action"
   if ! ln -s "$lifecycle_owner" "$lifecycle_lock" 2>/dev/null; then
+    # Serialize recovery and reread the owner inside the guard. Another caller
+    # may have replaced the stale link while this process was waiting.
+    mkdir "$state_dir/lifecycle-recovery" 2>/dev/null ||
+      fail "lifecycle recovery is busy; if interrupted, verify no OpenShell commands remain before removing $state_dir/lifecycle-recovery"
+    trap 'rmdir "$state_dir/lifecycle-recovery"' EXIT
     existing_owner="$(readlink "$lifecycle_lock" 2>/dev/null || true)"
     existing_pid="${existing_owner%%:*}"
     existing_action="${existing_owner#*:}"
@@ -320,6 +331,7 @@ acquire_lifecycle_lock() {
     fi
     rm -f "$lifecycle_lock"
     ln -s "$lifecycle_owner" "$lifecycle_lock" 2>/dev/null || fail "another OpenShell command acquired the lifecycle lock"
+    rmdir "$state_dir/lifecycle-recovery"
   fi
   trap release_lifecycle_lock EXIT
 }
@@ -348,7 +360,7 @@ OpenShell development environment
   Engine:           $engine_label
   State directory:  $state_dir
   Prepared state:   $prepared_status
-  OpenShell:        v0.1.0-pre.5 compatibility bridge
+  OpenShell:        v0.1.0-pre.7 compatibility bridge
   Kubeconfig:       $kubeconfig
   Context:          $context
 EOF
@@ -425,7 +437,7 @@ fi
 
 cat <<EOF
 OpenShell development environment is ready.
-OpenShell:   v0.1.0-pre.5 compatibility bridge
+OpenShell:   v0.1.0-pre.7 compatibility bridge
 Kubeconfig: $(read_environment_field OCC_TEST_KUBERNETES_KUBECONFIG)
 Context:    $(read_environment_field OCC_TEST_KUBERNETES_CONTEXT)
 

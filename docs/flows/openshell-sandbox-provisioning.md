@@ -117,10 +117,13 @@ NetworkPolicies after revision resources are gone.
 
 ## Debugging and Verification
 
-- `./scripts/openshell test` prepares or reuses the owned pre.5 environment and
-  runs the verification-only compatibility path. `./scripts/openshell info`
-  reports its non-secret cluster state, and `./scripts/openshell down` removes
-  only resources recorded by that helper.
+- `./scripts/openshell test` prepares or reuses the owned pre.7 verification
+  environment. Its lifecycle symlink excludes overlapping preparation, tests,
+  and cleanup; an atomic recovery directory serializes stale-owner recovery.
+  Interrupted recovery fails closed until an operator confirms no commands
+  remain and removes the recovery directory. `info` reports non-secret state;
+  `down` delegates deletion to the CI preparation ownership ledger.
+
 - `node --test tests/integration/ci-openshell.test.mjs` checks bootstrap safety
   and immutable Helm image value rendering without selecting a real cluster.
 - `node --test tests/integration/sandbox-driver-startup.test.mjs` checks Driver

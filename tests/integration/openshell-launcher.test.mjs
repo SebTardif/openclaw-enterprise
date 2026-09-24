@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
@@ -40,9 +40,10 @@ async function prepareFakeEnvironment(context, { foreignState = false } = {}) {
   const root = await mkdtemp(join(tmpdir(), "oce-openshell-launcher-"));
   context.after(() => rm(root, { recursive: true, force: true }));
   const bin = join(root, "bin");
-  const stateDirectory = join(root, "state", "openclaw-enterprise", "openshell-docker-pre5");
+  const stateDirectory = join(root, "state", "openclaw-enterprise", "openshell-docker-pre7");
   const prepareLog = join(root, "prepare.log");
   const testRecord = join(root, "test-record.txt");
+  const credentialRecord = join(root, "credential-record.txt");
   await mkdir(bin);
 
   const command = async (name, source) => {
@@ -67,6 +68,14 @@ exit 90
     "node",
     `#!/bin/sh
 if [ "$1" = -e ]; then exec '${process.execPath}' "$@"; fi
+case "$1" in
+  --env-file=*)
+    option="$1"
+    shift
+    if [ "$1" = -e ]; then exec '${process.execPath}' "$option" "$@"; fi
+    '${process.execPath}' "$option" -e 'const fs = require("node:fs"); if (!process.env.OPENAI_API_KEY) process.exit(95); fs.writeFileSync(process.argv[1], process.env.OPENAI_API_KEY)' '${credentialRecord}' || exit "$?"
+    ;;
+esac
 if printf '%s' "$*" | grep -q 'scripts/ci/prepare.mjs'; then
   [ -n "$OPENCLAW_CI_COREPACK_BIN" ] || exit 94
   printf '%s\n' "$*" >> '${prepareLog}'
@@ -86,6 +95,10 @@ if printf '%s' "$*" | grep -q 'scripts/ci/prepare.mjs'; then
   exit 0
 fi
 if printf '%s' "$*" | grep -q 'scripts/ci/cleanup.mjs'; then
+  if [ -n "\${LAUNCHER_TEST_CONTENDER:-}" ]; then
+    touch '${root}/cleanup-'"$LAUNCHER_TEST_CONTENDER"
+    while [ ! -f '${root}/finish-cleanup' ]; do sleep 0.02; done
+  fi
   rm -f '${join(stateDirectory, "state.json")}'
   exit 0
 fi
@@ -112,10 +125,16 @@ printf '%s\n%s\n%s\n' "$*" "\${OCC_TEST_OPENSHELL_SECRET_PROJECTION:-}" "\${OPEN
       DOCKER_HOST: "",
       OPENAI_API_KEY: "test-only-openai-key",
       OCC_OPENSHELL_CONTAINER_ENGINE: "docker",
+      OCC_OPENSHELL_STATE_DIR: stateDirectory,
+      OCC_OPENSHELL_ENV_FILE: "",
+      OCC_OPENSHELL_K3D_BIN: "k3d",
+      OCC_OPENSHELL_COREPACK_BIN: "corepack",
       XDG_STATE_HOME: join(root, "state"),
       PATH: `${bin}:/usr/bin:/bin`,
     },
     prepareLog,
+    credentialRecord,
+    bin,
     root,
     stateDirectory,
     testRecord,
@@ -132,7 +151,7 @@ test("OpenShell launcher prepares one owned reusable development environment", a
     env: fixture.env,
   });
   assert.match(first.stdout, /OpenShell development environment is ready/);
-  assert.match(first.stdout, /v0\.1\.0-pre\.5 compatibility bridge/);
+  assert.match(first.stdout, /v0\.1\.0-pre\.7 compatibility bridge/);
   assert.equal(
     await readFile(fixture.prepareLog, "utf8"),
     [
@@ -184,10 +203,12 @@ test("OpenShell launcher accepts a private credential file without persisting it
     },
   });
 
-  assert.match(
-    await readFile(fixture.prepareLog, "utf8"),
-    new RegExp(`--env-file=${credentialFile}`),
-  );
+  assert.equal(await readFile(fixture.credentialRecord, "utf8"), "private-file-value");
+  await execute("scripts/openshell", ["test"], {
+    cwd: repositoryRoot,
+    env: { ...fixture.env, OCC_OPENSHELL_ENV_FILE: credentialFile },
+  });
+  assert.equal(await readFile(fixture.credentialRecord, "utf8"), "test-only-openai-key");
   const persisted = `${await readFile(join(fixture.stateDirectory, "state.json"), "utf8")}${await readFile(
     join(fixture.stateDirectory, "environment"),
     "utf8",
@@ -231,4 +252,71 @@ test("OpenShell launcher rejects prepared state from another checkout", async (c
     }),
     /prepared state belongs to another repository checkout/,
   );
+});
+
+async function waitForFile(path) {
+  for (let attempt = 0; attempt < 250; attempt += 1) {
+    try {
+      await readFile(path);
+      return;
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+    }
+    await new Promise((resolveWait) => setTimeout(resolveWait, 20));
+  }
+  throw new Error(`Timed out waiting for ${path}`);
+}
+
+test("OpenShell launcher serializes contenders recovering a stale lifecycle lock", async (context) => {
+  const fixture = await prepareFakeEnvironment(context);
+  await execute("scripts/openshell", ["up"], { cwd: repositoryRoot, env: fixture.env });
+  // Keep both callers' stale-owner observations apart so the second cannot
+  // unlink the first caller's replacement lock during destructive cleanup.
+  await symlink("999999999:up", join(fixture.stateDirectory, "lifecycle.lock"));
+  await writeFile(
+    join(fixture.bin, "readlink"),
+    `#!/bin/sh
+value=$(/usr/bin/readlink "$@") || exit "$?"
+if [ "$value" = '999999999:up' ]; then
+  touch '${fixture.root}/observed-'"$LAUNCHER_TEST_CONTENDER"
+  while [ ! -f '${fixture.root}/release-'"$LAUNCHER_TEST_CONTENDER" ]; do sleep 0.02; done
+fi
+printf '%s\\n' "$value"
+`,
+    { mode: 0o700 },
+  );
+  const launch = (name) =>
+    execute("scripts/openshell", ["down"], {
+      cwd: repositoryRoot,
+      env: { ...fixture.env, LAUNCHER_TEST_CONTENDER: name },
+      timeout: 10000,
+    }).then(
+      (result) => ({ ok: true, ...result }),
+      (error) => ({ ok: false, error }),
+    );
+  const first = launch("first");
+  let second;
+  try {
+    await waitForFile(join(fixture.root, "observed-first"));
+    second = launch("second");
+    // A correct caller rejects the occupied recovery guard. The old caller
+    // reaches readlink instead; release it only after the first owns cleanup.
+    await Promise.race([second, waitForFile(join(fixture.root, "observed-second"))]);
+    await writeFile(join(fixture.root, "release-first"), "");
+    await waitForFile(join(fixture.root, "cleanup-first"));
+    await writeFile(join(fixture.root, "release-second"), "");
+    const outcome = await Promise.race([
+      second,
+      waitForFile(join(fixture.root, "cleanup-second")).then(() => ({ ok: true })),
+    ]);
+    assert.equal(outcome.ok, false, "a second lifecycle command entered concurrent cleanup");
+    assert.match(outcome.error.stderr, /lifecycle recovery is busy|already running/);
+  } finally {
+    await Promise.all(
+      ["release-first", "release-second", "finish-cleanup"].map((name) =>
+        writeFile(join(fixture.root, name), ""),
+      ),
+    );
+    await Promise.all([first, second]);
+  }
 });
