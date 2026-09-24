@@ -92,7 +92,9 @@ test("hosted plugin discovery requests one upstream page and preserves opaque cu
     const request = new URL(url);
     requests.push(request);
     return Response.json({
-      plugins: request.searchParams.has("pageToken") ? [] : [plugin()],
+      plugins: request.searchParams.has("pageToken")
+        ? []
+        : [plugin({ interface: { logo_url: "https://public.example/logo.png" } })],
       pagination: {
         limit: 20,
         next_page_token: request.searchParams.has("pageToken") ? null : cursor,
@@ -103,6 +105,7 @@ test("hosted plugin discovery requests one upstream page and preserves opaque cu
   const first = await driver.discoverCatalog({ accessToken });
   assert.equal(requests.length, 1);
   assert.equal(first.plugins[0].id, "codex-plugin:discovery-fixture@openai-curated-remote");
+  assert.equal(first.plugins[0].logoUrl, "https://public.example/logo.png");
   assert.equal(first.nextCursor, cursor);
   const second = await driver.discoverCatalog({ accessToken, cursor: first.nextCursor });
   assert.deepEqual(second, { plugins: [], nextCursor: null });
@@ -119,6 +122,41 @@ test("hosted plugin discovery requests one upstream page and preserves opaque cu
       },
     ],
   );
+});
+
+test("hosted plugin logos prefer valid public HTTPS metadata and omit invalid cosmetic values", async (t) => {
+  const primary = "https://images.example/logo.png?signature=fixture&expires=123";
+  const fallback = "https://images.example/composer.png";
+  const detail = plugin();
+  const driver = useService(t, detail, [app("connector_fixture")]);
+  const cases = [
+    [{ logo_url: primary, composer_icon_url: fallback }, primary],
+    [{ composer_icon_url: fallback }, fallback],
+    [{ logo_url: "http://images.example/logo.png", composer_icon_url: fallback }, fallback],
+    [{}, undefined],
+    ...[
+      null,
+      12,
+      {},
+      "not-a-url",
+      "http://images.example/logo.png",
+      "data:image/png;base64,aGVsbG8=",
+      "https://user:password@images.example/logo.png",
+      "https://user@images.example/logo.png",
+      "https://images.example/logo\n.png",
+      "https://images.example/logo\u0000.png",
+      `https://images.example/${"a".repeat(8192)}`,
+    ].map((logo_url) => [{ logo_url }, undefined]),
+  ];
+  for (const [presentation, expected] of cases) {
+    detail.release.interface = presentation;
+    const result = await driver.getCatalogPlugin({ accessToken, pluginId });
+    assert.equal(result.logoUrl, expected);
+    assert.equal(Object.hasOwn(result, "logoUrl"), expected !== undefined);
+    // Bad decorative metadata must not make an otherwise available plugin unusable.
+    assert.equal(result.available, true);
+    assert.equal(result.tools.length, 1);
+  }
 });
 
 test("hosted plugin tools respect parent app access independently of action policy", async (t) => {

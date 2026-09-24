@@ -54,16 +54,17 @@ graph TD
 
 ### Credential-scoped discovery
 
-Create Agent posts entered PATs to `POST /namespaces/:namespaceId/agents/plugins`
-and remote IDs to `/agents/plugins/details`. OCC authorizes Namespace Agent creation,
-then calls the selected Driver without creating resources.
+Create Agent posts PATs to `POST /namespaces/:namespaceId/agents/plugins`
+and remote IDs to `/agents/plugins/details`. OCC checks Namespace Agent-create authority,
+then calls the Driver without writes.
 
 `drivers/plugin/hosted-catalog.ts` resolves account identity through the PAT issuer
-and requests 20 GLOBAL entries. The modal forwards cursors, filters each
-page locally (upstream search rejects PATs), and loads details. Unknown tools stay `tools:null`.
+and requests 20 GLOBAL entries. The modal uses cursors, filters locally
+(search rejects PATs), and loads details. Unknown tools: `tools:null`.
 
-Bounded, redirect-free requests return `no-store` metadata excluding credentials,
-artifact URLs, and upstream errors. Discovery proves no execution or enforcement; see [Console discovery](../reference/console/create-and-deploy.md)
+Bounded, redirect-free reads return `no-store` metadata without credentials, artifact
+URLs, or upstream errors. Public HTTPS logos render without referrers; failures
+show initials. Logos never enter selections. See [Console discovery](../reference/console/create-and-deploy.md)
 and the [Driver contract](../reference/drivers/plugin.md).
 
 ### 1. Validate desired state under exact-Agent authority

@@ -19,6 +19,31 @@ function validToolPolicy(value) {
   );
 }
 
+function pluginIdentity(entry, heading = false) {
+  const logo = element(
+    "span",
+    { className: "plugin-logo", "aria-hidden": "true" },
+    entry.name.slice(0, 1).toUpperCase(),
+  );
+  if (entry.logoUrl) {
+    const image = element("img", {
+      alt: "",
+      referrerpolicy: "no-referrer",
+      decoding: "async",
+      loading: "lazy",
+    });
+    image.addEventListener("error", () => image.remove(), { once: true });
+    image.src = entry.logoUrl;
+    logo.append(image);
+  }
+  return element(
+    heading ? "div" : "span",
+    { className: "plugin-identity" },
+    logo,
+    heading ? element("h3", { tabindex: "-1" }, entry.name) : element("span", {}, entry.name),
+  );
+}
+
 export function createPluginFields({
   input,
   catalog = null,
@@ -292,7 +317,7 @@ export function createPluginFields({
     list.replaceChildren(
       ...visible.map((entry) => {
         const selected = values?.[entry.id];
-        const item = button(entry.name, () => showPlugin(entry), {
+        const item = button(pluginIdentity(entry), () => showPlugin(entry), {
           className: "plugin-list-item",
           "aria-label": entry.name,
           "aria-current": String(activeId === entry.id),
@@ -331,7 +356,7 @@ export function createPluginFields({
           element(
             "div",
             { className: "plugin-detail-header" },
-            element("h3", { tabindex: "-1" }, entry.name),
+            pluginIdentity(entry, true),
             element(
               "span",
               { className: "badge" },

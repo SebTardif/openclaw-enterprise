@@ -35,6 +35,13 @@ unavailability reasons are optional metadata; `destructive` and `writes`
 annotations are also optional. Missing classifications mean unknown. An entry
 does not grant access, select a plugin, or prove the policy can run.
 
+Optional `logoUrl` supplies a public HTTPS presentation image. Bundled Codex reads
+`release.interface.logo_url`, then `composer_icon_url`; missing or invalid URLs
+are omitted. Console loads these images without PAT/account headers or referrers,
+and shows initials if an image fails. URLs may expire and are never copied into
+Agent selections. Console CSP permits HTTPS images while retaining same-origin
+scripts and connections.
+
 Authorized `GET /installation` exposes the selected Driver's identity and policy
 capabilities. See the [capability response](../agent-plugins.md#discover-policy-controls).
 

@@ -4696,6 +4696,24 @@ test("Create Agent discovers hosted plugins with a transient PAT through the sel
   const namespace = await fixture.createNamespace("Hosted plugin discovery", { ready: true });
   const { page } = await newPage(t, fixture);
   const originalFetch = globalThis.fetch;
+  const logoUrl = "https://plugin-images.example.test/calendar.png";
+  const brokenLogoUrl = "https://plugin-images.example.test/missing.png";
+  const imageRequests = [];
+  // The public image host is the only browser request substituted; the real CSP and image loader run.
+  await page.route("https://plugin-images.example.test/**", async (route) => {
+    imageRequests.push({ url: route.request().url(), headers: await route.request().allHeaders() });
+    await route.fulfill(
+      route.request().url() === logoUrl
+        ? {
+            contentType: "image/png",
+            body: Buffer.from(
+              "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a9foAAAAASUVORK5CYII=",
+              "base64",
+            ),
+          }
+        : { status: 404, body: "Image unavailable" },
+    );
+  });
   let failTools = true;
   let releaseList;
   let listStarted;
@@ -4714,7 +4732,11 @@ test("Create Agent discovers hosted plugins with a transient PAT through the sel
     release: {
       display_name: name === "calendar" ? "Calendar" : name,
       description: "Hosted plugin",
-      interface: { short_description: "Hosted tools" },
+      interface: {
+        short_description: "Hosted tools",
+        ...(name === "calendar" ? { logo_url: logoUrl } : {}),
+        ...(name === "plugin-0" ? { composer_icon_url: brokenLogoUrl } : {}),
+      },
       requires_local_executor: false,
       app_ids: ["app_calendar", "app_shared"],
       skills: [],
@@ -4804,10 +4826,28 @@ test("Create Agent discovers hosted plugins with a transient PAT through the sel
   await page.getByLabel("Authentication method", { exact: true }).selectOption("codex_pat");
   const token = page.getByLabel("Service account token", { exact: true });
   await token.fill("at-browser-plugin-one");
+  const brokenImageRequest = page.waitForRequest(brokenLogoUrl);
   await page.getByRole("button", { name: "Configure plugins", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "Configure plugins", exact: true });
   const calendar = dialog.getByRole("button", { name: "Calendar", exact: true });
   await calendar.waitFor();
+  const listLogo = calendar.locator(".plugin-logo img");
+  await listLogo.evaluate((image) => image.decode());
+  assert.ok(await listLogo.evaluate((image) => image.naturalWidth > 0));
+  assert.equal(await listLogo.getAttribute("alt"), "");
+  assert.equal(await listLogo.getAttribute("referrerpolicy"), "no-referrer");
+  const missingLogo = dialog
+    .getByRole("button", { name: "plugin-1", exact: true })
+    .locator(".plugin-logo");
+  assert.equal(await missingLogo.locator("img").count(), 0);
+  assert.equal(await missingLogo.textContent(), "P");
+  const brokenLogo = dialog
+    .getByRole("button", { name: "plugin-0", exact: true })
+    .locator(".plugin-logo");
+  await brokenLogo.scrollIntoViewIfNeeded();
+  await brokenImageRequest;
+  await brokenLogo.locator("img").waitFor({ state: "detached" });
+  assert.equal(await brokenLogo.textContent(), "P");
   assert.equal(
     await calendar.evaluate(
       (node, unavailable) =>
@@ -4856,6 +4896,11 @@ test("Create Agent discovers hosted plugins with a transient PAT through the sel
     1,
   );
   assert.equal(await dialog.getByText(/token was rejected or cannot access plugins/).count(), 0);
+  const detailLogo = dialog.locator(".plugin-detail-header .plugin-logo img");
+  await detailLogo.evaluate((image) => image.decode());
+  assert.ok(await detailLogo.evaluate((image) => image.naturalWidth > 0));
+  assert.equal(await detailLogo.getAttribute("alt"), "");
+  assert.equal(await detailLogo.getAttribute("referrerpolicy"), "no-referrer");
   await dialog.getByRole("button", { name: "Add Calendar", exact: true }).click();
   const selected = { "codex-plugin:calendar@openai-curated-remote": { enabled: true } };
   assert.deepEqual(JSON.parse(await page.locator("#agent-plugins").inputValue()), selected);
@@ -4891,6 +4936,14 @@ test("Create Agent discovers hosted plugins with a transient PAT through the sel
     requests.some((request) => /at-browser-plugin/.test(request.path)),
     false,
   );
+  assert.ok(imageRequests.some((request) => request.url === logoUrl));
+  assert.ok(imageRequests.some((request) => request.url === brokenLogoUrl));
+  for (const { headers } of imageRequests) {
+    for (const name of ["authorization", "referer", "chatgpt-account-id", "oai-product-sku"]) {
+      assert.equal(headers[name], undefined);
+    }
+  }
+  assert.doesNotMatch(JSON.stringify(imageRequests), /at-browser-plugin|account-plugin-test/);
   assert.equal(secretPostRequests(requests, namespace.id).length, 0);
   assert.equal(configurationPostRequests(requests, namespace.id).length, 0);
   assert.equal(agentPostRequests(requests, namespace.id).length, 0);

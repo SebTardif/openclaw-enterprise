@@ -53,6 +53,7 @@ const PluginCatalogEntrySchema = Type.Object(
     id: Type.String(),
     name: Type.String(),
     remoteId: Type.Optional(Type.String()),
+    logoUrl: Type.Optional(Type.String()),
     description: Type.Optional(Type.String()),
     available: Type.Optional(Type.Boolean()),
     unavailableReason: Type.Optional(Type.String()),

@@ -42,6 +42,7 @@ const pluginCatalog = {
       id: "codex-plugin:calendar@openai-curated-remote",
       remoteId: "plugin_demo_calendar",
       name: "Calendar",
+      logoUrl: "/storybook-fixtures/plugin-logos/calendar.svg",
       description: "Find events and manage a team calendar.",
       available: true,
       tools: [
@@ -69,6 +70,7 @@ const pluginCatalog = {
       id: "codex-plugin:documents@openai-curated-remote",
       remoteId: "plugin_demo_documents",
       name: "Documents",
+      logoUrl: "/storybook-fixtures/plugin-logos/documents.svg",
       available: true,
       tools: [
         {
@@ -87,6 +89,7 @@ const pluginCatalog = {
       id: "codex-plugin:project-tracker@openai-curated-remote",
       remoteId: "plugin_demo_project_tracker",
       name: "Project tracker",
+      logoUrl: "/storybook-fixtures/plugin-logos/missing.svg",
       tools: null,
     },
   ],
@@ -106,7 +109,7 @@ const pluginSelections = JSON.stringify(
   2,
 );
 const pluginPreviewGap =
-  "Catalog entries and Driver capabilities are passed directly to the production component as Storybook fixtures. These previews do not verify PAT access, plugin availability, or runtime policy enforcement.";
+  "Catalog entries, local placeholder logos, and Driver capabilities are passed directly to the production component as Storybook fixtures. These previews do not verify PAT access, plugin availability, or runtime policy enforcement.";
 const pluginDiscovery = {
   pages: {
     initial: {
@@ -538,6 +541,7 @@ export const scenarios = {
     description:
       "Browse a fixture catalog in the production plugin modal. Selecting a plugin opens its policies and a collapsed list of tools.",
     steps: [
+      "Review the simulated Calendar and Documents logos. Project tracker’s intentionally missing image falls back to its initial. Choose each plugin to check the same logo or fallback in its detail heading.",
       "Filter this page for Documents, then clear the filter and choose Calendar.",
       "Click Add Calendar. Its tool defaults remain omitted until you change them.",
       "Choose the default tool availability, approval behavior, and reviewer, or keep the runtime defaults.",
@@ -606,7 +610,7 @@ export const scenarios = {
       { selector: 'button[aria-label="Project tracker"]', click: true },
     ],
     description:
-      "A listed plugin has no tool metadata. The component identifies that gap without presenting an empty list as a verified absence of tools.",
+      "Project tracker’s intentionally missing logo falls back to its initial in the list and detail. Its unavailable tool metadata remains distinct from a verified empty tool list.",
     gap: pluginPreviewGap,
   },
   pluginsEmpty: {

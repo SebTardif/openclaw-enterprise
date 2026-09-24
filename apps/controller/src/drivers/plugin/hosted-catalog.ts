@@ -121,6 +121,18 @@ async function withCredential<T>(
   }
 }
 
+function publicLogoUrl(value: unknown): string | undefined {
+  if (typeof value !== "string" || value.length > 8192 || /[\s\p{Cc}]/u.test(value)) {
+    return undefined;
+  }
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" && !url.username && !url.password ? url.href : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function catalogEntry(value: unknown): PluginCatalogEntry {
   const plugin = record(value);
   const release = record(plugin.release);
@@ -147,12 +159,17 @@ function catalogEntry(value: unknown): PluginCatalogEntry {
   } else if (apps.length === 0) {
     unavailableReason = "This plugin has no concrete hosted app available to this account.";
   }
-  const description = record(release.interface).short_description ?? release.description;
+  const presentation = record(release.interface);
+  const description = presentation.short_description ?? release.description;
+  // Public presentation URLs may expire; keep them out of persisted plugin selections.
+  const logoUrl =
+    publicLogoUrl(presentation.logo_url) ?? publicLogoUrl(presentation.composer_icon_url);
   return {
     id: `codex-plugin:${slug}@openai-curated-remote`,
     remoteId: text(plugin.id, 256),
     name: isNonEmptyString(release.display_name) ? text(release.display_name, 512) : slug,
     ...(isNonEmptyString(description) ? { description: text(description) } : {}),
+    ...(logoUrl ? { logoUrl } : {}),
     available: unavailableReason === undefined,
     ...(unavailableReason ? { unavailableReason } : {}),
     tools: null,

@@ -3123,6 +3123,7 @@
                               "available": { "type": "boolean" },
                               "description": { "type": "string" },
                               "id": { "type": "string" },
+                              "logoUrl": { "type": "string" },
                               "name": { "type": "string" },
                               "remoteId": { "type": "string" },
                               "tools": {
@@ -3302,6 +3303,7 @@
                         "available": { "type": "boolean" },
                         "description": { "type": "string" },
                         "id": { "type": "string" },
+                        "logoUrl": { "type": "string" },
                         "name": { "type": "string" },
                         "remoteId": { "type": "string" },
                         "tools": {

@@ -318,6 +318,8 @@ export interface PluginCatalogEntry {
   readonly name: string;
   readonly remoteId?: string;
   readonly description?: string;
+  /** Public HTTPS presentation image; may expire and is never selection state. */
+  readonly logoUrl?: string;
   readonly available?: boolean;
   readonly unavailableReason?: string;
   readonly tools: readonly PluginToolCatalogEntry[] | null;

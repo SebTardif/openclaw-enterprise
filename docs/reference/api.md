@@ -912,6 +912,7 @@ List available plugins for Agent creation without storing the supplied credentia
 | `data.plugins[].available` | `boolean` | No | — |
 | `data.plugins[].description` | `string` | No | — |
 | `data.plugins[].id` | `string` | Yes | — |
+| `data.plugins[].logoUrl` | `string` | No | — |
 | `data.plugins[].name` | `string` | Yes | — |
 | `data.plugins[].remoteId` | `string` | No | — |
 | `data.plugins[].tools` | `null or array<object>` | Yes | — |
@@ -975,6 +976,7 @@ Read available plugin tools without storing the supplied credential
 | `data.available` | `boolean` | No | — |
 | `data.description` | `string` | No | — |
 | `data.id` | `string` | Yes | — |
+| `data.logoUrl` | `string` | No | — |
 | `data.name` | `string` | Yes | — |
 | `data.remoteId` | `string` | No | — |
 | `data.tools` | `null or array<object>` | Yes | — |

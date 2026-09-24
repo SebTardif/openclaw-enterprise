@@ -144,7 +144,8 @@ export const CONSOLE_CONTENT_SECURITY_POLICY = [
   "connect-src 'self'",
   "form-action 'self'",
   "frame-ancestors 'none'",
-  "img-src 'self'",
+  // Catalog Drivers can supply public HTTPS images from plugin publishers.
+  "img-src 'self' https:",
   "object-src 'none'",
   "script-src 'self'",
   "style-src 'self'",
