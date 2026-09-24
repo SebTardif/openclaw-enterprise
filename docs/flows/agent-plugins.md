@@ -167,14 +167,18 @@ subtree with `config/batchWrite`, removing stale per-app tool/link settings. It
 then rereads successful installations to check identity, version, and app mapping.
 Failed-only bindings are disabled; successful bindings retain admitted policy.
 Disabled selections do not contribute install attempts or startup results.
-`config/read` verifies the effective overlay before readiness.
+`config/read` verifies the effective overlay before readiness, including every
+nested tool's enablement and approval against its requested override or app
+default. Absent/null fields inherit. Unexpected explicit tool enablement is
+rejected when OCE omitted the default, because it can bypass category restrictions.
+Account/link approval defaults must match the requested app approval.
 
 `runtime-entrypoints.ts:verifyCodexReviewerConfiguration` checks explicit app
 reviewers against effective app/link settings and `configRequirements/read`.
 It rejects forbidden reviewers, incompatible automatic-review approval settings,
 and human review conflicting with current-model requirements. These startup
-checks do not establish later session/model routing, strict review, or complete
-policy readback. See the [remaining proof](../testing/plugins.md#current-proof-notes).
+checks do not establish later session/model routing, strict review, workspace
+configuration, or managed requirements beyond reviewer checks. See the [remaining proof](../testing/plugins.md#current-proof-notes).
 Codex owns cache integrity and runtime health.
 
 For Compute-owned Kubernetes workloads, a selected OpenClaw install command's
@@ -273,6 +277,8 @@ completed deployment attempt rather than ongoing runtime health.
 [keep this for the user to add notes. do not change between edits]
 
 ## Changelog
+
+- 2026-09-24 07:50: Verify nested tool and account/link policy before readiness; retain session and live-enforcement gates (codex/01a0b17c-68b6-7e11-bedc-f74de7d606ed - 073bb5c1)
 
 - 2026-09-24 07:02: Aligned the common reviewer contract and scoped capabilities with the accepted specification; runtime reviewer/session checks remain draft gates (codex/01a0b17c-68b6-7e11-bedc-f74de7d606ed - 3606f2e9)
 

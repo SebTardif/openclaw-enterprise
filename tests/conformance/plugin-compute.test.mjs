@@ -1483,6 +1483,103 @@ test("Codex runtime helper fails before readiness when effective native app conf
   );
 });
 
+test("Codex runtime helper checks every effective nested tool and account policy before readiness", async (t) => {
+  for (const scenario of [
+    { name: "extra enabled tool", tools: { extra: { enabled: true } }, rejects: true },
+    { name: "extra approved tool", tools: { extra: { approval_mode: "approve" } }, rejects: true },
+    {
+      name: "conflict after matching tool",
+      tools: { matching: { enabled: false }, extra: { approval_mode: "approve" } },
+      rejects: true,
+    },
+    {
+      name: "matching defaults and serialized nulls",
+      tools: {
+        matching: { enabled: false, approval_mode: "prompt" },
+        empty: { enabled: null, approval_mode: null },
+      },
+    },
+    {
+      name: "account approval weakens default",
+      links: { account: { default_tools_approval_mode: "approve", approvals_reviewer: null } },
+      rejects: true,
+    },
+    {
+      name: "conflict after matching account",
+      links: {
+        matching: { default_tools_approval_mode: "prompt" },
+        extra: { default_tools_approval_mode: "approve" },
+      },
+      rejects: true,
+    },
+    {
+      name: "matching account default",
+      links: { account: { default_tools_approval_mode: "prompt" } },
+    },
+    { name: "null maps inherit", tools: null, links: null },
+    {
+      name: "unrequested enablement bypasses native category defaults",
+      defaults: { approval: "prompt" },
+      tools: { extra: { enabled: true } },
+      rejects: true,
+    },
+    {
+      name: "stricter unexpected approval also conflicts",
+      defaults: { enabled: true, approval: "approve" },
+      tools: { extra: { approval_mode: "prompt" } },
+      rejects: true,
+    },
+  ]) {
+    await t.test(scenario.name, async () => {
+      const defaults = scenario.defaults ?? { enabled: false, approval: "prompt" };
+      const state = codexLinearPluginState({ toolDefaults: defaults });
+      const runtime = { manifest: pluginRuntimeSpecForRevision(revision({ plugins: state })) };
+      // A second native layer can contribute descendants absent from the user
+      // config OCE replaces. Return that merged readback through the real startup helper.
+      const result = await runCodexRuntimeHelper(
+        runtime,
+        (method) => {
+          if (method === "initialize") {
+            return { serverInfo: { name: "codex", version: "0.156.0" } };
+          }
+          if (method === "plugin/list") {
+            return codexListResponse();
+          }
+          if (method === "plugin/read") {
+            return codexReadResponse();
+          }
+          if (method === "plugin/install") {
+            return { authPolicy: "ON_USE", appsNeedingAuth: [] };
+          }
+          if (method === "config/batchWrite") {
+            return { status: "ok", version: "nested-policy" };
+          }
+          if (method === "config/read") {
+            return codexConfigReadResponse({
+              default_tools_enabled: defaults.enabled ?? null,
+              default_tools_approval_mode: defaults.approval,
+              tools: scenario.tools,
+              links: scenario.links,
+            });
+          }
+          throw new Error(`unexpected request ${method}`);
+        },
+        { captureError: true },
+      );
+      if (scenario.rejects) {
+        assert.match(result.error?.message ?? "", /effective (tool|account) policy conflicts/);
+        assert.equal(result.value, undefined, "conflicting nested policy must prevent readiness");
+      } else {
+        assert.equal(result.error, undefined);
+        assert.deepEqual(plain(result.value), {
+          successfulPluginIds: ["codex-plugin:linear@openai-curated-remote"],
+          failures: [],
+        });
+      }
+    });
+  }
+});
+
 test("Codex runtime helper fails before readiness when selected plugin lacks app mapping", async () => {
   const state = codexLinearPluginState();
   const runtime = {

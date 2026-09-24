@@ -142,8 +142,11 @@ review unless strict review applies; app-level `prompt` alone is not proof.
 Startup now checks explicit app reviewers against effective app/link settings,
 allowed reviewers, current approval policy, and managed current-model requirements.
 That check does not establish future turn routing, session/model changes, or the
-turn's strict-review flag. Complete effective-policy readback and live reviewer
-availability remain draft acceptance gates. Confirm a disabled plugin remains
+turn's strict-review flag. Startup fixtures also exercise every nested tool's
+enablement/approval and account/link approval defaults against the requested
+policy, including unexpected exceptions that would otherwise pass subset
+verification. Managed requirements beyond reviewer checks, workspace configuration,
+and live reviewer availability remain draft acceptance gates. Confirm a disabled plugin remains
 blocked despite an enabled tool override, and a tool exception preserves native
 operator restrictions. Installation composition also remains unproven on a real
 deployment.
