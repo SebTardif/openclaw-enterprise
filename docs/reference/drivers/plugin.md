@@ -36,6 +36,22 @@ unavailability reasons are optional metadata; `destructive` and `writes`
 annotations are also optional. Missing classifications mean unknown. An entry
 does not grant access, select a plugin, or prove the policy can run.
 
+Optional `logoUrl` supplies a public HTTPS presentation image. Bundled Codex reads
+`release.interface.logo_url`, then `composer_icon_url`; missing or invalid URLs
+are omitted. Console loads these images without PAT/account headers or referrers,
+and shows initials if an image fails. URLs may expire and are never copied into
+Agent selections. Console CSP permits HTTPS images while retaining same-origin
+scripts and connections.
+
+Optional `websiteUrl`, `privacyPolicyUrl`, and `termsOfServiceUrl` provide public
+HTTPS links in plugin details. An unavailable entry can include `unavailableHelp`
+as `{label, url}`. Discovery pages can include `setup: {message, links}`, where
+each link has the same shape. The selected Driver owns these explanations and
+destinations; Console renders them without vendor-specific setup logic. This
+metadata never enters Agent selections and does not verify app connections,
+grant access, or configure credentials. Connection verification and deployment
+gates are not part of this metadata contract.
+
 Authorized `GET /installation` exposes the selected Driver's identity and policy
 capabilities. Optional `capabilities.pluginDiscovery` declares `authentication`
 (`none` or `service_account_token`) and server-side `search` support. See the [capability response](../agent-plugins.md#discover-policy-controls).
@@ -47,7 +63,7 @@ saving Agent selections and deploying supported selections can still use the
 Agent runtime's discovery path.
 
 Two optional methods serve pre-Agent discovery: `discoverCatalog({accessToken?,
-cursor?, query?}, signal?)` returns `{plugins, nextCursor}`, and
+cursor?, query?}, signal?)` returns `{plugins, nextCursor, setup?}`, and
 `getCatalogPlugin({accessToken?, pluginId}, signal?)` returns details. The Driver
 validates its authentication and search requirements. `pluginId` is the opaque
 `remoteId` from discovery. An entry's `id` identifies the catalog result; only

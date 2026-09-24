@@ -48,11 +48,20 @@ export const AgentModelListResponse = Type.Object(
   { additionalProperties: false },
 );
 
+const PluginCatalogLinkSchema = Type.Object(
+  { label: Type.String(), url: Type.String() },
+  { additionalProperties: false },
+);
+
 const PluginCatalogEntrySchema = Type.Object(
   {
     id: Type.String(),
     name: Type.String(),
     remoteId: Type.Optional(Type.String()),
+    logoUrl: Type.Optional(Type.String()),
+    websiteUrl: Type.Optional(Type.String()),
+    privacyPolicyUrl: Type.Optional(Type.String()),
+    termsOfServiceUrl: Type.Optional(Type.String()),
     metadata: Type.Optional(
       Type.Object(
         {
@@ -67,6 +76,7 @@ const PluginCatalogEntrySchema = Type.Object(
     description: Type.Optional(Type.String()),
     available: Type.Optional(Type.Boolean()),
     unavailableReason: Type.Optional(Type.String()),
+    unavailableHelp: Type.Optional(PluginCatalogLinkSchema),
     tools: Type.Union([
       Type.Null(),
       Type.Array(
@@ -95,6 +105,12 @@ export const AgentPluginCatalogResponse = Type.Object(
       {
         plugins: Type.Array(PluginCatalogEntrySchema),
         nextCursor: Type.Union([Type.String(), Type.Null()]),
+        setup: Type.Optional(
+          Type.Object(
+            { message: Type.String(), links: Type.Array(PluginCatalogLinkSchema) },
+            { additionalProperties: false },
+          ),
+        ),
       },
       { additionalProperties: false },
     ),
@@ -281,6 +297,36 @@ export const SecretSchema = Type.Object(
 export const AgentRuntimeCredentialStatusSchema = Type.Object(
   {
     transportConfigured: Type.Boolean(),
+  },
+  { additionalProperties: false },
+);
+
+export const AgentRuntimeImagesResponse = Type.Object(
+  {
+    data: Type.Object(
+      {
+        status: Type.Union([
+          Type.Literal("observed"),
+          Type.Literal("undeployed"),
+          Type.Literal("unsupported"),
+        ]),
+        images: Type.Array(
+          Type.Object(
+            {
+              workload: Type.String(),
+              container: Type.String(),
+              image: Type.String(),
+              imageId: Type.Union([Type.String(), Type.Null()]),
+              commit: Type.Union([Type.String({ pattern: "^[a-f0-9]{40}$" }), Type.Null()]),
+              openclawCommit: Type.Union([Type.String({ pattern: "^[a-f0-9]{40}$" }), Type.Null()]),
+            },
+            { additionalProperties: false },
+          ),
+        ),
+      },
+      { additionalProperties: false },
+    ),
+    meta: Meta,
   },
   { additionalProperties: false },
 );

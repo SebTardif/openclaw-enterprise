@@ -7,6 +7,14 @@ const accessToken = "at-discovery-fixture";
 const pluginId = "plugins~discovery-fixture";
 const whoamiUrl = "https://auth.openai.com/api/accounts/v1/user-auth-credential/whoami";
 const catalogUrl = "https://chatgpt.com/backend-api/ps/";
+const workspaceHelp = {
+  label: "Manage workspace plugins",
+  url: "https://chatgpt.com/admin/plugins?catalog=GLOBAL",
+};
+const runtimeHelp = {
+  label: "OCE plugin setup",
+  url: "https://github.com/openclaw/openclaw-enterprise/blob/main/docs/reference/drivers/plugin-bundled.md#selection-and-catalogs",
+};
 
 // Plugin Service's PluginDirectoryDetailItem and AppBatchRecord wire contracts.
 function plugin(release = {}) {
@@ -92,7 +100,9 @@ test("hosted plugin discovery requests one upstream page and preserves opaque cu
     const request = new URL(url);
     requests.push(request);
     return Response.json({
-      plugins: request.searchParams.has("pageToken") ? [] : [plugin()],
+      plugins: request.searchParams.has("pageToken")
+        ? []
+        : [plugin({ interface: { logo_url: "https://public.example/logo.png" } })],
       pagination: {
         limit: 20,
         next_page_token: request.searchParams.has("pageToken") ? null : cursor,
@@ -103,9 +113,18 @@ test("hosted plugin discovery requests one upstream page and preserves opaque cu
   const first = await driver.discoverCatalog({ accessToken });
   assert.equal(requests.length, 1);
   assert.equal(first.plugins[0].id, "codex-plugin:discovery-fixture@openai-curated-remote");
+  assert.equal(first.plugins[0].logoUrl, "https://public.example/logo.png");
   assert.equal(first.nextCursor, cursor);
+  assert.match(first.setup.message, /App connection status is not verified/);
+  assert.match(first.setup.message, /Catalog availability does not confirm linked credentials/);
+  assert.match(first.setup.message, /Service accounts/);
+  assert.deepEqual(first.setup.links, [
+    workspaceHelp,
+    { label: "Service account credentials", url: "https://admin.openai.com/" },
+    runtimeHelp,
+  ]);
   const second = await driver.discoverCatalog({ accessToken, cursor: first.nextCursor });
-  assert.deepEqual(second, { plugins: [], nextCursor: null });
+  assert.deepEqual(second, { plugins: [], nextCursor: null, setup: first.setup });
   assert.deepEqual(
     requests.map((url) => ({
       endpoint: `${url.origin}${url.pathname}`,
@@ -119,6 +138,93 @@ test("hosted plugin discovery requests one upstream page and preserves opaque cu
       },
     ],
   );
+});
+
+test("hosted plugin logos prefer valid public HTTPS metadata and omit invalid cosmetic values", async (t) => {
+  const primary = "https://images.example/logo.png?signature=fixture&expires=123";
+  const fallback = "https://images.example/composer.png";
+  const detail = plugin();
+  const driver = useService(t, detail, [app("connector_fixture")]);
+  const cases = [
+    [{ logo_url: primary, composer_icon_url: fallback }, primary],
+    [{ composer_icon_url: fallback }, fallback],
+    [{ logo_url: "http://images.example/logo.png", composer_icon_url: fallback }, fallback],
+    [{}, undefined],
+    ...[
+      null,
+      12,
+      {},
+      "not-a-url",
+      "http://images.example/logo.png",
+      "data:image/png;base64,aGVsbG8=",
+      "https://user:password@images.example/logo.png",
+      "https://user@images.example/logo.png",
+      "https://images.example/logo\n.png",
+      "https://images.example/logo\u0000.png",
+      `https://images.example/${"a".repeat(8192)}`,
+    ].map((logo_url) => [{ logo_url }, undefined]),
+  ];
+  for (const [presentation, expected] of cases) {
+    detail.release.interface = presentation;
+    const result = await driver.getCatalogPlugin({ accessToken, pluginId });
+    assert.equal(result.logoUrl, expected);
+    assert.equal(Object.hasOwn(result, "logoUrl"), expected !== undefined);
+    // Bad decorative metadata must not make an otherwise available plugin unusable.
+    assert.equal(result.available, true);
+    assert.equal(result.tools.length, 1);
+  }
+});
+
+test("hosted plugin website and legal links preserve safe URLs and omit unsafe metadata", async (t) => {
+  const detail = plugin();
+  const driver = useService(t, detail, [app("connector_fixture")]);
+  const safeUrl = "https://publisher.example/policy?version=1&source=plugin";
+  for (const value of [
+    safeUrl,
+    undefined,
+    "javascript:alert(1)",
+    "http://publisher.example/",
+    "https://user:password@publisher.example/",
+    "https://publisher.example/\npolicy",
+    `https://publisher.example/${"x".repeat(8192)}`,
+  ]) {
+    detail.release.interface = {
+      website_url: value,
+      privacy_policy_url: value,
+      terms_of_service_url: value,
+    };
+    const serialized = JSON.parse(
+      JSON.stringify(await driver.getCatalogPlugin({ accessToken, pluginId })),
+    );
+    for (const field of ["websiteUrl", "privacyPolicyUrl", "termsOfServiceUrl"]) {
+      assert.equal(serialized[field], value === safeUrl ? safeUrl : undefined);
+      assert.equal(Object.hasOwn(serialized, field), value === safeUrl);
+    }
+    assert.equal(serialized.available, true);
+  }
+});
+
+test("hosted plugin unavailability explains known workspace reasons without exposing unknown text", async (t) => {
+  const detail = {
+    ...plugin({ mcp_servers: [{ key: "local-only", metadata: { command: "local-tool" } }] }),
+    status: "DISABLED_BY_ADMIN",
+  };
+  const driver = useService(t, detail, [app("connector_fixture")]);
+  // The service aggregates several causes under this status; local checks must retain the workspace cause.
+  for (const [reason, expected] of [
+    ["disabled_by_admin", /Disabled by a ChatGPT workspace administrator/],
+    ["plan_not_eligible", /plan is not eligible/],
+    ["required_app_unavailable", /required app is unavailable/],
+    [null, /did not provide a recognized reason/],
+    [`private upstream ${accessToken}`, /did not provide a recognized reason/],
+  ]) {
+    detail.disabled_reason = reason;
+    const result = await driver.getCatalogPlugin({ accessToken, pluginId });
+    assert.equal(result.available, false);
+    assert.match(result.unavailableReason, expected);
+    assert.deepEqual(result.unavailableHelp, workspaceHelp);
+    assert.doesNotMatch(JSON.stringify(result), /private upstream|at-discovery-fixture/);
+  }
 });
 
 test("hosted plugin tools respect parent app access independently of action policy", async (t) => {
@@ -172,6 +278,7 @@ test("hosted plugin detail rejects an unmatched MCP despite a cloud executor ove
   const detail = await driver.getCatalogPlugin({ accessToken, pluginId });
   assert.equal(detail.available, false);
   assert.match(detail.unavailableReason, /components not supported/i);
+  assert.deepEqual(detail.unavailableHelp, runtimeHelp);
 });
 
 test("hosted plugin detail keeps MCPs whose duplicate app declaration Codex discards", async (t) => {
@@ -197,6 +304,11 @@ test("hosted plugin detail cannot enable a release with no effective native apps
   const detail = await driver.getCatalogPlugin({ accessToken, pluginId });
   assert.equal(detail.available, false);
   assert.equal(detail.tools, null);
+  assert.equal(
+    detail.unavailableReason,
+    "This plugin has no concrete hosted app supported by OCE.",
+  );
+  assert.deepEqual(detail.unavailableHelp, runtimeHelp);
 });
 
 test("hosted plugin detail preserves an unknown tool list when an app is omitted", async (t) => {

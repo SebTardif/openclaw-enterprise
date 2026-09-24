@@ -78,8 +78,8 @@ Presets and edited Configuration JSON retain their settings.
    update API; see [workspace recovery](../../guides/topics/workspace-files.md#set-files-when-creating-an-agent).
 
 **Configure plugins** browses the selected Driver's catalog.
-**Previous page** and **Next page** fetch upstream pages. The OpenClaw Driver browses
-public ClawHub packages without credentials and supports server **Search**.
+**Previous page** and **Next page** fetch pages. OpenClaw browses
+public ClawHub plugins anonymously with server **Search**.
 Unadmitted packages and declared tools are informational.
 
 Codex discovery requires an entered **Service Accounts** token with **Codex**;
@@ -89,9 +89,10 @@ token's identity. **Add** an available plugin, then edit defaults or expand
 **Tool policy**. **Configured** includes selections across pages.
 
 **Create Agent** saves changes. Credential/provider/Harness
-changes clear results while **Plugin selections JSON** preserves selections.
+changes clear results, preserving **Plugin selections JSON**.
 [Discovery](../../flows/agent-plugins.md#pre-agent-discovery) proves no runtime permission;
 editing follows [policy capabilities](../agent-plugins.md).
+App connections remain unverified; check [setup guidance](../drivers/plugin-bundled.md#selection-and-catalogs) before deployment.
 
 Credentials are masked Namespace Secrets, excluded from Configuration JSON, Agent
 responses, and browser storage. Provisioning creates exact grants; ordinary drafts

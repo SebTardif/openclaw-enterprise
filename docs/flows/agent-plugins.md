@@ -57,18 +57,11 @@ graph TD
 ### Pre-Agent discovery
 
 `OpenClawController.getInstallation` advertises authentication/search requirements.
-OCC authorizes Namespace Agent creation before `/agents/plugins` list/query or
-`/details` reads.
-
-`drivers/plugin/hosted-catalog.ts` pages 20 GLOBAL entries using PAT identity.
-Upstream rejects PAT search; unknown tools stay `tools:null`.
-
-`drivers/plugin/clawhub-catalog.ts` anonymously pages public plugins and forwards
-unpaginated searches. Published `metadata.declaredTools` grants no policies;
-ClawHub entries cannot be selected. Runtime admission is unchanged.
-
-Both readers bound responses, reject redirects, and persist nothing;
-see the [Driver contract](../reference/drivers/plugin.md).
+[Discovery routes](../reference/drivers/plugin.md#selection-and-catalogs) authorize Namespace Agent creation.
+[Codex](../../apps/controller/src/drivers/plugin/hosted-catalog.ts) pages 20 PAT-scoped GLOBAL results;
+[ClawHub](../../apps/controller/src/drivers/plugin/clawhub-catalog.ts) anonymously browses/searches public plugins without runtime admission.
+Declared tools grant no policies. Bounded, redirect-free reads persist nothing.
+[Driver setup](../reference/drivers/plugin-bundled.md#selection-and-catalogs) and presentation metadata stay outside selections; app connections remain unverified.
 
 ### 1. Validate desired state under exact-Agent authority
 
@@ -295,6 +288,8 @@ completed deployment attempt rather than ongoing runtime health.
 [keep this for the user to add notes. do not change between edits]
 
 ## Changelog
+
+- 2026-09-24 19:44: Added Driver-owned setup and recovery links. (01a0d1dd-aa36-7622-9f43-8376f6ff935e - ef89ded5)
 
 - 2026-09-24 09:03: Added public ClawHub browse/search metadata without runtime admission. (01a0d1dd-aa36-7622-9f43-8376f6ff935e - aa24be00)
 

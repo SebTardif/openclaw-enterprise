@@ -35,6 +35,50 @@ const pluginCapabilities = {
     additionalProperties: false,
   },
 };
+const pluginSetup = {
+  message:
+    "App connection status is not verified. Catalog availability does not confirm linked credentials. In ChatGPT admin, select the same workspace as this PAT and enable plugin and app access for its user or service account. For service-account plugin credentials, open Service accounts, choose the account, and configure its app connections. Workspace administrator access is required. OCE policies do not grant access or configure credentials. Reload plugins after changes.",
+  links: [
+    { label: "Manage workspace plugins", url: "https://chatgpt.com/admin/plugins?catalog=GLOBAL" },
+    { label: "Service account credentials", url: "https://admin.openai.com/" },
+    {
+      label: "OCE plugin setup",
+      url: "https://github.com/openclaw/openclaw-enterprise/blob/main/docs/reference/drivers/plugin-bundled.md#selection-and-catalogs",
+    },
+  ],
+};
+const unavailablePlugins = [
+  {
+    id: "codex-plugin:archive@openai-curated-remote",
+    remoteId: "plugin_demo_archive",
+    name: "Archive",
+    available: false,
+    unavailableReason:
+      "This plugin requires local components or skills that OCE hosted discovery does not support. Changing ChatGPT access will not enable it here.",
+    unavailableHelp: pluginSetup.links[2],
+    tools: null,
+  },
+  {
+    id: "codex-plugin:team-chat@openai-curated-remote",
+    remoteId: "plugin_demo_team_chat",
+    name: "Team chat",
+    available: false,
+    unavailableReason:
+      "Disabled by a ChatGPT workspace administrator. Ask an administrator to enable access for the user or service account behind this token.",
+    unavailableHelp: pluginSetup.links[0],
+    tools: null,
+  },
+  {
+    id: "codex-plugin:analytics@openai-curated-remote",
+    remoteId: "plugin_demo_analytics",
+    name: "Analytics",
+    available: false,
+    unavailableReason:
+      "This workspace's plan is not eligible for this plugin. Ask a workspace administrator to review plan availability.",
+    unavailableHelp: pluginSetup.links[0],
+    tools: null,
+  },
+];
 const nativePluginCapabilities = {
   driver: { id: "occ-plugin", implementation: "occ/openclaw-plugin" },
   toolDefaults: { enabled: true, approval: ["native", "approve"], reviewer: [] },
@@ -43,11 +87,16 @@ const nativePluginCapabilities = {
 };
 const pluginCatalog = {
   status: "ready",
+  setup: pluginSetup,
   entries: [
     {
       id: "codex-plugin:calendar@openai-curated-remote",
       remoteId: "plugin_demo_calendar",
       name: "Calendar",
+      logoUrl: "/storybook-fixtures/plugin-logos/calendar.svg",
+      websiteUrl: "https://example.com/calendar",
+      privacyPolicyUrl: "https://example.com/calendar/privacy",
+      termsOfServiceUrl: "https://example.com/calendar/terms",
       description: "Find events and manage a team calendar.",
       available: true,
       tools: [
@@ -75,6 +124,8 @@ const pluginCatalog = {
       id: "codex-plugin:documents@openai-curated-remote",
       remoteId: "plugin_demo_documents",
       name: "Documents",
+      logoUrl: "/storybook-fixtures/plugin-logos/documents.svg",
+      websiteUrl: "https://example.com/documents",
       available: true,
       tools: [
         {
@@ -93,8 +144,10 @@ const pluginCatalog = {
       id: "codex-plugin:project-tracker@openai-curated-remote",
       remoteId: "plugin_demo_project_tracker",
       name: "Project tracker",
+      logoUrl: "/storybook-fixtures/plugin-logos/missing.svg",
       tools: null,
     },
+    ...unavailablePlugins,
   ],
 };
 const pluginSelections = JSON.stringify(
@@ -112,26 +165,18 @@ const pluginSelections = JSON.stringify(
   2,
 );
 const pluginPreviewGap =
-  "Catalog entries and Driver capabilities are passed directly to the production component as Storybook fixtures. These previews do not verify PAT access, plugin availability, or runtime policy enforcement.";
+  "Catalog entries, local placeholder logos, and Driver capabilities are passed directly to the production component as Storybook fixtures. These previews do not verify PAT access, plugin availability, or runtime policy enforcement.";
 const pluginDiscovery = {
   pages: {
     initial: {
-      plugins: [
-        {
-          id: "codex-plugin:archive@openai-curated-remote",
-          remoteId: "plugin_demo_archive",
-          name: "Archive",
-          available: false,
-          unavailableReason: "This plugin requires an unsupported local runtime.",
-          tools: null,
-        },
-        { ...pluginCatalog.entries[0], tools: null },
-      ],
+      plugins: [...unavailablePlugins, { ...pluginCatalog.entries[0], tools: null }],
       nextCursor: "demo-page-2",
+      setup: pluginSetup,
     },
     "demo-page-2": {
-      plugins: pluginCatalog.entries.slice(1).map((entry) => ({ ...entry, tools: null })),
+      plugins: pluginCatalog.entries.slice(1, 3).map((entry) => ({ ...entry, tools: null })),
       nextCursor: null,
+      setup: pluginSetup,
     },
   },
   details: Object.fromEntries(pluginCatalog.entries.map((entry) => [entry.remoteId, entry])),
@@ -222,6 +267,46 @@ const createProvisioningSecrets = [
 
 // Page failures use the HTTP boundary; isolated component previews receive their input state.
 export const scenarios = {
+  runtimeImages: {
+    group: "Pages/Navigation",
+    name: "Debug runtime images",
+    path: "/console/agents?debug=true",
+    buildRevision: "1234567890abcdef1234567890abcdef12345678",
+    runtimeImages: {
+      status: "observed",
+      images: [
+        {
+          workload: "research/agent-runtime",
+          container: "gateway",
+          image: "ghcr.io/example/runtime:sha-1234567890abcdef1234567890abcdef12345678",
+          imageId: `sha256:${"a".repeat(64)}`,
+          commit: "1234567890abcdef1234567890abcdef12345678",
+          openclawCommit: "abcdef1234567890abcdef1234567890abcdef12",
+        },
+        {
+          workload: "research/agent-runtime",
+          container: "log-forwarder",
+          image: "example/log-forwarder:1",
+          imageId: `sha256:${"b".repeat(64)}`,
+          commit: null,
+          openclawCommit: null,
+        },
+      ],
+    },
+    actions: [{ selector: ".runtime-debug-images summary", click: true }],
+    description:
+      "Inspect the OCE commit and each Agent's observed runtime images. Expand an Agent, compare the gateway image ID, Enterprise source commit, and upstream OpenClaw commit, then navigate to Namespaces: debug=true remains enabled. Remove the flag to hide diagnostics.",
+    gap: "Simulated image identities demonstrate presentation. Native Driver integration verifies actual Docker and Kubernetes observations separately.",
+  },
+  runtimeImagesUnavailable: {
+    group: "Pages/Navigation",
+    name: "Debug metadata unavailable",
+    path: "/console/agents?debug=true",
+    rules: [{ suffix: "/runtime-images", status: 503 }],
+    actions: [{ selector: ".runtime-debug-images summary", click: true }],
+    description:
+      "A failed runtime read leaves normal navigation available and tells the operator to refresh. Unknown commits are never inferred from tags.",
+  },
   overview: {
     group: "Overview",
     name: "Console coverage",
@@ -284,7 +369,12 @@ export const scenarios = {
     group: "Pages/Agents",
     name: "Populated",
     description:
-      "Searchable Agent table with draft and deployed Agents. Open an Agent to explore its tabs.",
+      "Searchable Agent table with draft and deployed Agents. Open an Agent to explore its tabs. The shared shell, table, and controls use the Claw palette and typography.",
+    steps: [
+      "Check text, search input, buttons, and the current navigation item. The console stays light with either system appearance preference.",
+      "Tab through the search and creation controls, then search for an Agent and open its detail page.",
+      "At a narrow viewport, use Open navigation and choose a page; the drawer must close and return focus to the page.",
+    ],
   },
   agentsEmpty: {
     group: "Pages/Agents",
@@ -467,7 +557,9 @@ export const scenarios = {
     description:
       "The actual form lists the first catalog page, places enableable plugins first, and retains unavailable entries with their reason. Selecting a plugin loads its tools before Add becomes available.",
     steps: [
-      "Review the ChatGPT workspace access guidance. Available and Configured share a compact sidebar; page controls stay below the scrolling list. Next page and Previous page navigate server pages.",
+      "Review the Driver's workspace access and service account setup guidance. Connection status is unverified; catalog availability does not confirm linked credentials. External help links open separately from plugin navigation.",
+      "Compare the administrator, plan, and unsupported-runtime reasons in the list. Choose each unavailable plugin to see its reason and help link in detail; Add stays disabled.",
+      "Available and Configured share a compact sidebar; page controls stay below the scrolling list. Next page and Previous page navigate server pages.",
       "Choose Calendar to load its tools, then Add Calendar. Configure its plugin defaults and expand a tool to override them.",
       "Filter this page matches plugins on the current page; Filter tools matches the selected plugin’s tools.",
       "Click Done and expand Plugin selections JSON: one heading labels a bounded monospace editor. Replacing the dummy token or authentication method clears discovery results and preserves selections.",
@@ -482,7 +574,11 @@ export const scenarios = {
     pluginCapabilities,
     actions: [...pluginDiscoveryForm, { selector: 'button[aria-label="Calendar"]', click: true }],
     description:
-      "A details request uses the selected catalog entry's remote ID. Tool visibility is displayed separately from policy editing and invocation readiness.",
+      "A details request uses the selected catalog entry's remote ID. Website, privacy policy, and terms links describe the plugin; they do not confirm account access or invocation readiness.",
+    steps: [
+      "Review Calendar's website and policy links without following the external destinations during fixture review.",
+      "On the next page, choose Documents: only its provided website link appears. Missing privacy and terms links are omitted.",
+    ],
     gap: pluginDiscoveryGap,
   },
   createPluginsPolicies: {
@@ -511,6 +607,28 @@ export const scenarios = {
     ],
     gap: pluginDiscoveryGap,
   },
+  createPluginsSetupReminder: {
+    group: "Pages/Create Agent",
+    name: "Configured plugin access reminder",
+    path: create,
+    pluginDiscovery,
+    pluginCapabilities,
+    actions: [
+      ...pluginDiscoveryForm,
+      { selector: 'button[aria-label="Calendar"]', click: true },
+      click("Add Calendar"),
+      click("Done"),
+      { selector: ".plugin-setup-reminder > summary", click: true },
+    ],
+    description:
+      "After adding a plugin and closing the modal, the form keeps the Driver's access and credentials guidance beside the configured selections. Connection status remains unverified.",
+    steps: [
+      "Review the reminder before deployment: catalog availability does not confirm linked credentials, and OCE policies do not configure them.",
+      "Open Plugin selections JSON and confirm that Calendar has only enabled: true; presentation links and setup guidance are not stored in selections.",
+      "Reopen Configure plugins, remove Calendar, and click Done. With no configured plugins, the reminder is hidden.",
+    ],
+    gap: pluginDiscoveryGap,
+  },
   createPluginsSecondPage: {
     group: "Pages/Create Agent",
     name: "Browse the next plugin page",
@@ -519,16 +637,21 @@ export const scenarios = {
     pluginCapabilities,
     actions: [...pluginDiscoveryForm, click("Next page")],
     description:
-      "Catalog pages use upstream cursors. The fixture has two entries per page; actual pages contain up to 20 plugins. Filtering applies to the current page, and Previous page restores the prior catalog page.",
+      "Catalog pages use upstream cursors and contain up to 20 plugins. Driver setup guidance persists across pages. Filtering applies to the current page, and Previous page restores the prior catalog page.",
     gap: pluginDiscoveryGap,
   },
   createPluginsEmpty: {
     group: "Pages/Create Agent",
     name: "No plugins returned",
     path: create,
-    pluginDiscovery: { pages: { initial: { plugins: [], nextCursor: null } }, details: {} },
+    pluginDiscovery: {
+      pages: { initial: { plugins: [], nextCursor: null, setup: pluginSetup } },
+      details: {},
+    },
+    pluginCapabilities,
     actions: pluginDiscoveryForm,
-    description: "A successful empty discovery response is distinct from a failed request.",
+    description:
+      "A successful empty discovery response retains the Driver's access and credential setup guidance and is distinct from a failed request.",
     gap: pluginDiscoveryGap,
   },
   createPluginsLoading: {
@@ -625,6 +748,7 @@ export const scenarios = {
     description:
       "Browse a fixture catalog in the production plugin modal. Selecting a plugin opens its policies and a collapsed list of tools.",
     steps: [
+      "Review the simulated Calendar and Documents logos. Project tracker’s intentionally missing image falls back to its initial. Choose each plugin to check the same logo or fallback in its detail heading.",
       "Filter this page for Documents, then clear the filter and choose Calendar.",
       "Click Add Calendar. Its tool defaults remain omitted until you change them.",
       "Choose the default tool availability, approval behavior, and reviewer, or keep the runtime defaults.",
@@ -693,7 +817,7 @@ export const scenarios = {
       { selector: 'button[aria-label="Project tracker"]', click: true },
     ],
     description:
-      "A listed plugin has no tool metadata. The component identifies that gap without presenting an empty list as a verified absence of tools.",
+      "Project tracker’s intentionally missing logo falls back to its initial in the list and detail. Its unavailable tool metadata remains distinct from a verified empty tool list.",
     gap: pluginPreviewGap,
   },
   pluginsEmpty: {
@@ -1351,6 +1475,7 @@ export const scenarios = {
   buildRevision: {
     group: "Components/Navigation",
     name: "OCC build revision",
+    path: "/console/agents?debug=true",
     buildRevision: "abcdef1234567890abcdef1234567890abcdef12",
     description:
       "OCE branding with an adjacent eight-character OCC commit. Hover the version for the full hash. This revision is simulated.",
@@ -1358,6 +1483,7 @@ export const scenarios = {
   developmentBuild: {
     group: "Components/Navigation",
     name: "OCC development build",
+    path: "/console/agents?debug=true",
     description:
       "OCE branding with an adjacent dev label when OCC build metadata is unavailable. No checkout or gateway revision is inferred.",
   },

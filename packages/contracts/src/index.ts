@@ -314,6 +314,11 @@ export interface PluginPolicyCapabilities {
   readonly driverPolicySchema: JSONSchema;
 }
 
+export interface PluginCatalogLink {
+  readonly label: string;
+  readonly url: string;
+}
+
 export interface PluginDiscoveryCapabilities {
   readonly authentication: "none" | "service_account_token";
   readonly search: boolean;
@@ -331,14 +336,21 @@ export interface PluginCatalogEntry {
     readonly declaredTools?: readonly string[];
   };
   readonly description?: string;
+  /** Public HTTPS presentation image; may expire and is never selection state. */
+  readonly logoUrl?: string;
+  readonly websiteUrl?: string;
+  readonly privacyPolicyUrl?: string;
+  readonly termsOfServiceUrl?: string;
   readonly available?: boolean;
   readonly unavailableReason?: string;
+  readonly unavailableHelp?: PluginCatalogLink;
   readonly tools: readonly PluginToolCatalogEntry[] | null;
 }
 
 export interface PluginCatalogPage {
   readonly plugins: readonly PluginCatalogEntry[];
   readonly nextCursor: string | null;
+  readonly setup?: { readonly message: string; readonly links: readonly PluginCatalogLink[] };
 }
 
 export interface PluginRevisionState {
@@ -917,6 +929,16 @@ export interface AgentRuntimeCredentialStatus {
   readonly transportConfigured: boolean;
 }
 
+/** Observed workload image identity; missing provenance must never be inferred from a tag. */
+export interface RuntimeImage {
+  readonly workload: string;
+  readonly container: string;
+  readonly image: string;
+  readonly imageId: string | null;
+  readonly commit: string | null;
+  readonly openclawCommit: string | null;
+}
+
 export interface ComputePreflightWarning {
   readonly code: string;
   readonly message: string;
@@ -934,6 +956,7 @@ export interface ComputeDriver extends Driver {
   readonly agentProvisioning?: ComputeAgentProvisioningCapabilities;
   readonly activationOrder?: "beforeCommit" | "afterCommit";
   readonly maintenanceIntervalMs?: number;
+  getRuntimeImages?(revision: AgentRevision): Promise<readonly RuntimeImage[]>;
   /** Read-only native model discovery; supplied credentials must never be persisted. */
   discoverHarnessModels?(input: {
     readonly authMethod: "api_key" | "codex_pat";
