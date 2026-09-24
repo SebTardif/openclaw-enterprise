@@ -2,10 +2,17 @@
 
 [Overview](../31-gvisor-container-support.md)
 
+See the [2026-09-24 amendment](../31-gvisor-container-support.md#current-disposition--2026-09-24-amendment)
+for release scope and changes to the historical source and storage baseline.
+
 Each increment ends in a useful ordinary-Agent outcome and its own evidence.
 The following criteria are required results, not reported passes. Accepted
 direction, source definitions and a running fixture do not complete the selected
 gVisor contribution or recovery journey.
+
+The increments remain proposed 1.x discussion, with no commitment to ship in
+1.x and no 0.x qualification gate. The requirements below apply when an increment
+is selected for implementation; they are not evidence of current availability.
 
 ## Increments and qualification
 

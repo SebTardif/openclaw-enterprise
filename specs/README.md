@@ -53,7 +53,7 @@ create-only Console and API input, applied once before first runtime execution.
 [Agent presets](33-agent-presets.md) — Implementing; reusable, partial Agent launch
 templates with variables, CRUD APIs, and console selection.
 
-[gVisor container support](31-gvisor-container-support.md) — Proposed; Dedicated Agent isolation, contribution workflow, and workspace lifetime.
+[gVisor container support](31-gvisor-container-support.md) — Proposed 1.x discussion, not a release commitment or 0.x gate; dedicated Agent isolation, contribution workflow, and workspace lifetime.
 
 [Harness authentication bindings](30-harness-auth-binding.md) — Accepted for implementation;
 one Agent auth binding for supplied OpenAI keys and issued ChatGPT account credentials.

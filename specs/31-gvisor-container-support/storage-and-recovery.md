@@ -2,6 +2,9 @@
 
 [Overview](../31-gvisor-container-support.md) · [Storage interfaces](interfaces.md#storage-contract-index)
 
+See the [2026-09-24 amendment](../31-gvisor-container-support.md#current-disposition--2026-09-24-amendment)
+for release scope and changes to the historical source and storage baseline.
+
 Disposable execution and retained replacement answer different questions.
 Disposable policy identifies the revision whose temporary stores may eventually
 be removed. Retained replacement must establish that the old Agent can no

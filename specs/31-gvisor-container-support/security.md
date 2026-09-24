@@ -2,6 +2,9 @@
 
 [Overview](../31-gvisor-container-support.md) · [Architecture](architecture.md)
 
+See the [2026-09-24 amendment](../31-gvisor-container-support.md#current-disposition--2026-09-24-amendment)
+for release scope and changes to the historical source and storage baseline.
+
 An Agent must be able to run repository tools without receiving the host's or
 another Agent's authority. The proposal adds a selected runtime boundary around
 dedicated Codex. It preserves existing authorization and ownership checks, and

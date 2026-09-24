@@ -2,6 +2,9 @@
 
 [Overview](../31-gvisor-container-support.md) · [Request lifecycle](architecture.md#request-lifecycle)
 
+See the [2026-09-24 amendment](../31-gvisor-container-support.md#current-disposition--2026-09-24-amendment)
+for release scope and changes to the historical source and storage baseline.
+
 This page distinguishes current internal Compute contracts, a separate
 repository supplier and proposed gVisor extensions. It defines no new public
 HTTP route. Linked source types remain normative for their exact revision.

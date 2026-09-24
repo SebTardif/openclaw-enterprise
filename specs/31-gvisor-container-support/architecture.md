@@ -2,6 +2,9 @@
 
 [Overview](../31-gvisor-container-support.md)
 
+See the [2026-09-24 amendment](../31-gvisor-container-support.md#current-disposition--2026-09-24-amendment)
+for release scope and changes to the historical source and storage baseline.
+
 The proposal extends one existing lifecycle owner. OCC admits an immutable
 revision, Compute prepares and observes its workloads, and an ordinary Agent
 uses dedicated Codex to complete an authorized repository task. Runtime placement
