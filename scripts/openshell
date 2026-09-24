@@ -403,6 +403,8 @@ export NODE_BASE_IMAGE
 [ -n "$NODE_BASE_IMAGE" ] || fail "deploy/runtime/Dockerfile does not declare NODE_BASE_IMAGE"
 
 if [ ! -f "$state_file" ]; then
+  # Cleanup may have removed state before it could remove these derived files.
+  rm -f "$prepared_env_file" "$ready_file"
   info "Preparing a disposable OpenShell cluster, PostgreSQL database, and runtime images."
   if ! "$container_bin" image inspect "$NODE_BASE_IMAGE" >/dev/null 2>&1; then
     "$container_bin" pull "$NODE_BASE_IMAGE"

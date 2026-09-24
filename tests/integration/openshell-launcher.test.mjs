@@ -90,7 +90,7 @@ if printf '%s' "$*" | grep -q 'scripts/ci/prepare.mjs'; then
     printf '%s\n' \\
       'OCC_TEST_KUBERNETES_KUBECONFIG=/private/openshell/kubeconfig' \\
       'OCC_TEST_KUBERNETES_CONTEXT=k3d-openclaw-k8s-openshell' \\
-      'OCC_TEST_OPENSHELL_K3D_REAL=1' > '${join(stateDirectory, "environment")}'
+      'OCC_TEST_OPENSHELL_K3D_REAL=1' >> '${join(stateDirectory, "environment")}'
   fi
   exit 0
 fi
@@ -173,6 +173,24 @@ test("OpenShell launcher prepares one owned reusable development environment", a
   });
   assert.match(second.stdout, /Reusing the prepared OpenShell cluster/);
   assert.equal((await readFile(fixture.prepareLog, "utf8")).trim().split("\n").length, 2);
+
+  // Interrupted cleanup can remove the ownership ledger before its derived
+  // files. A fresh preparation must discard those obsolete environment values.
+  await rm(join(fixture.stateDirectory, "state.json"));
+  await writeFile(
+    join(fixture.stateDirectory, "environment"),
+    "OCC_TEST_KUBERNETES_KUBECONFIG=/obsolete/kubeconfig\n",
+  );
+  await execute("scripts/openshell", ["up"], { cwd: repositoryRoot, env: fixture.env });
+  const selected = await execute("scripts/openshell", ["get", "kubeconfig"], {
+    cwd: repositoryRoot,
+    env: fixture.env,
+  });
+  assert.equal(selected.stdout.trim(), "/private/openshell/kubeconfig");
+  assert.doesNotMatch(
+    await readFile(join(fixture.stateDirectory, "environment"), "utf8"),
+    /obsolete/,
+  );
 });
 
 test("OpenShell launcher runs the positive compatibility proof with the selected credential", async (context) => {
@@ -260,7 +278,9 @@ async function waitForFile(path) {
       await readFile(path);
       return;
     } catch (error) {
-      if (error.code !== "ENOENT") throw error;
+      if (error.code !== "ENOENT") {
+        throw error;
+      }
     }
     await new Promise((resolveWait) => setTimeout(resolveWait, 20));
   }
