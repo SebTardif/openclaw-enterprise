@@ -185,7 +185,7 @@ test("OpenClaw plugin startup translation renders native install and enablement"
 test("OpenClaw plugin startup translation rejects unsupported policies", () => {
   for (const selection of [
     occSelection({ toolDefaults: { approval: "prompt" } }),
-    occSelection({ driverPolicy: { approvalsReviewer: "auto_review" } }),
+    occSelection({ toolDefaults: { reviewer: "auto" } }),
     occSelection({ tools: { unknown: { enabled: false } } }),
     occSelection({ tools: { diffs: { approval: "prompt" } } }),
     occSelection({ approvalMode: "never" }),
@@ -304,7 +304,7 @@ test("Codex startup default-denies plugins", () => {
 test("Codex startup translation renders selected marketplace app plugins", () => {
   const selections = {
     ...codexSelection(linearPluginId),
-    ...codexSelection(calendarPluginId, { driverPolicy: { approvalsReviewer: "auto_review" } }),
+    ...codexSelection(calendarPluginId, { toolDefaults: { approval: "native", reviewer: "auto" } }),
     ...codexSelection(thirdPluginId),
   };
   const artifact = codexRuntimeArtifact(selections, codexDetails);
@@ -371,15 +371,19 @@ test("Codex startup translation renders selected marketplace app plugins", () =>
 
 test("Codex startup translation preserves explicit approval defaults and routed reviewer selection", () => {
   for (const approval of ["native", "prompt", "approve"]) {
-    for (const approvalsReviewer of ["user", "auto_review"]) {
+    for (const [reviewer, nativeReviewer] of [
+      ["human", "user"],
+      ["auto", "auto_review"],
+      [undefined, undefined],
+    ]) {
       const selections = codexSelection(linearPluginId, {
-        toolDefaults: { approval },
-        driverPolicy: { approvalsReviewer },
+        toolDefaults: { approval, ...(reviewer === undefined ? {} : { reviewer }) },
       });
       const app = codexRuntimeArtifact(selections, codexDetails).configuration.apps
         .asdk_app_69a089a326dc8191b32a3f2553f5be2c;
       assert.equal(app.default_tools_approval_mode, approval === "native" ? "auto" : approval);
-      assert.equal(app.approvals_reviewer, approvalsReviewer);
+      assert.equal(app.approvals_reviewer, nativeReviewer);
+      assert.equal(Object.hasOwn(app, "approvals_reviewer"), reviewer !== undefined);
       assert.equal(Object.hasOwn(app, "default_tools_enabled"), false);
       assert.equal(
         codexOpenClawConfiguration(selections).plugins.entries.codex.config.codexPlugins.plugins
@@ -413,7 +417,7 @@ test("Codex scoped tools override independent defaults and retain omitted native
     },
   ];
   const selections = codexSelection(linearPluginId, {
-    toolDefaults: { enabled: false, approval: "prompt" },
+    toolDefaults: { enabled: false, approval: "prompt", reviewer: "auto" },
     tools: {
       [appId + "/repos%2Fread"]: { enabled: true },
       [appId + "/repos%2Fwrite"]: { approval: "native" },
@@ -426,6 +430,7 @@ test("Codex scoped tools override independent defaults and retain omitted native
     enabled: true,
     default_tools_enabled: false,
     default_tools_approval_mode: "prompt",
+    approvals_reviewer: "auto_review",
     tools: {
       "repos/read": { enabled: true },
       "repos/write": { approval_mode: "auto" },
@@ -458,7 +463,8 @@ test("Codex scoped tools override independent defaults and retain omitted native
 
 test("Codex destructive defaults project to native config and the hosted-app bridge", () => {
   const selections = codexSelection(linearPluginId, {
-    driverPolicy: { destructiveEnabled: false, approvalsReviewer: "user" },
+    toolDefaults: { approval: "native", reviewer: "human" },
+    driverPolicy: { destructiveEnabled: false },
   });
   const app = codexRuntimeArtifact(selections, codexDetails).configuration.apps
     .asdk_app_69a089a326dc8191b32a3f2553f5be2c;
@@ -485,7 +491,7 @@ test("Codex destructive defaults project to native config and the hosted-app bri
   for (const driverPolicy of [
     { unknown: true },
     { destructiveEnabled: "false" },
-    { approvalsReviewer: "robot" },
+    { approvalsReviewer: "user" },
   ]) {
     assert.throws(() =>
       validatePolicies("codex", codexSelection(linearPluginId, { driverPolicy })),
@@ -512,8 +518,12 @@ test("Codex startup translation fails selected-only policy gaps at startup", () 
     ],
     [
       {
-        ...codexSelection(linearPluginId, { driverPolicy: { approvalsReviewer: "user" } }),
-        ...codexSelection(thirdPluginId, { driverPolicy: { approvalsReviewer: "auto_review" } }),
+        ...codexSelection(linearPluginId, {
+          toolDefaults: { approval: "native", reviewer: "human" },
+        }),
+        ...codexSelection(thirdPluginId, {
+          toolDefaults: { approval: "native", reviewer: "auto" },
+        }),
       },
       [
         codexDetail("linear", ["shared_app"]),

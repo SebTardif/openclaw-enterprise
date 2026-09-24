@@ -318,11 +318,10 @@ test(
     const desired = await fixture.selectPlugin(agent.id, {
       pluginId,
       enabled: true,
-      toolDefaults: { approval: "native" },
-      driverPolicy: { approvalsReviewer: "auto_review" },
+      toolDefaults: { approval: "native", reviewer: "auto" },
     });
     assert.equal(desired.toolDefaults.approval, "native");
-    assert.equal(desired.driverPolicy.approvalsReviewer, "auto_review");
+    assert.equal(desired.toolDefaults.reviewer, "auto");
 
     const deployed = await fixture.deployAndWait(agent);
     assert.equal(deployed.revision.plugins?.driver.id, "codex-plugin");
@@ -426,8 +425,7 @@ test(
     const selectedSuccess = await fixture.selectPlugin(primary.id, {
       pluginId: successPluginId,
       enabled: true,
-      toolDefaults: { approval: "native" },
-      driverPolicy: { approvalsReviewer: "auto_review" },
+      toolDefaults: { approval: "native", reviewer: "auto" },
     });
     assert.equal(selectedSuccess.enabled, true);
     const deployedPrimary = await fixture.deployAndWait(primary);
@@ -501,8 +499,7 @@ test(
     const selectedFailure = await fixture.selectPlugin(primary.id, {
       pluginId: failurePluginId,
       enabled: true,
-      toolDefaults: { approval: "native" },
-      driverPolicy: { approvalsReviewer: "auto_review" },
+      toolDefaults: { approval: "native", reviewer: "auto" },
     });
     assert.equal(selectedFailure.enabled, true);
     const deployedWithWarning = await fixture.deployAndWait(primary);

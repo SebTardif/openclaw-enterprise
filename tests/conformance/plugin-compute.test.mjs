@@ -313,6 +313,8 @@ function codexReadResponse(options = {}) {
 function codexConfigReadResponse(appConfig = {}) {
   return {
     config: {
+      approval_policy: "on-request",
+      model: "test-model",
       features: { apps: true, plugins: true, remote_plugin: true },
       apps: {
         _default: { enabled: false },
@@ -489,7 +491,7 @@ test("compute consumes Codex no-plugin selections from the revision", () => {
 });
 
 test("compute serializes selected Codex plugins for startup-time resolution", () => {
-  const state = codexLinearPluginState({ driverPolicy: { approvalsReviewer: "auto_review" } });
+  const state = codexLinearPluginState({ toolDefaults: { approval: "native", reviewer: "auto" } });
   const runtime = pluginRuntimeSpecForRevision(revision({ plugins: state }));
 
   assert.equal(runtime.kind, "codex");
@@ -530,7 +532,7 @@ test("compute serializes selected OpenClaw plugins for startup-time resolution",
 });
 
 test("Codex runtime helper installs selected remote plugins before readiness", async () => {
-  const state = codexLinearPluginState({ driverPolicy: { approvalsReviewer: "auto_review" } });
+  const state = codexLinearPluginState({ toolDefaults: { approval: "native", reviewer: "auto" } });
   const runtime = {
     manifest: pluginRuntimeSpecForRevision(revision({ plugins: state })),
   };
@@ -595,6 +597,10 @@ test("Codex runtime helper installs selected remote plugins before readiness", a
       assert.deepEqual(params, {});
       return codexConfigReadResponse({ approvals_reviewer: "auto_review" });
     }
+    if (method === "configRequirements/read") {
+      assert.deepEqual(params, {});
+      return { requirements: null };
+    }
     throw new Error(`unexpected request ${method}`);
   });
 
@@ -613,6 +619,8 @@ test("Codex runtime helper installs selected remote plugins before readiness", a
       "plugin/read",
       "initialize",
       "config/read",
+      "initialize",
+      "configRequirements/read",
     ],
   );
   assert.equal(
@@ -623,10 +631,150 @@ test("Codex runtime helper installs selected remote plugins before readiness", a
   );
 });
 
+test("Codex runtime helper verifies explicit reviewers before readiness without constraining omission", async (t) => {
+  for (const scenario of [
+    {
+      name: "auto with never",
+      config: { approval_policy: "never" },
+      error: /requires session approval/,
+    },
+    {
+      name: "auto with untrusted",
+      config: { approval_policy: "untrusted" },
+      error: /requires session approval/,
+    },
+    {
+      name: "auto with granular",
+      config: {
+        approval_policy: {
+          granular: {
+            sandbox_approval: true,
+            rules: true,
+            skill_approval: true,
+            request_permissions: true,
+            mcp_elicitations: true,
+          },
+        },
+      },
+    },
+    {
+      name: "managed reviewer exclusion",
+      requirements: { allowedApprovalsReviewers: ["user"] },
+      error: /managed requirements forbid/,
+    },
+    {
+      name: "required model conflicts with human",
+      reviewer: "human",
+      app: { approvals_reviewer: "user" },
+      config: { model: "provider/test-model" },
+      requirements: { autoReview: { requiredOnModels: ["test-model"] } },
+      error: /managed model requirements/,
+    },
+    {
+      name: "unknown model cannot verify human",
+      reviewer: "human",
+      app: { approvals_reviewer: "user" },
+      config: { model: null },
+      requirements: { autoReview: { requiredOnModels: ["test-model"] } },
+      error: /managed model requirements/,
+    },
+    {
+      name: "unrelated requirements allow human",
+      reviewer: "human",
+      app: { approvals_reviewer: "user" },
+      requirements: {
+        allowedApprovalsReviewers: null,
+        autoReview: { requiredOnModels: ["other-model"] },
+      },
+    },
+    {
+      name: "account reviewer conflicts",
+      app: { links: { account: { approvals_reviewer: "user" } } },
+      error: /effective app or account reviewer conflicts/,
+    },
+    {
+      name: "app reviewer conflicts",
+      app: { approvals_reviewer: "user" },
+      error: /effective app or account reviewer conflicts/,
+    },
+    {
+      name: "malformed requirements response",
+      response: {},
+      error: /reviewer requirements are unavailable/,
+    },
+    {
+      name: "malformed reviewer allowlist",
+      requirements: { allowedApprovalsReviewers: ["human"] },
+      error: /reviewer requirements are invalid/,
+    },
+    {
+      name: "omitted reviewer preserves native configuration",
+      reviewer: null,
+      config: { approval_policy: "never" },
+    },
+  ]) {
+    await t.test(scenario.name, async () => {
+      const reviewer = scenario.reviewer === undefined ? "auto" : scenario.reviewer;
+      const state = codexLinearPluginState({
+        ...(reviewer === null ? {} : { toolDefaults: { reviewer } }),
+      });
+      const runtime = { manifest: pluginRuntimeSpecForRevision(revision({ plugins: state })) };
+      const result = await runCodexRuntimeHelper(
+        runtime,
+        (method, params) => {
+          if (method === "initialize") {
+            return { serverInfo: { name: "codex", version: "0.156.0" } };
+          }
+          if (method === "plugin/list") {
+            return codexListResponse();
+          }
+          if (method === "plugin/read") {
+            return codexReadResponse();
+          }
+          if (method === "plugin/install") {
+            return { authPolicy: "ON_USE", appsNeedingAuth: [] };
+          }
+          if (method === "config/batchWrite") {
+            return { status: "ok", version: "reviewer-config" };
+          }
+          if (method === "config/read") {
+            const response = codexConfigReadResponse({
+              approvals_reviewer: "auto_review",
+              ...scenario.app,
+            });
+            return { config: { ...response.config, ...scenario.config }, origins: {} };
+          }
+          if (method === "configRequirements/read") {
+            assert.deepEqual(params, {});
+            return scenario.response ?? { requirements: scenario.requirements ?? null };
+          }
+          throw new Error(`unexpected request ${method}`);
+        },
+        { captureError: true },
+      );
+      if (scenario.error) {
+        assert.match(result.error?.message ?? "", scenario.error);
+        assert.equal(result.value, undefined, "unverifiable reviewer must prevent readiness");
+      } else {
+        assert.equal(result.error, undefined);
+        assert.deepEqual(plain(result.value), {
+          successfulPluginIds: ["codex-plugin:linear@openai-curated-remote"],
+          failures: [],
+        });
+      }
+      if (reviewer === null) {
+        assert.equal(
+          result.requests.some(({ method }) => method === "configRequirements/read"),
+          false,
+        );
+      }
+    });
+  }
+});
+
 test("Codex runtime helper discovers tool policy after installation and before readiness", async () => {
   const state = codexLinearPluginState({
-    toolDefaults: { enabled: false, approval: "prompt" },
-    driverPolicy: { approvalsReviewer: "user" },
+    toolDefaults: { enabled: false, approval: "prompt", reviewer: "human" },
     tools: { [CODEX_LINEAR_APP_ID + "/list_issues"]: { enabled: true, approval: "approve" } },
   });
   const runtime = { manifest: pluginRuntimeSpecForRevision(revision({ plugins: state })) };
@@ -702,6 +850,10 @@ test("Codex runtime helper discovers tool policy after installation and before r
     if (method === "config/read") {
       return { config: { ...codexConfigReadResponse().config, apps } };
     }
+    if (method === "configRequirements/read") {
+      assert.deepEqual(params, {});
+      return { requirements: null };
+    }
     throw new Error(`unexpected request ${method}`);
   });
   assert.deepEqual(
@@ -763,7 +915,7 @@ test("Codex runtime helper rejects incomplete or unbounded tool discovery before
 });
 
 test("Codex runtime helper reports plugin install warnings without retrying", async () => {
-  const state = codexLinearPluginState({ driverPolicy: { approvalsReviewer: "auto_review" } });
+  const state = codexLinearPluginState({ toolDefaults: { approval: "native", reviewer: "auto" } });
   const runtime = {
     manifest: pluginRuntimeSpecForRevision(revision({ plugins: state })),
   };
@@ -1582,7 +1734,7 @@ test("embedded plugin preparation applies runtime egress before gateway readines
   const dedicatedDriver = dedicatedPluginDriver();
   const dedicated = revision({
     compute: { id: dedicatedDriver.id, implementation: dedicatedDriver.implementation },
-    plugins: codexLinearPluginState({ driverPolicy: { approvalsReviewer: "auto_review" } }),
+    plugins: codexLinearPluginState({ toolDefaults: { approval: "native", reviewer: "auto" } }),
   });
   useRoutedGateway(dedicated);
   const dedicatedNamespace = kubernetesNamespaceName(dedicated.namespaceId);
@@ -2170,7 +2322,7 @@ test("Codex gateway supervisor exits when the peer Agent plugin failure set chan
 
   const runtime = pluginRuntimeSpecForRevision(
     revision({
-      plugins: codexLinearPluginState({ driverPolicy: { approvalsReviewer: "auto_review" } }),
+      plugins: codexLinearPluginState({ toolDefaults: { approval: "native", reviewer: "auto" } }),
     }),
   );
   const files = new Map([
@@ -2557,7 +2709,7 @@ test("Kubernetes dedicated Codex gateway mounts bridge runtime and prior plugin 
   const driver = createKubernetesComputeDriver(kubernetesOptions());
   const runtime = pluginRuntimeSpecForRevision(
     revision({
-      plugins: codexLinearPluginState({ driverPolicy: { approvalsReviewer: "auto_review" } }),
+      plugins: codexLinearPluginState({ toolDefaults: { approval: "native", reviewer: "auto" } }),
     }),
   );
   const deployment = driver.deployment(

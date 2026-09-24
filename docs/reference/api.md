@@ -355,9 +355,11 @@ Get the singleton Installation
 | `data.capabilities.pluginPolicies.toolDefaults` | `object` | Yes | — |
 | `data.capabilities.pluginPolicies.toolDefaults.approval` | `array<"native" or "prompt" or "approve">` | Yes | — |
 | `data.capabilities.pluginPolicies.toolDefaults.enabled` | `boolean` | Yes | — |
+| `data.capabilities.pluginPolicies.toolDefaults.reviewer` | `array<"human" or "auto">` | Yes | — |
 | `data.capabilities.pluginPolicies.tools` | `object` | Yes | — |
 | `data.capabilities.pluginPolicies.tools.approval` | `array<"native" or "prompt" or "approve">` | Yes | — |
 | `data.capabilities.pluginPolicies.tools.enabled` | `boolean` | Yes | — |
+| `data.capabilities.pluginPolicies.tools.reviewer` | `array<"human" or "auto">` | Yes | — |
 | `data.createdAt` | `string (date-time)` | Yes | pattern: `^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[.][0-9]{3}Z$` |
 | `data.id` | `string` | Yes | pattern: `^ins_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
 | `data.name` | `string` | Yes | min length: 1; max length: 200; pattern: `^(?!\s)(?!.*\s$)(?!.*[\u0000-\u001f\u007f]).+$` |
@@ -418,9 +420,11 @@ Bootstrap the singleton Installation
 | `data.capabilities.pluginPolicies.toolDefaults` | `object` | Yes | — |
 | `data.capabilities.pluginPolicies.toolDefaults.approval` | `array<"native" or "prompt" or "approve">` | Yes | — |
 | `data.capabilities.pluginPolicies.toolDefaults.enabled` | `boolean` | Yes | — |
+| `data.capabilities.pluginPolicies.toolDefaults.reviewer` | `array<"human" or "auto">` | Yes | — |
 | `data.capabilities.pluginPolicies.tools` | `object` | Yes | — |
 | `data.capabilities.pluginPolicies.tools.approval` | `array<"native" or "prompt" or "approve">` | Yes | — |
 | `data.capabilities.pluginPolicies.tools.enabled` | `boolean` | Yes | — |
+| `data.capabilities.pluginPolicies.tools.reviewer` | `array<"human" or "auto">` | Yes | — |
 | `data.createdAt` | `string (date-time)` | Yes | pattern: `^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[.][0-9]{3}Z$` |
 | `data.id` | `string` | Yes | pattern: `^ins_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
 | `data.name` | `string` | Yes | min length: 1; max length: 200; pattern: `^(?!\s)(?!.*\s$)(?!.*[\u0000-\u001f\u007f]).+$` |

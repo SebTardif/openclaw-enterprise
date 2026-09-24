@@ -8,8 +8,10 @@ support matrix.
 Current behavior is defined by the [Agent plugin reference](../../../../../docs/reference/agent-plugins.md#approval-policy)
 and [bundled mappings](../../../../../docs/reference/drivers/plugin-bundled.md#native-mappings-and-limits).
 The current translator accepts independent `toolDefaults` and explicit tool
-fields, with `native`, `prompt`, and `approve` approval modes. Driver-specific
-fields remain in `driverPolicy`; generic write/destructive category expansion
+fields, with `native`, `prompt`, and `approve` approval modes. Common reviewer
+choices are `human` and `auto`, advertised separately per scope; omission inherits
+the effective Harness reviewer. Driver-specific fields remain in `driverPolicy`;
+generic write/destructive category expansion
 is not part of that contract. Native OpenClaw supports `native` and `approve`
 only. Effective runtime proof remains separate from translation support.
 

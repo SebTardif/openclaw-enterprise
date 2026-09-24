@@ -62,13 +62,6 @@ const CODEX_POLICY_SCHEMA: JSONSchema = deepFreeze({
       description:
         "Whether destructive tools are enabled by default. Explicit tool enablement overrides this default. Leave toolDefaults.enabled unset when using this setting.",
     },
-    approvalsReviewer: {
-      type: "string",
-      enum: ["user", "auto_review"],
-      title: "Approval reviewer",
-      description:
-        "Who reviews calls that require approval: the user or Codex automatic reviewer. This does not change when review is required.",
-    },
   },
 });
 
@@ -159,8 +152,12 @@ class BundledPluginDriverBase {
   protected validate(kind: "codex" | "openclaw", selections: PluginDesiredState): void {
     try {
       validatePolicies(kind, selections);
-    } catch {
-      throw new PluginPolicyValidationError();
+    } catch (error) {
+      const field =
+        error instanceof Error && "policyField" in error ? error.policyField : undefined;
+      throw new PluginPolicyValidationError(
+        field === "toolDefaults.reviewer" || field === "tools[id].reviewer" ? field : undefined,
+      );
     }
   }
 
@@ -172,8 +169,8 @@ class BundledPluginDriverBase {
 export class OCCPluginDriver extends BundledPluginDriverBase implements PluginDriver {
   static readonly configurationSchema = EMPTY_CONFIGURATION_SCHEMA;
   readonly policyCapabilities: PluginPolicyCapabilities = deepFreeze({
-    toolDefaults: { enabled: true, approval: ["native", "approve"] },
-    tools: { enabled: true, approval: ["native", "approve"] },
+    toolDefaults: { enabled: true, approval: ["native", "approve"], reviewer: [] },
+    tools: { enabled: true, approval: ["native", "approve"], reviewer: [] },
     driverPolicySchema: EMPTY_CONFIGURATION_SCHEMA,
   });
 
@@ -201,8 +198,12 @@ export class CodexPluginDriver extends BundledPluginDriverBase implements Plugin
   // TODO: gate prompt on enforceable session constraints before this draft ships.
   // A permissive native session can bypass app-level review despite translation.
   readonly policyCapabilities: PluginPolicyCapabilities = deepFreeze({
-    toolDefaults: { enabled: true, approval: ["native", "prompt", "approve"] },
-    tools: { enabled: true, approval: ["native", "prompt", "approve"] },
+    toolDefaults: {
+      enabled: true,
+      approval: ["native", "prompt", "approve"],
+      reviewer: ["human", "auto"],
+    },
+    tools: { enabled: true, approval: ["native", "prompt", "approve"], reviewer: [] },
     driverPolicySchema: CODEX_POLICY_SCHEMA,
   });
 

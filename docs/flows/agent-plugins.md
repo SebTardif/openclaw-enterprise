@@ -63,8 +63,8 @@ the `plugins` map through the ordinary Agent mutation path. Shared contract
 validators check the canonical nested selection shape at OCC boundaries.
 `OpenClawController.validatePluginPolicies` calls the selected Driver's
 `validatePolicies` before Agent create/update and provisioning writes. Unsupported
-controls and combinations return `400 INVALID_REQUEST`; a missing selected
-Driver returns `501 NOT_IMPLEMENTED`. Validation is static: native app mapping,
+controls, reviewer scopes, and combinations return `400 INVALID_REQUEST`;
+a missing selected Driver returns `501 NOT_IMPLEMENTED`. Validation is static: native app mapping,
 authentication, and release/tool metadata remain startup checks. A successful
 Agent mutation stores Agent-owned desired
 state and appends audit evidence in the same transaction. It does not modify
@@ -158,20 +158,24 @@ Unknown or unowned tools fail startup; tool classifications are not required.
 
 `codexRuntimeArtifact` writes app defaults and supplied tool fields independently;
 it does not expand category rules or copy defaults to every tool. `native` maps to
-Codex `auto`; optional Driver fields map to `destructive_enabled` and
-`approvals_reviewer`. `writeCodexAppConfiguration` replaces each managed app
+Codex `auto`; `driverPolicy.destructiveEnabled` maps to `destructive_enabled`.
+`toolDefaults.reviewer` maps `human`/`auto` to app `approvals_reviewer` values
+`user`/`auto_review`; omission inherits the effective Harness reviewer. Both
+Drivers reject explicit reviewers at unsupported scopes before save.
+`writeCodexAppConfiguration` replaces each managed app
 subtree with `config/batchWrite`, removing stale per-app tool/link settings. It
 then rereads successful installations to check identity, version, and app mapping.
 Failed-only bindings are disabled; successful bindings retain admitted policy.
 Disabled selections do not contribute install attempts or startup results.
 `config/read` verifies the effective overlay before readiness.
 
-Translation alone does not establish approval enforcement. The effective session
-approval policy and permission profile must preserve native prompts, and the OC
-bridge must preserve app settings on start/resume. Runtime prerequisites and the
-remaining live proof are recorded in [plugin testing](../testing/plugins.md#current-proof-notes).
-Codex owns its cache integrity; OCE does not inspect private cache files. The
-normal Codex readiness path still owns runtime health.
+`runtime-entrypoints.ts:verifyCodexReviewerConfiguration` checks explicit app
+reviewers against effective app/link settings and `configRequirements/read`.
+It rejects forbidden reviewers, incompatible automatic-review approval settings,
+and human review conflicting with current-model requirements. These startup
+checks do not establish later session/model routing, strict review, or complete
+policy readback. See the [remaining proof](../testing/plugins.md#current-proof-notes).
+Codex owns cache integrity and runtime health.
 
 For Compute-owned Kubernetes workloads, a selected OpenClaw install command's
 normal nonzero exit, a matching Codex `plugin/install` error response, or a
@@ -269,6 +273,8 @@ completed deployment attempt rather than ongoing runtime health.
 [keep this for the user to add notes. do not change between edits]
 
 ## Changelog
+
+- 2026-09-24 07:02: Aligned the common reviewer contract and scoped capabilities with the accepted specification; runtime reviewer/session checks remain draft gates (codex/01a0b17c-68b6-7e11-bedc-f74de7d606ed - 3606f2e9)
 
 - 2026-09-24 06:19: Documented nested policy validation, capabilities, owned-tool discovery, and native configuration translation; compatible session/runtime enforcement and live proof remain required (codex/01a0b17c-68b6-7e11-bedc-f74de7d606ed - d39727589)
 

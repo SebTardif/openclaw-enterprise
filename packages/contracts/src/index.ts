@@ -263,6 +263,8 @@ export interface ComputeRevisionContext {
   readonly repositoryCredentials?: readonly RepositoryCredentialRuntimeBinding[];
 }
 
+export type PluginReviewer = "human" | "auto";
+
 export type PluginApprovalMode = "native" | "prompt" | "approve";
 
 export interface PluginDriverIdentity {
@@ -273,6 +275,7 @@ export interface PluginDriverIdentity {
 export interface PluginToolPolicy {
   readonly enabled?: boolean;
   readonly approval?: PluginApprovalMode;
+  readonly reviewer?: PluginReviewer;
 }
 
 export interface PluginDesiredSelection {
@@ -297,10 +300,12 @@ export interface PluginPolicyCapabilities {
   readonly toolDefaults: {
     readonly enabled: boolean;
     readonly approval: readonly PluginApprovalMode[];
+    readonly reviewer: readonly PluginReviewer[];
   };
   readonly tools: {
     readonly enabled: boolean;
     readonly approval: readonly PluginApprovalMode[];
+    readonly reviewer: readonly PluginReviewer[];
   };
   readonly driverPolicySchema: JSONSchema;
 }

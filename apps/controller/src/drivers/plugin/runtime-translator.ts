@@ -160,7 +160,7 @@ export function createPluginRuntimeTranslator(nativeCatalog: readonly OpenClawPl
   }
 
   function toolPolicy(value: unknown): Record<string, unknown> {
-    const policy = policyRecord(value, "Tool policy", ["enabled", "approval"]);
+    const policy = policyRecord(value, "Tool policy", ["enabled", "approval", "reviewer"]);
     if (policy.enabled !== undefined && typeof policy.enabled !== "boolean") {
       throw new Error("Tool enabled must be a boolean.");
     }
@@ -169,6 +169,9 @@ export function createPluginRuntimeTranslator(nativeCatalog: readonly OpenClawPl
       !["native", "prompt", "approve"].includes(policy.approval as string)
     ) {
       throw new Error("Tool approval policy is unsupported.");
+    }
+    if (policy.reviewer !== undefined && !["human", "auto"].includes(policy.reviewer as string)) {
+      throw new Error("Tool reviewer must be human or auto.");
     }
     return policy;
   }
@@ -192,7 +195,7 @@ export function createPluginRuntimeTranslator(nativeCatalog: readonly OpenClawPl
     return policyRecord(
       selection.driverPolicy === undefined ? {} : selection.driverPolicy,
       "Codex driver policy",
-      ["destructiveEnabled", "approvalsReviewer"],
+      ["destructiveEnabled"],
     );
   }
 
@@ -227,6 +230,18 @@ export function createPluginRuntimeTranslator(nativeCatalog: readonly OpenClawPl
       }
       const toolDefaults = defaults(selection);
       const tools = toolPolicies(selection);
+      if (Object.values(tools).some((tool) => tool.reviewer !== undefined)) {
+        throw Object.assign(
+          new Error("Per-tool reviewer selection is unsupported; omit tools[id].reviewer."),
+          { policyField: "tools[id].reviewer" },
+        );
+      }
+      if (kind === "openclaw" && toolDefaults.reviewer !== undefined) {
+        throw Object.assign(
+          new Error("This runtime does not support toolDefaults.reviewer; omit it to inherit."),
+          { policyField: "toolDefaults.reviewer" },
+        );
+      }
       if (kind === "codex") {
         codexNativeIdFromPluginId(pluginId);
         const policy = driverPolicy(selection);
@@ -235,12 +250,6 @@ export function createPluginRuntimeTranslator(nativeCatalog: readonly OpenClawPl
           typeof policy.destructiveEnabled !== "boolean"
         ) {
           throw new Error("Codex destructiveEnabled must be a boolean.");
-        }
-        if (
-          policy.approvalsReviewer !== undefined &&
-          !["user", "auto_review"].includes(policy.approvalsReviewer as string)
-        ) {
-          throw new Error("Codex approvalsReviewer is unsupported.");
         }
         if (toolDefaults.enabled !== undefined && policy.destructiveEnabled !== undefined) {
           throw new Error(
@@ -673,9 +682,9 @@ export function createPluginRuntimeTranslator(nativeCatalog: readonly OpenClawPl
             ...(toolDefaults.enabled === undefined
               ? {}
               : { default_tools_enabled: toolDefaults.enabled }),
-            ...(policy.approvalsReviewer === undefined
+            ...(toolDefaults.reviewer === undefined
               ? {}
-              : { approvals_reviewer: policy.approvalsReviewer }),
+              : { approvals_reviewer: toolDefaults.reviewer === "human" ? "user" : "auto_review" }),
             ...(policy.destructiveEnabled === undefined
               ? {}
               : { destructive_enabled: policy.destructiveEnabled }),

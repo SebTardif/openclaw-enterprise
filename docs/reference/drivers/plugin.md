@@ -20,8 +20,9 @@ are not selectable. See [Driver selection](selection.md) and the
 
 The [shared interface](../../../packages/contracts/src/index.ts) exposes:
 
-- `policyCapabilities`: supported default/tool enablement and approval controls,
-  plus the JSON Schema for Driver-specific `driverPolicy` fields.
+- `policyCapabilities`: supported default/tool enablement, approval modes, and
+  reviewer arrays per scope, plus the JSON Schema for `driverPolicy` fields.
+  An empty reviewer array means explicit selection is unsupported at that scope.
 - `validatePolicies(selections)`: validate requested policy without installation
   or authenticated discovery. OCC calls this before save and deployment admission.
 - `listCatalog(context)`: read the catalog for a Namespace, Agent, Harness,

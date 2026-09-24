@@ -37,7 +37,13 @@
               { "const": "approve", "type": "string" }
             ]
           },
-          "enabled": { "type": "boolean" }
+          "enabled": { "type": "boolean" },
+          "reviewer": {
+            "anyOf": [
+              { "const": "human", "type": "string" },
+              { "const": "auto", "type": "string" }
+            ]
+          }
         },
         "title": "PluginToolPolicy",
         "type": "object"
@@ -1288,9 +1294,18 @@
                                       },
                                       "type": "array"
                                     },
-                                    "enabled": { "type": "boolean" }
+                                    "enabled": { "type": "boolean" },
+                                    "reviewer": {
+                                      "items": {
+                                        "anyOf": [
+                                          { "const": "human", "type": "string" },
+                                          { "const": "auto", "type": "string" }
+                                        ]
+                                      },
+                                      "type": "array"
+                                    }
                                   },
-                                  "required": ["enabled", "approval"],
+                                  "required": ["enabled", "approval", "reviewer"],
                                   "type": "object"
                                 },
                                 "tools": {
@@ -1306,9 +1321,18 @@
                                       },
                                       "type": "array"
                                     },
-                                    "enabled": { "type": "boolean" }
+                                    "enabled": { "type": "boolean" },
+                                    "reviewer": {
+                                      "items": {
+                                        "anyOf": [
+                                          { "const": "human", "type": "string" },
+                                          { "const": "auto", "type": "string" }
+                                        ]
+                                      },
+                                      "type": "array"
+                                    }
                                   },
-                                  "required": ["enabled", "approval"],
+                                  "required": ["enabled", "approval", "reviewer"],
                                   "type": "object"
                                 }
                               },
@@ -1476,9 +1500,18 @@
                                       },
                                       "type": "array"
                                     },
-                                    "enabled": { "type": "boolean" }
+                                    "enabled": { "type": "boolean" },
+                                    "reviewer": {
+                                      "items": {
+                                        "anyOf": [
+                                          { "const": "human", "type": "string" },
+                                          { "const": "auto", "type": "string" }
+                                        ]
+                                      },
+                                      "type": "array"
+                                    }
                                   },
-                                  "required": ["enabled", "approval"],
+                                  "required": ["enabled", "approval", "reviewer"],
                                   "type": "object"
                                 },
                                 "tools": {
@@ -1494,9 +1527,18 @@
                                       },
                                       "type": "array"
                                     },
-                                    "enabled": { "type": "boolean" }
+                                    "enabled": { "type": "boolean" },
+                                    "reviewer": {
+                                      "items": {
+                                        "anyOf": [
+                                          { "const": "human", "type": "string" },
+                                          { "const": "auto", "type": "string" }
+                                        ]
+                                      },
+                                      "type": "array"
+                                    }
                                   },
-                                  "required": ["enabled", "approval"],
+                                  "required": ["enabled", "approval", "reviewer"],
                                   "type": "object"
                                 }
                               },

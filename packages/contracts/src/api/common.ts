@@ -444,6 +444,8 @@ export const UpdateWorkspaceFileBody = Type.Object(
   { additionalProperties: false },
 );
 
+export const PluginReviewerSchema = Type.Union([Type.Literal("human"), Type.Literal("auto")]);
+
 export const PluginApprovalModeSchema = Type.Union([
   Type.Literal("native"),
   Type.Literal("prompt"),

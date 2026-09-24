@@ -29,6 +29,7 @@ import {
   Timestamp,
   WorkspaceFileName,
   PluginApprovalModeSchema,
+  PluginReviewerSchema,
 } from "./common.ts";
 
 const RuntimeFailureIdentifier = Type.String({
@@ -66,11 +67,19 @@ const InstallationCapabilitiesSchema = Type.Object(
         {
           driver: Type.Ref("PluginDriverIdentity"),
           toolDefaults: Type.Object(
-            { enabled: Type.Boolean(), approval: Type.Array(PluginApprovalModeSchema) },
+            {
+              enabled: Type.Boolean(),
+              approval: Type.Array(PluginApprovalModeSchema),
+              reviewer: Type.Array(PluginReviewerSchema),
+            },
             { additionalProperties: false },
           ),
           tools: Type.Object(
-            { enabled: Type.Boolean(), approval: Type.Array(PluginApprovalModeSchema) },
+            {
+              enabled: Type.Boolean(),
+              approval: Type.Array(PluginApprovalModeSchema),
+              reviewer: Type.Array(PluginReviewerSchema),
+            },
             { additionalProperties: false },
           ),
           driverPolicySchema: Type.Record(Type.String(), Type.Unknown()),
@@ -137,6 +146,7 @@ export const PluginToolPolicySchema = Type.Object(
   {
     enabled: Type.Optional(Type.Boolean()),
     approval: Type.Optional(PluginApprovalModeSchema),
+    reviewer: Type.Optional(PluginReviewerSchema),
   },
   { additionalProperties: false, minProperties: 1, $id: "PluginToolPolicy" },
 );

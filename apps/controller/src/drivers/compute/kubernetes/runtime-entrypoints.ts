@@ -876,6 +876,50 @@ async function readCodexAppConfiguration() {
   return response?.config;
 }
 
+async function verifyCodexReviewerConfiguration(configuration, effective) {
+  const requestedApps = Object.entries(configuration.apps ?? {})
+    .filter(([, app]) => app.approvals_reviewer !== undefined);
+  if (requestedApps.length === 0) return;
+  const response = await codexAppServerRequest("configRequirements/read", {});
+  if (!isPlainObject(response) ||
+      (response.requirements !== null && !isPlainObject(response.requirements))) {
+    throw new Error("Codex reviewer requirements are unavailable; use a runtime supporting configRequirements/read.");
+  }
+  const requirements = response.requirements ?? {};
+  const allowed = requirements.allowedApprovalsReviewers;
+  const requiredModels = requirements.autoReview?.requiredOnModels ?? [];
+  if ((allowed != null && (!Array.isArray(allowed) || allowed.some((value) => !["user", "auto_review"].includes(value)))) ||
+      !Array.isArray(requiredModels) || requiredModels.some((value) => typeof value !== "string")) {
+    throw new Error("Codex reviewer requirements are invalid; verify the runtime's managed requirements.");
+  }
+  for (const [appId, app] of requestedApps) {
+    const reviewer = app.approvals_reviewer;
+    const actual = effective?.apps?.[appId];
+    if (actual?.approvals_reviewer !== reviewer ||
+        Object.values(actual?.links ?? {}).some((link) => link?.approvals_reviewer != null && link.approvals_reviewer !== reviewer)) {
+      throw new Error("Codex effective app or account reviewer conflicts with toolDefaults.reviewer; remove the conflicting override.");
+    }
+    if (allowed != null && !allowed.includes(reviewer)) {
+      throw new Error("Codex managed requirements forbid the requested reviewer; choose an allowed reviewer or omit the override.");
+    }
+    if (reviewer === "auto_review") {
+      const approval = effective?.approval_policy;
+      if (approval !== "on-request" && !(isPlainObject(approval) && isPlainObject(approval.granular))) {
+        throw new Error("Codex automatic reviewer requires session approval on-request or granular; verify a compatible effective policy before enabling it.");
+      }
+    } else if (requiredModels.length > 0) {
+      const model = effective?.model;
+      // Native required-model matching strips one valid provider prefix.
+      const slug = typeof model === "string" ? model.replace(/^[A-Za-z0-9_-]+\/([^/]*)$/, "$1") : undefined;
+      if (slug === undefined || requiredModels.includes(slug)) {
+        throw new Error("Codex managed model requirements prevent verifying the human reviewer; choose auto or a permitted model.");
+      }
+    }
+  }
+  // TODO: establish compatible start/resume and turn routing before claiming
+  // enforcement; these checks verify startup configuration, not future turns.
+}
+
 function codexPluginSlug(plugin) {
   const registry = requireNonEmptyString(plugin.registry, "Codex plugin registry");
   const nativeId = requireNonEmptyString(plugin.nativeId, "Codex plugin native ID");
@@ -1049,7 +1093,9 @@ async function installCodexSelectionSet(selections, failures = []) {
   }
   // TODO: verify the complete managed app policy before nested policies ship;
   // extra effective tool/link overrides can outrank the requested app defaults.
-  assertConfigContainsOverlay(await readCodexAppConfiguration(), effectiveResolvedArtifact.configuration);
+  const effectiveConfiguration = await readCodexAppConfiguration();
+  await verifyCodexReviewerConfiguration(effectiveResolvedArtifact.configuration, effectiveConfiguration);
+  assertConfigContainsOverlay(effectiveConfiguration, effectiveResolvedArtifact.configuration);
   return { successfulPluginIds, failures: failed };
 }
 

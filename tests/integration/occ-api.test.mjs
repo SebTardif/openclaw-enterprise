@@ -1499,8 +1499,16 @@ test("Agent create and update replace policy-only plugin maps and revisions free
     id: "occ-plugin",
     implementation: "occ/openclaw-plugin",
   });
-  assert.deepEqual(capabilities.toolDefaults, { enabled: true, approval: ["native", "approve"] });
-  assert.deepEqual(capabilities.tools, { enabled: true, approval: ["native", "approve"] });
+  assert.deepEqual(capabilities.toolDefaults, {
+    enabled: true,
+    approval: ["native", "approve"],
+    reviewer: [],
+  });
+  assert.deepEqual(capabilities.tools, {
+    enabled: true,
+    approval: ["native", "approve"],
+    reviewer: [],
+  });
   assert.equal(capabilities.driverPolicySchema.additionalProperties, false);
   assert.deepEqual(capabilities.driverPolicySchema.properties, {});
   const initialPlugins = {
@@ -1593,6 +1601,78 @@ test("Agent create and update replace policy-only plugin maps and revisions free
   assert.equal(Object.hasOwn(pluginFreeRevision.data, "plugins"), false);
 });
 
+test("Agent plugin reviewer selection preserves omission and rejects unsupported tool scope", async () => {
+  const controller = await configuredController();
+  await bootstrap(controller);
+  const namespace = await createNamespace(controller, "plugin-reviewer-api");
+  const configuration = await createConfiguration(controller, namespace.id, {
+    agents: { defaults: { model: "codex/gpt-6-astra" } },
+  });
+  const pluginDriver = new CodexPluginDriver();
+  controller.fixture.controller.registerDriver(pluginDriver);
+  controller.fixture.controller.selectDriver("plugin", pluginDriver.id);
+  const installation = await controller.request("GET", "/installation");
+  assert.equal(installation.status, 200);
+  const capabilities = installation.data.capabilities.pluginPolicies;
+  assert.equal(capabilities.driver.id, "codex-plugin");
+  assert.deepEqual(capabilities.toolDefaults.reviewer, ["human", "auto"]);
+  assert.deepEqual(capabilities.tools.reviewer, []);
+  assert.equal(
+    Object.hasOwn(capabilities.driverPolicySchema.properties, "approvalsReviewer"),
+    false,
+  );
+
+  const plugins = { [linearPluginId]: { enabled: true, toolDefaults: { reviewer: "auto" } } };
+  const created = await controller.request("POST", `/namespaces/${namespace.id}/agents`, {
+    body: {
+      name: "reviewer-agent",
+      executionMode: "dedicated",
+      configurationId: configuration.id,
+      plugins,
+    },
+  });
+  assert.equal(created.status, 201, JSON.stringify(created.body));
+  assert.deepEqual(created.data.plugins, plugins);
+  const path = `/namespaces/${namespace.id}/agents/${created.data.id}`;
+  const saved = await controller.request("GET", path);
+  assert.deepEqual(saved.data.plugins, plugins);
+  const omitted = await controller.request("PATCH", path, {
+    body: { configurationId: configuration.id },
+  });
+  assert.equal(omitted.status, 200);
+  assert.deepEqual(omitted.data.plugins, plugins);
+
+  // A tool reviewer must not silently become an app reviewer, even when redundant or disabled.
+  for (const policy of [
+    {
+      enabled: true,
+      toolDefaults: { reviewer: "auto" },
+      tools: { "app/search": { reviewer: "auto" } },
+    },
+    { enabled: true, tools: { "app/search": { enabled: false, reviewer: "human" } } },
+    { enabled: false, tools: { "app/search": { reviewer: "auto" } } },
+  ]) {
+    const rejected = await controller.request("PATCH", path, {
+      body: { configurationId: configuration.id, plugins: { [linearPluginId]: policy } },
+    });
+    assert.equal(rejected.status, 400);
+    assert.equal(rejected.body.error.code, "INVALID_REQUEST");
+    assert.equal(
+      rejected.body.error.message,
+      "This Plugin Driver does not support tools[id].reviewer. Use toolDefaults.reviewer when supported, or omit the reviewer.",
+    );
+  }
+  assert.deepEqual((await controller.request("GET", path)).data.plugins, plugins);
+
+  // Replacing the policy removes the explicit reviewer without writing a replacement default.
+  const inherited = { [linearPluginId]: { enabled: true } };
+  const replaced = await controller.request("PATCH", path, {
+    body: { configurationId: configuration.id, plugins: inherited },
+  });
+  assert.equal(replaced.status, 200);
+  assert.deepEqual(replaced.data.plugins, inherited);
+});
+
 test("Agent plugin maps reject structural errors and preserve exact authorization and audit boundaries", async () => {
   const controller = await configuredController();
   await bootstrap(controller);
@@ -1657,6 +1737,8 @@ test("Agent plugin maps reject structural errors and preserve exact authorizatio
     { [diffsPluginId]: pluginPolicy({ writes: "prompt" }) },
     { [diffsPluginId]: pluginPolicy({ tools: { diffs: { approvalMode: "always" } } }) },
     { [diffsPluginId]: pluginPolicy({ toolDefaults: { approval: "auto" } }) },
+    { [diffsPluginId]: pluginPolicy({ toolDefaults: { reviewer: "user" } }) },
+    { [diffsPluginId]: pluginPolicy({ tools: { diffs: { reviewer: null } } }) },
   ]) {
     const invalid = await controller.request("PATCH", agentPath, {
       body: { configurationId: configuration.id, plugins },
@@ -1670,10 +1752,27 @@ test("Agent plugin maps reject structural errors and preserve exact authorizatio
   assert.equal(Object.hasOwn(afterInvalidUpdate.data, "plugins"), false);
 
   // These policies satisfy the shared schema but the selected native driver cannot apply them.
-  for (const policy of [
-    pluginPolicy({ toolDefaults: { approval: "prompt" } }),
-    pluginPolicy({ tools: { diffs: { approval: "prompt" } } }),
-    pluginPolicy({ driverPolicy: { destructiveEnabled: false } }),
+  for (const [policy, message] of [
+    [
+      pluginPolicy({ toolDefaults: { approval: "prompt" } }),
+      "The supplied plugin policies are invalid.",
+    ],
+    [
+      pluginPolicy({ tools: { diffs: { approval: "prompt" } } }),
+      "The supplied plugin policies are invalid.",
+    ],
+    [
+      pluginPolicy({ driverPolicy: { destructiveEnabled: false } }),
+      "The supplied plugin policies are invalid.",
+    ],
+    [
+      pluginPolicy({ toolDefaults: { reviewer: "human" } }),
+      "This Plugin Driver does not support toolDefaults.reviewer. Omit the reviewer to inherit the Harness setting.",
+    ],
+    [
+      pluginPolicy({ tools: { diffs: { reviewer: "auto" } } }),
+      "This Plugin Driver does not support tools[id].reviewer. Use toolDefaults.reviewer when supported, or omit the reviewer.",
+    ],
   ]) {
     const unsupportedCreate = await controller.request(
       "POST",
@@ -1692,7 +1791,7 @@ test("Agent plugin maps reject structural errors and preserve exact authorizatio
     for (const response of [unsupportedCreate, unsupportedUpdate]) {
       assert.equal(response.status, 400);
       assert.equal(response.body.error.code, "INVALID_REQUEST");
-      assert.equal(response.body.error.message, "The supplied plugin policies are invalid.");
+      assert.equal(response.body.error.message, message);
     }
   }
   const afterUnsupported = await controller.request("GET", agentPath);
@@ -2654,14 +2753,17 @@ test("Agent provisioning API validates inline configuration with existing Secret
     {
       body: provisioningRequestBody(namespace.data.id, secrets, {
         plugins: {
-          [linearPluginId]: { enabled: true, driverPolicy: { destructiveEnabled: "false" } },
+          [linearPluginId]: { enabled: true, tools: { "app/search": { reviewer: "auto" } } },
         },
       }),
     },
   );
   assert.equal(invalidPolicy.status, 400, JSON.stringify(invalidPolicy.body));
   assert.equal(invalidPolicy.body.error.code, "INVALID_REQUEST");
-  assert.equal(invalidPolicy.body.error.message, "The supplied plugin policies are invalid.");
+  assert.equal(
+    invalidPolicy.body.error.message,
+    "This Plugin Driver does not support tools[id].reviewer. Use toolDefaults.reviewer when supported, or omit the reviewer.",
+  );
   assert.deepEqual(
     await fixture.platformState.read((view) => view.agents.listAgents(namespace.data.id)),
     [],

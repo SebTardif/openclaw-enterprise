@@ -946,7 +946,7 @@ function requestFailure(error: unknown): RequestFailure {
     }
   }
   if (error instanceof PluginPolicyValidationError) {
-    return failure(400, "INVALID_REQUEST", "The supplied plugin policies are invalid.");
+    return failure(400, "INVALID_REQUEST", error.message);
   }
   if (error instanceof PresetValidationError) {
     return failure(400, "INVALID_REQUEST", "The supplied Preset template is invalid.");

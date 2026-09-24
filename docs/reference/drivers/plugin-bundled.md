@@ -81,16 +81,17 @@ checks native metadata, tool ownership, and effective configuration. Runtime
 versions and the OpenClaw-to-Codex projection constrain enforcement: emitting a
 native setting does not prove an Agent thread retains it.
 
-| Surface                                  | Current translation                                                                                                                             |
-| ---------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| Plugin `enabled`                         | Gate the selected plugin; disabled plugins cannot be re-enabled by tool overrides.                                                              |
-| OpenClaw default/tool `enabled`          | Resolve explicit tool enablement before the default using the pinned catalog's complete tool inventory. Emit native denies for disabled tools.  |
-| OpenClaw `native` / `approve`            | Use existing native tool execution without an added plugin approval step. Existing denies and profiles remain effective.                        |
-| OpenClaw `prompt` / Driver policy fields | Rejected before save; no generic per-call review or Driver-specific policy is implemented.                                                      |
-| Codex `toolDefaults`                     | Write native `default_tools_enabled` when supplied and `default_tools_approval_mode`; `native` maps to `auto`.                                  |
-| Codex explicit tool overrides            | Write only supplied `enabled` and `approval_mode` fields under the owning app and exact native tool name.                                       |
-| Codex `driverPolicy`                     | Write `destructive_enabled` and `approvals_reviewer` when supplied. Reject destructive defaults combined with explicit default tool enablement. |
-| Empty Codex selection                    | Disable user apps/plugins; no remote install RPC runs.                                                                                          |
+| Surface                                                       | Current translation                                                                                                                            |
+| ------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| Plugin `enabled`                                              | Gate the selected plugin; disabled plugins cannot be re-enabled by tool overrides.                                                             |
+| OpenClaw default/tool `enabled`                               | Resolve explicit tool enablement before the default using the pinned catalog's complete tool inventory. Emit native denies for disabled tools. |
+| OpenClaw `native` / `approve`                                 | Use existing native tool execution without an added plugin approval step. Existing denies and profiles remain effective.                       |
+| OpenClaw `prompt`, explicit reviewer, or Driver policy fields | Rejected before save; no generic per-call review, reviewer selection, or Driver-specific policy is implemented.                                |
+| Codex `toolDefaults`                                          | Write native `default_tools_enabled` when supplied and `default_tools_approval_mode`; `native` maps to `auto`.                                 |
+| Codex explicit tool overrides                                 | Write only supplied `enabled` and `approval_mode` fields under the owning app and exact native tool name.                                      |
+| Codex `toolDefaults.reviewer`                                 | Write app `approvals_reviewer`: `human` maps to `user`, `auto` maps to `auto_review`. Per-tool reviewers are rejected.                         |
+| Codex `driverPolicy`                                          | Write `destructive_enabled` when supplied. Reject destructive defaults combined with explicit default tool enablement.                         |
+| Empty Codex selection                                         | Disable user apps/plugins; no remote install RPC runs.                                                                                         |
 
 OpenClaw extends a nonempty native `tools.allow`, otherwise `tools.alsoAllow`,
 with the selected plugin. It preserves other native restrictions. The pinned
@@ -99,8 +100,9 @@ requires verified package and tool identities. Ambiguous global tool names or
 partial denials that would also deny an allowed sibling are rejected.
 
 The Codex translator accepts `native`, `prompt`, and `approve` as both defaults
-and explicit tool settings. `driverPolicy.approvalsReviewer` is app-scoped: `prompt` requests
-review on every call, and the reviewer determines who reviews. `approve` uses
+and explicit tool settings. `toolDefaults.reviewer` selects the reviewer for the
+app as a whole; reviewer omission inherits the effective Harness reviewer.
+`prompt` requests review on every call; automatic review can deny. `approve` uses
 native approval settings, not unconditional bridge acceptance. The bridge keeps
 `allow_all_plugins:false` and an entry for each selected plugin. Its normal
 `allow_destructive_actions:"auto"` routes native review requests; an explicit
@@ -123,8 +125,19 @@ Effective nested policy requires the bridge changes in
 runtime, effective session settings that preserve review, and real Agent
 verification. Codex can bypass MCP review when session approval is `never` with
 a permissive profile unless strict review applies; writing app-level `prompt`
-alone is insufficient. Source and fixture checks do not establish that proof;
-see [runtime proof notes](../../testing/plugins.md#current-proof-notes).
+alone is insufficient. Source and fixture checks do not establish that proof.
+
+For an explicit app reviewer, startup reads `configRequirements/read`, compares
+app/link reviewer values, and checks `allowedApprovalsReviewers`. Automatic review
+requires current approval policy `on-request` or `granular`. Human review fails
+if managed `requiredOnModels` includes the current model, or model selection
+cannot be verified against a nonempty requirement. Omitted reviewers do not
+trigger these explicit-choice checks.
+
+These checks verify startup configuration. They do not prove future turn routing,
+session/model changes, the turn's strict-review flag, or complete effective-policy
+readback. Those and real Agent enforcement remain draft acceptance gates; see
+[runtime proof notes](../../testing/plugins.md#current-proof-notes).
 
 Dedicated Codex starts without user plugins/apps, including when no PluginDriver
 is selected. Compute writes the safe baseline into the Agent's isolated
