@@ -52,6 +52,8 @@ graph TD
 
 ## Execution Trace
 
+<a id="credential-scoped-discovery"></a>
+
 ### Pre-Agent discovery
 
 `OpenClawController.getInstallation` advertises authentication/search requirements.

@@ -5005,7 +5005,7 @@ test("Create Agent browses and searches public plugins without credentials or pa
   assert.equal(upstreamCalls.length, callsBeforeTyping);
   await dialog.getByRole("button", { name: "Search", exact: true }).click();
   await dialog
-    .getByText("2 search results for “calendar”. Search returns a limited set of matches.", {
+    .getByText("2 search results (limited)", {
       exact: true,
     })
     .waitFor();

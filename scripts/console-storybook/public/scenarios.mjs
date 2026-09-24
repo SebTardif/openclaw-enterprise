@@ -35,6 +35,12 @@ const pluginCapabilities = {
     additionalProperties: false,
   },
 };
+const nativePluginCapabilities = {
+  driver: { id: "occ-plugin", implementation: "occ/openclaw-plugin" },
+  toolDefaults: { enabled: true, approval: ["native", "approve"], reviewer: [] },
+  tools: { enabled: true, approval: ["native", "approve"], reviewer: [] },
+  driverPolicySchema: { type: "object", properties: {}, additionalProperties: false },
+};
 const pluginCatalog = {
   status: "ready",
   entries: [
@@ -401,6 +407,7 @@ export const scenarios = {
     name: "Browse published OpenClaw plugins",
     path: create,
     pluginDiscoveryCapabilities: { authentication: "none", search: true },
+    pluginCapabilities: nativePluginCapabilities,
     pluginDiscovery: clawhubDiscovery,
     actions: clawhubForm,
     description:
@@ -417,6 +424,7 @@ export const scenarios = {
     name: "Published plugin metadata",
     path: create,
     pluginDiscoveryCapabilities: { authentication: "none", search: true },
+    pluginCapabilities: nativePluginCapabilities,
     pluginDiscovery: clawhubDiscovery,
     actions: [...clawhubForm, { selector: 'button[aria-label="Team Notes"]', click: true }],
     description:
@@ -428,6 +436,7 @@ export const scenarios = {
     name: "Search published plugins",
     path: create,
     pluginDiscoveryCapabilities: { authentication: "none", search: true },
+    pluginCapabilities: nativePluginCapabilities,
     pluginDiscovery: clawhubDiscovery,
     actions: [...clawhubForm, { selector: "#plugin-search", value: "notes" }, click("Search")],
     description:
@@ -770,12 +779,7 @@ export const scenarios = {
       status: "ready",
       entries: [{ id: "occ-plugin:diffs", name: "Diffs", tools: null }],
     },
-    pluginCapabilities: {
-      driver: { id: "occ-plugin", implementation: "occ/openclaw-plugin" },
-      toolDefaults: { enabled: true, approval: ["native", "approve"], reviewer: [] },
-      tools: { enabled: true, approval: ["native", "approve"], reviewer: [] },
-      driverPolicySchema: { type: "object", properties: {}, additionalProperties: false },
-    },
+    pluginCapabilities: nativePluginCapabilities,
     pluginSelections: JSON.stringify(
       {
         "occ-plugin:diffs": {

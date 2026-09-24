@@ -273,7 +273,7 @@ export function createPluginFields({
       status.textContent = catalog.message;
     } else if (catalog?.status === "ready") {
       status.textContent = catalog.query
-        ? `${catalog.entries.length} search results for “${catalog.query}”. Search returns a limited set of matches.`
+        ? `${catalog.entries.length} search results (limited)`
         : `Page ${catalog.pageNumber ?? 1} · ${catalog.entries.length} plugins`;
     }
     loadPlugins.textContent = catalog?.status === "loading" ? "Loading plugins…" : "Load plugins";
