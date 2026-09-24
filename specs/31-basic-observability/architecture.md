@@ -6,7 +6,7 @@
 
 ## Components and dependencies
 
-History extends the existing `AuditEvent` ledger. Lifecycle and work owners carry the original cause of each action. Audit validates their facts; State stores and queries them. Authentication checks the account and session, the selected IAM Driver authorizes the read, and HTTP and the console present the result.
+History extends the `AuditEvent` ledger in the OpenClaw Control Plane (OCC). Lifecycle and work owners carry the original cause of each action. Audit validates their facts; State stores and queries them. Authentication checks the account and session, the selected IAM Driver authorizes the read, and HTTP and the console present the result.
 
 These are existing ownership boundaries, not new services. Repository behavior stays with its credential Driver/Provider. Observability adds no execution store, invocation queue, authority lease or substitute Gateway client. The [repository journey](repository-read.md#connect-authentic-handoffs) depends on evidence from the actual owners.
 
