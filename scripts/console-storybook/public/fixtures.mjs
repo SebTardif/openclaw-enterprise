@@ -294,9 +294,12 @@ export function installFixture(scenario, evidence) {
         id: "ins_00000000-0000-4000-8000-000000000001",
         name: "Demo installation",
         createdAt,
-        ...(scenario.unsupportedProvisioning === true
-          ? {}
-          : { capabilities: { agentProvisioning: { executionModes: ["dedicated"] } } }),
+        capabilities: {
+          ...(scenario.unsupportedProvisioning === true
+            ? {}
+            : { agentProvisioning: { executionModes: ["dedicated"] } }),
+          ...(scenario.pluginCapabilities ? { pluginPolicies: scenario.pluginCapabilities } : {}),
+        },
       });
     }
     if (path === "/namespaces" && method === "GET") {
@@ -351,6 +354,14 @@ export function installFixture(scenario, evidence) {
                 },
               ],
         );
+      }
+      if (resource === "agents/plugins" && method === "POST" && scenario.pluginDiscovery) {
+        const page = scenario.pluginDiscovery.pages[body.cursor ?? "initial"];
+        return page ? response(page) : error(400, "PLUGIN_DISCOVERY_INVALID_RESPONSE");
+      }
+      if (resource === "agents/plugins/details" && method === "POST" && scenario.pluginDiscovery) {
+        const entry = scenario.pluginDiscovery.details[body.pluginId];
+        return entry ? response(entry) : error(503, "PLUGIN_DISCOVERY_UNAVAILABLE");
       }
       if (resource === "configurations" && method === "POST") {
         const saved = {

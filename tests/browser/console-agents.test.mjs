@@ -9,6 +9,7 @@ import { chromium } from "playwright";
 
 import { FilesystemConfigurationDriver } from "../../apps/controller/src/drivers/configuration/filesystem/index.ts";
 import { SshComputeDriver } from "../../apps/controller/src/drivers/compute/ssh/index.ts";
+import { CodexPluginDriver } from "../../apps/controller/src/drivers/plugin/index.ts";
 import { secretIdForBinding } from "../../apps/controller/src/console/agents/credentials.mjs";
 import {
   WORKSPACE_DEFAULTS,
@@ -2635,6 +2636,7 @@ test("Agent creation reuses its saved Secret and Configuration after an Agent cr
   assert.equal(await page.getByLabel("SOUL.md", { exact: true }).isEnabled(), true);
   assert.equal(await page.getByLabel("Plugin selections JSON").isEnabled(), true);
   await page.getByLabel("SOUL.md", { exact: true }).fill("# Corrected draft\n");
+  await page.locator("summary").filter({ hasText: "Plugin selections JSON" }).click();
   await page.getByLabel("Plugin selections JSON").fill(
     JSON.stringify({
       "occ-plugin:diffs": { enabled: true, approvalMode: "always" },
@@ -4715,6 +4717,174 @@ test("Runtime-auth Presets retain OpenClaw when changing from Anthropic to OpenA
   assert.equal(
     pathRequests(requests, "POST", `/namespaces/${namespace.id}/agents/models`).length,
     0,
+  );
+});
+
+test("Create Agent discovers hosted plugins with a transient PAT through the selected Driver", async (t) => {
+  const fixture = await createConsoleAppFixture(t);
+  await fixture.bootstrap();
+  const driver = new CodexPluginDriver();
+  fixture.controller.registerDriver(driver);
+  fixture.controller.selectDriver("plugin", driver.id);
+  const namespace = await fixture.createNamespace("Hosted plugin discovery", { ready: true });
+  const { page } = await newPage(t, fixture);
+  const originalFetch = globalThis.fetch;
+  let failTools = false;
+  let releaseList;
+  let listStarted;
+  let holdList = false;
+  const listPending = new Promise((resolve) => {
+    listStarted = resolve;
+  });
+  const hosted = (name, overrides = {}) => ({
+    id: `remote-${name}`,
+    name,
+    scope: "GLOBAL",
+    status: "ENABLED",
+    installation_policy: "AVAILABLE",
+    release: {
+      display_name: name === "calendar" ? "Calendar" : name,
+      description: "Hosted plugin",
+      interface: { short_description: "Hosted tools" },
+      requires_local_executor: false,
+      app_ids: ["app_calendar", "app_shared"],
+      skills: [],
+      mcp_servers: [],
+    },
+    ...overrides,
+  });
+  const upstreamCalls = [];
+  // Only external HTTP is simulated. Browser, OCC auth/routes, and the selected Driver are real.
+  t.mock.method(globalThis, "fetch", async (input, options) => {
+    const url = new URL(typeof input === "string" ? input : (input.url ?? input));
+    if (!["auth.openai.com", "chatgpt.com"].includes(url.hostname)) {
+      return originalFetch(input, options);
+    }
+    upstreamCalls.push({ path: url.pathname, token: options.headers.Authorization });
+    if (url.hostname === "auth.openai.com") {
+      return Response.json({
+        chatgpt_account_id: "account-plugin-test",
+        chatgpt_account_is_fedramp: false,
+      });
+    }
+    assert.equal(options.headers["ChatGPT-Account-ID"], "account-plugin-test");
+    assert.equal(options.headers["OAI-Product-Sku"], "codex");
+    if (url.pathname.endsWith("/plugins/list")) {
+      assert.equal(url.searchParams.get("scope"), "GLOBAL");
+      if (holdList) {
+        listStarted();
+        await new Promise((resolve) => {
+          releaseList = resolve;
+        });
+      }
+      return Response.json({
+        plugins: url.searchParams.has("pageToken")
+          ? [hosted("Documents")]
+          : [hosted("Admin-disabled", { status: "DISABLED_BY_ADMIN" }), hosted("calendar")],
+        pagination: { next_page_token: url.searchParams.has("pageToken") ? null : "page-two" },
+      });
+    }
+    if (url.pathname.endsWith("/plugins/remote-calendar")) {
+      return Response.json(hosted("calendar"));
+    }
+    assert.equal(url.pathname, "/backend-api/ps/apps/batch");
+    assert.deepEqual(JSON.parse(options.body), {
+      app_ids: ["app_calendar", "app_shared"],
+      include_tools: true,
+    });
+    if (failTools) {
+      return new Response("private upstream response and token must not reach browser", {
+        status: 403,
+      });
+    }
+    return Response.json({
+      apps: ["app_calendar", "app_shared"].map((id) => ({
+        id,
+        status: "ENABLED",
+        tools: [
+          {
+            name: "events/list",
+            title: "List events",
+            description: "Read events",
+            is_enabled: true,
+            is_read_only: true,
+          },
+        ],
+      })),
+    });
+  });
+  t.after(() => releaseList?.());
+  const requests = apiRequests(page, fixture.origin);
+  await login(page, fixture, `/console/agents/new?namespace=${namespace.id}`);
+  await page.getByRole("button", { name: "Start without Preset" }).click();
+  await page.getByLabel("Authentication method", { exact: true }).selectOption("codex_pat");
+  const token = page.getByLabel("Service account token", { exact: true });
+  await token.fill("at-browser-plugin-one");
+  await page.getByRole("button", { name: "Load plugins", exact: true }).click();
+  await page
+    .locator(".plugin-card summary strong")
+    .filter({ hasText: /^Calendar$/ })
+    .waitFor();
+  assert.equal(await page.locator(".plugin-card summary strong").first().textContent(), "Calendar");
+  await page.getByRole("button", { name: "Load more plugins", exact: true }).click();
+  await page
+    .locator(".plugin-card summary strong")
+    .filter({ hasText: /^Documents$/ })
+    .waitFor();
+  await page.locator(".plugin-card summary").filter({ hasText: "Calendar" }).click();
+  await page.getByRole("button", { name: "Load tools for Calendar", exact: true }).click();
+  await page.locator('[data-tool="app_calendar/events%2Flist"]').waitFor();
+  assert.equal(await page.locator('[data-tool="app_shared/events%2Flist"]').count(), 1);
+  assert.equal(
+    await page.getByRole("button", { name: "Add Calendar", exact: true }).isDisabled(),
+    true,
+  );
+  assert.deepEqual(JSON.parse(await page.locator("#agent-plugins").inputValue()), {});
+
+  // Refresh revalidates tool availability and a denied upstream body stays private.
+  failTools = true;
+  await page.getByRole("button", { name: "Load plugins", exact: true }).click();
+  await page.getByRole("button", { name: "Load tools for Calendar", exact: true }).click();
+  await page.getByText(/token was rejected or cannot access plugins/).waitFor();
+  assert.equal(
+    (await page.locator("body").textContent()).includes("private upstream response"),
+    false,
+  );
+  failTools = false;
+  await page.getByRole("button", { name: "Load tools for Calendar", exact: true }).click();
+  await page.locator('[data-tool="app_calendar/events%2Flist"]').waitFor();
+  assert.equal(await page.getByText(/token was rejected or cannot access plugins/).count(), 0);
+
+  // Editing the credential fences an in-flight response and clears its catalog.
+  holdList = true;
+  await page.getByRole("button", { name: "Load more plugins", exact: true }).click();
+  await listPending;
+  await token.fill("at-browser-plugin-two");
+  const staleResponse = page.waitForResponse((response) =>
+    response.url().endsWith("/agents/plugins"),
+  );
+  releaseList();
+  await staleResponse;
+  await page
+    .getByText("Load plugins available to this service account token.", { exact: false })
+    .waitFor();
+  assert.equal(await page.locator(".plugin-card").count(), 0);
+  assert.equal(
+    upstreamCalls.every((call) => call.token === "Bearer at-browser-plugin-one"),
+    true,
+  );
+  assert.equal(
+    requests.some((request) => /at-browser-plugin/.test(request.path)),
+    false,
+  );
+  assert.equal(secretPostRequests(requests, namespace.id).length, 0);
+  assert.equal(configurationPostRequests(requests, namespace.id).length, 0);
+  assert.equal(agentPostRequests(requests, namespace.id).length, 0);
+  assert.equal(
+    await page.evaluate(() =>
+      JSON.stringify({ ...localStorage, ...sessionStorage }).includes("at-browser-plugin"),
+    ),
+    false,
   );
 });
 

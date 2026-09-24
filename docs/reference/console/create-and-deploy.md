@@ -87,6 +87,25 @@ does not make that link available.
    the [live workspace editor](../console.md#edit-workspace-files). Pending
    inputs have no update API; see [workspace recovery](../../guides/topics/workspace-files.md#set-files-when-creating-an-agent).
 
+To browse hosted plugins, select **Service Accounts** with the **Codex** Harness,
+enter a service account token, and choose **Load plugins** in the **Plugins** section.
+The installation must select the Codex Plugin Driver. Use **Load more plugins**
+for the next page, search the loaded plugins, and expand a card to **Load tools**.
+Unavailable plugins and tools show a reason; available plugins appear first.
+Catalog visibility does not establish permission to invoke a tool.
+
+Discovery sends the entered token transiently to OCE without creating a Secret,
+Agent, or plugin installation. Changing the token, provider, authentication method,
+or Harness clears the catalog. Saved Preset credentials are not supported by this
+discovery flow. For a rejected token, check its catalog permissions; for a service
+failure, retry after checking the controller's outbound access.
+
+**Plugin selections JSON** remains the desired Agent-owned plugin map, separate
+from Configuration values. Existing selections survive catalog refreshes and errors.
+Structured selection and policy controls require an installation capability descriptor;
+policy enforcement integration is pending. Browsing the catalog does not change
+policy or enable a plugin. See [current plugin policy support](../agent-plugins.md).
+
 Credentials are masked and stored as Namespace Secrets, never Configuration JSON,
 Agent responses, or browser storage. Provisioning receives references; its worker
 creates the Configuration, Agent, exact Secret grants, runtime credentials, and

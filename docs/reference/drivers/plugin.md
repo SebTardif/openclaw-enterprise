@@ -21,15 +21,24 @@ The [shared interface](../../../packages/contracts/src/index.ts) requires only
 `listCatalog(context)`. It receives the read-only Namespace, Agent, Harness
 identity and mode, native Configuration, and an abort signal. It returns entries
 with `id`, `name`, and `tools`; `tools` is either a list of tool metadata or
-`null` when that metadata is unavailable. A tool entry has `id`, `name`,
-`destructive`, and `writes`. Catalog entries do not grant access, select a plugin,
+`null` when that metadata is unavailable. A tool entry has `id` and `name`; ownership, description, availability, and
+classifications are optional metadata. Missing classifications mean unknown. Catalog entries do not grant access, select a plugin,
 or prove the requested policy can run.
 
 There is no exported install, enable, policy-translation, or preparation method.
 The optional _backend reader_ in bundled Codex is different from the required
 `listCatalog` method: without that reader, an explicit catalog call fails, but
 saving Agent selections and deploying supported selections can still use the
-Agent runtime's discovery path. There is no public HTTP plugin inventory endpoint.
+Agent runtime's discovery path. Two optional methods serve pre-Agent discovery: `discoverCatalog({accessToken,
+cursor?}, signal?)` returns `{plugins, nextCursor}`, and
+`getCatalogPlugin({accessToken, pluginId}, signal?)` returns tool details. Here
+`pluginId` is the opaque `remoteId` from a discovery entry; the entry's `id` is
+the stable selection key. The HTTP routes are `POST /namespaces/:namespaceId/agents/plugins`
+and its `/details` child. Both require Agent-create authority in the Namespace,
+perform no platform writes, and return `Cache-Control: no-store`. Tokens are
+write-only request fields and never appear in catalog responses or audit events.
+A missing method reports unsupported discovery. These methods do not require an
+existing Agent, installation, or runtime connection.
 See [bundled selection and catalog setup](plugin-bundled.md#selection-and-catalogs).
 
 ## IAM

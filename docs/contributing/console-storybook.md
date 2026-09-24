@@ -94,6 +94,32 @@ requires a current nonempty repository selection before retrying. GitHub App
 setup, Namespace approvals, runtime images, and credential-service networking
 remain operator prerequisites; the fixture does not verify them.
 
+### Discover and configure plugins
+
+**Create Agent / Discover plugins with a service account token** uses a dummy
+token to call the simulated OCC discovery routes. Review available entries before
+unavailable entries, load the next page, then expand Calendar and select **Load
+tools for Calendar**. Search the loaded tools and inspect their identities without
+changing Plugin selections JSON. Replacing the token or switching authentication,
+provider, or harness clears the discovered catalog. Companion stories cover empty
+results, pending reads, rejected tokens, service failures, and tool lookup errors.
+
+Discovery requires an entered Service Accounts token with the Codex harness;
+saved Preset credentials and API keys do not enable it. The discovery stories
+leave policy editing unavailable while that contract is pending. Catalog
+visibility does not establish that a plugin or tool can be invoked.
+
+**Components/Plugins** previews the draft plugin policy editor with a simulated
+catalog and capability descriptor: available plugins, selected tool overrides, unknown tools, empty,
+loading, denied, and unavailable states. Search for a plugin or tool, expand its
+card, and select **Add**. Review its default tool enablement and approval settings.
+Tool fields independently inherit or override those defaults; inspect **Plugin
+selections JSON** to see changes. Adding a plugin leaves its tool defaults omitted.
+
+**Create Agent / Edit existing plugin policies** exercises that editor in the
+actual form with simulated policy capabilities. These previews do not verify live
+plugin-service access, installation, or policy enforcement by a runtime.
+
 ### Update
 
 Use **Edit Configuration** on the new revision to change native JSON, or edit

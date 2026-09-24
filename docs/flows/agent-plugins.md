@@ -1,7 +1,7 @@
 ---
 created: 2026-09-08
-updated: 2026-09-21
-last_updated_session: codex/01a0b632-4907-7362-9c51-28129db5a3b9
+updated: 2026-09-24
+last_updated_session: 01a0d1dd-aa36-7622-9f43-8376f6ff935e
 ---
 
 # Agent Plugin Deployment Flow
@@ -47,6 +47,28 @@ graph TD
 ```
 
 ## Execution Trace
+
+### Credential-scoped discovery
+
+Create Agent sends its entered PAT to `POST /namespaces/:namespaceId/agents/plugins`
+and requests details through `/agents/plugins/details` using the returned remote ID.
+`OpenClawController.discoverAgentPlugins` and `discoverAgentPluginDetails` authorize
+Agent creation, verify the Namespace, and invoke the selected PluginDriver outside
+a State transaction. Neither operation creates an Agent, Secret, or installation.
+
+`drivers/plugin/hosted-catalog.ts` obtains authoritative account identity from the
+PAT issuer and calls plugin-service's GLOBAL directory. The browser forwards opaque
+pagination cursors and requests tool details separately. The Driver uses native app
+manifest identities when present, checks supported surfaces, and combines app and
+tool availability. Owner-qualified tool IDs retain raw names through URI encoding.
+Missing app/tool metadata remains `tools:null`; it never becomes an observed empty list.
+
+The Driver bounds response bytes and request duration, refuses redirects, and maps
+upstream errors to safe reasons. HTTP responses contain only catalog metadata and
+use `no-store`; tokens, artifact URLs, and upstream errors are excluded. Namespace
+IAM denials follow the ordinary audit path. Discovery does not establish runtime
+execution or policy enforcement. See [Console discovery](../reference/console/create-and-deploy.md)
+and the [Driver contract](../reference/drivers/plugin.md).
 
 ### 1. Validate desired state under exact-Agent authority
 
@@ -241,6 +263,8 @@ completed deployment attempt rather than ongoing runtime health.
 [keep this for the user to add notes. do not change between edits]
 
 ## Changelog
+
+- 2026-09-24 08:00: Added transient PAT discovery through the selected PluginDriver before Agent creation. (01a0d1dd-aa36-7622-9f43-8376f6ff935e - f62e17c)
 
 - 2026-09-21 21:23: Reconciled policy composition and installation without enablement changes with optional-plugin warnings and the bundled Driver reference; runtime release and Kubernetes proof remain pending (codex/01a0b17c-68b6-7e11-bedc-f74de7d606ed - 9405e20)
 

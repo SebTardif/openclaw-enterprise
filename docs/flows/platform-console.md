@@ -1,7 +1,7 @@
 ---
 created: 2026-09-01
-updated: 2026-09-23
-last_updated_session: 01a0d150-104a-71a3-9e56-6c5e3ee510ea
+updated: 2026-09-24
+last_updated_session: 01a0d1dd-aa36-7622-9f43-8376f6ff935e
 ---
 
 # Platform console request flow
@@ -159,6 +159,24 @@ lock OpenClaw across provider changes. Installation Provider discovery is hidden
 owns permissions and partial-save recovery.
 
 The form starts with native JSON, optional plugins, and no model.
+`agents/plugin-fields.mjs:createPluginFields` renders the Agent-owned plugin map
+from `#agent-plugins`. Structured changes write back to that same JSON input;
+manual JSON edits rerender the controls. Invalid JSON keeps its bytes and blocks
+structured edits. Unedited fields, undiscovered selections, and tool overrides
+are retained. Removing an inherited tool field deletes only that override.
+Installation discovery supplies `capabilities.pluginPolicies` to the editor.
+It filters approval choices, gates tool/default enablement, and renders boolean
+or string-enum Driver policy fields from the supplied schema. Missing capabilities
+leave policy controls disabled without changing JSON.
+The form locks the editor during submission or an uncertain outcome. Discovery in `create.mjs:loadPluginCatalog` posts the entered PAT to
+`/namespaces/:namespaceId/agents/plugins`; `loadPluginTools` posts the returned
+remote identity to `/agents/plugins/details`. Credential, provider, and Harness
+changes invalidate outstanding responses and clear the browser catalog. Requests
+do not persist the PAT. The selected Plugin Driver owns upstream calls; see the
+[plugin discovery flow](agent-plugins.md#credential-scoped-discovery). Storybook
+catalogs remain simulated inputs. Agent creation submits the selection map through the existing
+`plugins` field, independently of native Configuration values.
+
 `POST /namespaces/:namespaceId/agents/models` reaches
 `OpenClawController.discoverAgentModels`, which authorizes Namespace Agent creation
 and calls Compute outside a state transaction. `compute/model-discovery.ts` uses
@@ -315,6 +333,8 @@ uncertain response disables replay until refresh and inspection.
 [keep this for the user to add notes. do not change between edits]
 
 ## Changelog
+
+- 2026-09-24 05:40: Added Create Agent plugin JSON controls and transient PAT catalog discovery; policy integration remains pending. (01a0d1dd-aa36-7622-9f43-8376f6ff935e - f62e17c)
 
 - 2026-09-23 21:41: Preserve edited Codex plugin settings across model and key changes. (01a0cce9-23e3-7072-aa3f-a2e26d2dbf11 - b8f23be17de4a4b077dab8d6b90b4add1f9146cb)
 

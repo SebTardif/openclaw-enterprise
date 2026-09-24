@@ -290,14 +290,27 @@ export type PluginDesiredState = Readonly<Record<string, PluginDesiredSelection>
 export interface PluginToolCatalogEntry {
   readonly id: string;
   readonly name: string;
-  readonly destructive: boolean;
-  readonly writes: boolean;
+  readonly ownerId?: string;
+  readonly description?: string;
+  readonly available?: boolean;
+  readonly unavailableReason?: string;
+  readonly destructive?: boolean;
+  readonly writes?: boolean;
 }
 
 export interface PluginCatalogEntry {
   readonly id: string;
   readonly name: string;
+  readonly remoteId?: string;
+  readonly description?: string;
+  readonly available?: boolean;
+  readonly unavailableReason?: string;
   readonly tools: readonly PluginToolCatalogEntry[] | null;
+}
+
+export interface PluginCatalogPage {
+  readonly plugins: readonly PluginCatalogEntry[];
+  readonly nextCursor: string | null;
 }
 
 export interface PluginRevisionState {
@@ -804,6 +817,15 @@ export interface PluginDriverContext {
 export interface PluginDriver extends Driver {
   readonly capability: "plugin";
   listCatalog(context: PluginDriverContext): Promise<readonly PluginCatalogEntry[]>;
+  /** Pre-Agent discovery uses a transient credential; neither it nor results are persisted. */
+  discoverCatalog?(
+    input: { readonly accessToken: string; readonly cursor?: string },
+    signal?: AbortSignal,
+  ): Promise<PluginCatalogPage>;
+  getCatalogPlugin?(
+    input: { readonly accessToken: string; readonly pluginId: string },
+    signal?: AbortSignal,
+  ): Promise<PluginCatalogEntry>;
 }
 
 export type NamespaceLifecycleFailure = "retryable" | "permanent";

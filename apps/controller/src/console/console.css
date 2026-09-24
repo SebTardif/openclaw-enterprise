@@ -441,6 +441,8 @@ select {
 .form-field input,
 .form-field select,
 .form-field textarea,
+.plugin-control select,
+.plugin-json textarea,
 .revision-selector select {
   width: 100%;
   border: 1px solid #bbc7c0;
@@ -718,4 +720,62 @@ summary:focus-visible {
 }
 .credential-form {
   margin-top: 12px;
+}
+
+.plugin-fields {
+  margin-block: 1.5rem;
+}
+.plugin-list {
+  display: grid;
+  gap: 0.75rem;
+  margin-block: 1rem;
+}
+.plugin-card {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 1rem;
+}
+.plugin-card > summary {
+  cursor: pointer;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+}
+.plugin-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 1rem;
+  margin-block: 0.75rem;
+}
+.plugin-control {
+  display: grid;
+  gap: 0.35rem;
+  flex: 1 1 12rem;
+}
+.plugin-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.plugin-toggle input {
+  width: auto;
+}
+.plugin-tool {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  margin-block: 0.75rem;
+  min-width: 0;
+}
+.plugin-id {
+  overflow-wrap: anywhere;
+}
+.plugin-json > summary {
+  cursor: pointer;
+  margin-bottom: 0.75rem;
+}
+.plugin-json textarea {
+  width: 100%;
 }
