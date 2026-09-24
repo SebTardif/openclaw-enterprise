@@ -1,6 +1,6 @@
 {
-  "baseline": "c4ecf32727aef09a6b4caeec16870bf391f7a505",
-  "reviewedAt": "2026-09-17",
+  "baseline": "9ee49fa4a47fd35274590c95c804e3849be50def",
+  "reviewedAt": "2026-09-24",
   "drivers": [
     {
       "id": "occ-plugin",
@@ -20,8 +20,8 @@
       "requirementEvidence": [
         {
           "path": "docs/reference/drivers/plugin.md",
-          "start": 23,
-          "end": 48
+          "start": 25,
+          "end": 45
         }
       ],
       "cells": {
@@ -31,20 +31,20 @@
           "evidence": [
             {
               "path": "apps/controller/src/drivers/plugin/index.ts",
-              "start": 144,
-              "end": 147
+              "start": 190,
+              "end": 193
             },
             {
               "path": "docs/reference/drivers/plugin.md",
-              "start": 44,
-              "end": 48
+              "start": 40,
+              "end": 45
             }
           ],
           "tests": [
             {
               "path": "tests/conformance/plugin-driver.test.mjs",
-              "start": 151,
-              "end": 162
+              "start": 152,
+              "end": 164
             }
           ]
         },
@@ -54,20 +54,20 @@
           "evidence": [
             {
               "path": "apps/controller/src/drivers/plugin/index.ts",
-              "start": 150,
-              "end": 178
+              "start": 231,
+              "end": 240
             },
             {
               "path": "docs/reference/drivers/plugin.md",
-              "start": 44,
-              "end": 48
+              "start": 40,
+              "end": 45
             }
           ],
           "tests": [
             {
               "path": "tests/conformance/plugin-driver.test.mjs",
-              "start": 212,
-              "end": 268
+              "start": 233,
+              "end": 289
             }
           ]
         }
@@ -75,413 +75,502 @@
       "requirementDetail": "Whether OCC and API clients can list available plugins. Agent reads show saved selections; they do not query the available catalog."
     },
     {
-      "id": "always",
+      "id": "enablement",
       "category": "Policy",
-      "name": "approval mode: always",
-      "requirement": "Run without a plugin approval prompt.",
+      "name": "Plugin and tool-default enablement",
+      "requirement": "Plugin enabled:false defeats tool overrides; toolDefaults.enabled supplies an overridable default.",
       "requirementEvidence": [
         {
-          "path": "docs/reference/drivers/plugin.md",
-          "start": 83,
-          "end": 93
+          "path": "docs/reference/agent-plugins.md",
+          "start": 125,
+          "end": 145
         }
       ],
       "cells": {
         "occ-plugin": {
           "status": "supported",
-          "detail": "Enable the selected plugin without a plugin approval step; other native restrictions still apply.",
+          "detail": "Diffs projects plugin enablement and resolves tool defaults before native allow/deny composition.",
           "evidence": [
             {
               "path": "apps/controller/src/drivers/plugin/runtime-translator.ts",
-              "start": 415,
-              "end": 437
+              "start": 740,
+              "end": 772
             }
           ],
           "tests": [
             {
               "path": "tests/conformance/plugin-driver.test.mjs",
-              "start": 165,
-              "end": 181
+              "start": 166,
+              "end": 215
             }
           ]
         },
         "codex-plugin": {
           "status": "partial",
-          "detail": "Native app mode approve plus bridge allow_destructive_actions=true; explicit auto_review is rejected.",
+          "detail": "Projects selected app enablement and optional default_tools_enabled. Translation is covered; complete effective-policy and real Agent enforcement remain draft gates.",
           "evidence": [
             {
               "path": "apps/controller/src/drivers/plugin/runtime-translator.ts",
-              "start": 271,
-              "end": 290
-            },
-            {
-              "path": "apps/controller/src/drivers/plugin/runtime-translator.ts",
-              "start": 306,
-              "end": 315
-            },
-            {
-              "path": "apps/controller/src/drivers/plugin/runtime-translator.ts",
-              "start": 365,
-              "end": 384
+              "start": 673,
+              "end": 715
             }
           ],
           "tests": [
             {
               "path": "tests/conformance/plugin-driver.test.mjs",
-              "start": 351,
-              "end": 365
+              "start": 394,
+              "end": 440
             }
           ]
         }
-      },
-      "requirementDetail": "Request plugin calls without asking for approval. Other platform permissions and workload restrictions still apply."
+      }
     },
     {
-      "id": "auto",
+      "id": "native",
       "category": "Policy",
-      "name": "approval mode: auto",
-      "requirement": "Use native automatic approval semantics.",
+      "name": "approval: native",
+      "requirement": "Delegate the review trigger to the Harness; omission uses native.",
       "requirementEvidence": [
-        {
-          "path": "docs/reference/drivers/plugin.md",
-          "start": 83,
-          "end": 93
-        }
-      ],
-      "cells": {
-        "occ-plugin": {
-          "status": "unsupported",
-          "detail": "No equivalent generic native OpenClaw plugin approval control; startup rejects auto.",
-          "evidence": [
-            {
-              "path": "apps/controller/src/drivers/plugin/runtime-translator.ts",
-              "start": 416,
-              "end": 421
-            }
-          ],
-          "tests": [
-            {
-              "path": "tests/conformance/plugin-driver.test.mjs",
-              "start": 184,
-              "end": 193
-            }
-          ]
-        },
-        "codex-plugin": {
-          "status": "supported",
-          "detail": "Supported app-only selections use native auto approval and bridge allow_destructive_actions=auto.",
-          "evidence": [
-            {
-              "path": "apps/controller/src/drivers/plugin/runtime-translator.ts",
-              "start": 306,
-              "end": 315
-            },
-            {
-              "path": "apps/controller/src/drivers/plugin/runtime-translator.ts",
-              "start": 365,
-              "end": 384
-            }
-          ],
-          "tests": [
-            {
-              "path": "tests/conformance/plugin-driver.test.mjs",
-              "start": 283,
-              "end": 325
-            }
-          ]
-        }
-      },
-      "requirementDetail": "Let the native runtime decide when approval is needed. This does not mean approve every call automatically."
-    },
-    {
-      "id": "never",
-      "category": "Policy",
-      "name": "approval mode: never",
-      "requirement": "Block selected-plugin execution.",
-      "requirementEvidence": [
-        {
-          "path": "docs/reference/drivers/plugin.md",
-          "start": 83,
-          "end": 93
-        }
-      ],
-      "cells": {
-        "occ-plugin": {
-          "status": "supported",
-          "detail": "Disable the selected plugin; its package remains installed.",
-          "evidence": [
-            {
-              "path": "apps/controller/src/drivers/plugin/runtime-translator.ts",
-              "start": 407,
-              "end": 445
-            }
-          ],
-          "tests": [
-            {
-              "path": "tests/conformance/plugin-driver.test.mjs",
-              "start": 179,
-              "end": 181
-            }
-          ]
-        },
-        "codex-plugin": {
-          "status": "supported",
-          "detail": "No selected native app entry and bridge disabled; install identity remains and installation still runs.",
-          "evidence": [
-            {
-              "path": "apps/controller/src/drivers/plugin/runtime-translator.ts",
-              "start": 344,
-              "end": 404
-            },
-            {
-              "path": "apps/controller/src/drivers/plugin/runtime-translator.ts",
-              "start": 306,
-              "end": 315
-            },
-            {
-              "path": "apps/controller/src/drivers/plugin/runtime-translator.ts",
-              "start": 365,
-              "end": 384
-            }
-          ],
-          "tests": [
-            {
-              "path": "tests/conformance/plugin-driver.test.mjs",
-              "start": 379,
-              "end": 389
-            }
-          ]
-        }
-      },
-      "requirementDetail": "Prevent the Agent from executing the selected plugin, even if the package remains installed."
-    },
-    {
-      "id": "prompt-human",
-      "category": "Policy",
-      "name": "approval mode: prompt_human",
-      "requirement": "Review every plugin call using a human user.",
-      "requirementEvidence": [
-        {
-          "path": "docs/reference/drivers/plugin.md",
-          "start": 83,
-          "end": 111
-        },
         {
           "path": "docs/reference/agent-plugins.md",
-          "start": 93,
-          "end": 106
+          "start": 229,
+          "end": 259
         }
       ],
       "cells": {
         "occ-plugin": {
-          "status": "unsupported",
-          "detail": "Every-call prompting and explicit reviewer selection are unsupported; startup rejects this policy.",
+          "status": "supported",
+          "detail": "Diffs adds no plugin approval step; existing native restrictions still apply.",
           "evidence": [
             {
+              "path": "apps/controller/src/drivers/plugin/index.ts",
+              "start": 169,
+              "end": 178
+            },
+            {
               "path": "apps/controller/src/drivers/plugin/runtime-translator.ts",
-              "start": 415,
-              "end": 425
+              "start": 271,
+              "end": 285
             }
           ],
           "tests": [
             {
-              "path": "tests/conformance/plugin-driver.test.mjs",
-              "start": 184,
-              "end": 193
+              "path": "tests/integration/occ-api.test.mjs",
+              "start": 1565,
+              "end": 1587
             }
           ]
         },
         "codex-plugin": {
-          "status": "unsupported",
-          "detail": "Startup rejects prompt, including with user. Reviewer selection is available with supported auto policy, but does not force review of every call.",
+          "status": "partial",
+          "detail": "Maps default and tool approval to native auto. This does not select an automatic reviewer; runtime enforcement remains unverified.",
           "evidence": [
             {
               "path": "apps/controller/src/drivers/plugin/runtime-translator.ts",
-              "start": 271,
-              "end": 280
+              "start": 290,
+              "end": 291
             },
             {
               "path": "apps/controller/src/drivers/plugin/runtime-translator.ts",
-              "start": 365,
-              "end": 384
+              "start": 530,
+              "end": 538
+            },
+            {
+              "path": "apps/controller/src/drivers/plugin/runtime-translator.ts",
+              "start": 679,
+              "end": 691
             }
           ],
           "tests": [
             {
               "path": "tests/conformance/plugin-driver.test.mjs",
-              "start": 392,
+              "start": 372,
               "end": 404
             }
           ]
         }
-      },
-      "requirementDetail": "Display label for approvalMode: prompt with approvalsReviewer: user. The request asks for review before every call; this label is not an API enum value."
+      }
     },
     {
-      "id": "prompt-auto-review",
+      "id": "approve",
       "category": "Policy",
-      "name": "approval mode: prompt_auto_review",
-      "requirement": "Review every plugin call using the native automatic reviewer.",
+      "name": "approval: approve",
+      "requirement": "Remove the OCE-requested approval step without bypassing independent restrictions.",
       "requirementEvidence": [
-        {
-          "path": "docs/reference/drivers/plugin.md",
-          "start": 83,
-          "end": 111
-        },
         {
           "path": "docs/reference/agent-plugins.md",
-          "start": 93,
-          "end": 106
+          "start": 229,
+          "end": 259
         }
       ],
       "cells": {
         "occ-plugin": {
-          "status": "unsupported",
-          "detail": "Every-call prompting and explicit reviewer selection are unsupported; startup rejects this policy.",
+          "status": "supported",
+          "detail": "Diffs adds no plugin approval step; native denies and permissions still apply.",
           "evidence": [
             {
+              "path": "apps/controller/src/drivers/plugin/index.ts",
+              "start": 169,
+              "end": 178
+            },
+            {
               "path": "apps/controller/src/drivers/plugin/runtime-translator.ts",
-              "start": 415,
-              "end": 425
+              "start": 740,
+              "end": 772
             }
           ],
           "tests": [
             {
               "path": "tests/conformance/plugin-driver.test.mjs",
-              "start": 184,
-              "end": 193
+              "start": 198,
+              "end": 215
             }
           ]
         },
         "codex-plugin": {
+          "status": "partial",
+          "detail": "Maps default and tool approval to native approve. The bridge routes remaining native review requests; real Agent execution remains unverified.",
+          "evidence": [
+            {
+              "path": "apps/controller/src/drivers/plugin/runtime-translator.ts",
+              "start": 598,
+              "end": 611
+            },
+            {
+              "path": "apps/controller/src/drivers/plugin/runtime-translator.ts",
+              "start": 530,
+              "end": 538
+            },
+            {
+              "path": "apps/controller/src/drivers/plugin/runtime-translator.ts",
+              "start": 679,
+              "end": 691
+            }
+          ],
+          "tests": [
+            {
+              "path": "tests/conformance/plugin-driver.test.mjs",
+              "start": 372,
+              "end": 404
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "prompt",
+      "category": "Policy",
+      "name": "approval: prompt",
+      "requirement": "Require review for enabled calls through the selected or inherited reviewer.",
+      "requirementEvidence": [
+        {
+          "path": "docs/reference/agent-plugins.md",
+          "start": 229,
+          "end": 259
+        }
+      ],
+      "cells": {
+        "occ-plugin": {
           "status": "unsupported",
-          "detail": "Startup rejects prompt, including with auto_review. Reviewer selection is available with supported auto policy, but does not force review of every call.",
+          "detail": "Diffs rejects prompt at default and tool scopes because it has no supported plugin review gate.",
           "evidence": [
             {
               "path": "apps/controller/src/drivers/plugin/runtime-translator.ts",
               "start": 271,
-              "end": 280
-            },
-            {
-              "path": "apps/controller/src/drivers/plugin/runtime-translator.ts",
-              "start": 365,
-              "end": 384
+              "end": 285
             }
           ],
           "tests": [
             {
               "path": "tests/conformance/plugin-driver.test.mjs",
-              "start": 392,
+              "start": 185,
+              "end": 196
+            }
+          ]
+        },
+        "codex-plugin": {
+          "status": "partial",
+          "detail": "Accepts and translates prompt, but compatible session constraints and real reviewed calls remain required before launch.",
+          "evidence": [
+            {
+              "path": "apps/controller/src/drivers/plugin/index.ts",
+              "start": 198,
+              "end": 207
+            },
+            {
+              "path": "apps/controller/src/drivers/plugin/runtime-translator.ts",
+              "start": 679,
+              "end": 691
+            }
+          ],
+          "tests": [
+            {
+              "path": "tests/conformance/plugin-driver.test.mjs",
+              "start": 372,
               "end": 404
             }
           ]
         }
-      },
-      "requirementDetail": "Display label for approvalMode: prompt with approvalsReviewer: auto_review. The request asks for review before every call; this label is not an API enum value."
+      }
     },
     {
-      "id": "categories",
+      "id": "reviewer-default",
       "category": "Policy",
-      "name": "Destructive-action and write overrides",
-      "requirement": "Override write/destructive-action policy.",
+      "name": "toolDefaults.reviewer: human or auto",
+      "requirement": "Select who reviews; omission inherits the Harness reviewer. Automatic review can deny.",
       "requirementEvidence": [
         {
-          "path": "docs/reference/drivers/plugin.md",
-          "start": 85,
-          "end": 111
+          "path": "docs/reference/agent-plugins.md",
+          "start": 229,
+          "end": 259
         }
       ],
       "cells": {
         "occ-plugin": {
           "status": "unsupported",
-          "detail": "Both destructiveActions and writes are rejected at startup.",
+          "detail": "Diffs advertises no explicit reviewer values and rejects the field.",
           "evidence": [
             {
+              "path": "apps/controller/src/drivers/plugin/index.ts",
+              "start": 169,
+              "end": 174
+            },
+            {
               "path": "apps/controller/src/drivers/plugin/runtime-translator.ts",
-              "start": 423,
-              "end": 425
+              "start": 239,
+              "end": 243
             }
           ],
           "tests": [
             {
               "path": "tests/conformance/plugin-driver.test.mjs",
-              "start": 184,
-              "end": 193
+              "start": 185,
+              "end": 196
+            }
+          ]
+        },
+        "codex-plugin": {
+          "status": "partial",
+          "detail": "Maps human to user and auto to auto_review at app scope. Startup checks reviewer requirements; later session/model routing and live availability remain unproven.",
+          "evidence": [
+            {
+              "path": "apps/controller/src/drivers/plugin/runtime-translator.ts",
+              "start": 685,
+              "end": 687
+            },
+            {
+              "path": "apps/controller/src/drivers/compute/kubernetes/runtime-entrypoints.ts",
+              "start": 905,
+              "end": 946
+            }
+          ],
+          "tests": [
+            {
+              "path": "tests/conformance/plugin-driver.test.mjs",
+              "start": 372,
+              "end": 404
+            },
+            {
+              "path": "tests/conformance/plugin-compute.test.mjs",
+              "start": 634,
+              "end": 772
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "reviewer-tool",
+      "category": "Policy",
+      "name": "tools[id].reviewer",
+      "requirement": "Override the reviewer for one tool only when the Driver supports that scope.",
+      "requirementEvidence": [
+        {
+          "path": "docs/reference/agent-plugins.md",
+          "start": 229,
+          "end": 259
+        }
+      ],
+      "cells": {
+        "occ-plugin": {
+          "status": "unsupported",
+          "detail": "Diffs advertises an empty per-tool reviewer list and rejects explicit choices, including disabled tools.",
+          "evidence": [
+            {
+              "path": "apps/controller/src/drivers/plugin/index.ts",
+              "start": 169,
+              "end": 174
+            },
+            {
+              "path": "apps/controller/src/drivers/plugin/runtime-translator.ts",
+              "start": 231,
+              "end": 237
+            }
+          ],
+          "tests": [
+            {
+              "path": "tests/integration/occ-api.test.mjs",
+              "start": 1754,
+              "end": 1797
             }
           ]
         },
         "codex-plugin": {
           "status": "unsupported",
-          "detail": "Category overrides are rejected; reliable tool metadata is unavailable.",
+          "detail": "Codex has no supported per-tool reviewer field. Explicit choices are rejected even when equal to the default.",
+          "evidence": [
+            {
+              "path": "apps/controller/src/drivers/plugin/index.ts",
+              "start": 200,
+              "end": 207
+            },
+            {
+              "path": "apps/controller/src/drivers/plugin/runtime-translator.ts",
+              "start": 231,
+              "end": 237
+            }
+          ],
+          "tests": [
+            {
+              "path": "tests/integration/occ-api.test.mjs",
+              "start": 1604,
+              "end": 1675
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "destructive",
+      "category": "Policy",
+      "name": "driverPolicy.destructiveEnabled",
+      "requirement": "Set the Codex destructive-tool default; explicit tool enablement can override it. Generic write/category approval rules are absent.",
+      "requirementEvidence": [
+        {
+          "path": "docs/reference/agent-plugins.md",
+          "start": 267,
+          "end": 273
+        }
+      ],
+      "cells": {
+        "occ-plugin": {
+          "status": "unsupported",
+          "detail": "Diffs exposes no driverPolicy fields.",
+          "evidence": [
+            {
+              "path": "apps/controller/src/drivers/plugin/index.ts",
+              "start": 169,
+              "end": 174
+            },
+            {
+              "path": "apps/controller/src/drivers/plugin/runtime-translator.ts",
+              "start": 270,
+              "end": 274
+            }
+          ],
+          "tests": [
+            {
+              "path": "tests/integration/occ-api.test.mjs",
+              "start": 1754,
+              "end": 1797
+            }
+          ]
+        },
+        "codex-plugin": {
+          "status": "partial",
+          "detail": "Maps to destructive_enabled and the bridge category default. Rejects simultaneous toolDefaults.enabled. Complete effective-default verification and live enforcement remain required.",
           "evidence": [
             {
               "path": "apps/controller/src/drivers/plugin/runtime-translator.ts",
-              "start": 130,
-              "end": 136
+              "start": 245,
+              "end": 258
+            },
+            {
+              "path": "apps/controller/src/drivers/plugin/runtime-translator.ts",
+              "start": 598,
+              "end": 611
+            },
+            {
+              "path": "apps/controller/src/drivers/plugin/runtime-translator.ts",
+              "start": 688,
+              "end": 690
             }
           ],
           "tests": [
             {
               "path": "tests/conformance/plugin-driver.test.mjs",
-              "start": 392,
-              "end": 404
+              "start": 464,
+              "end": 500
             }
           ]
         }
-      },
-      "requirementDetail": "Set different approval rules for write operations or destructive actions across a plugin. Enforcement needs reliable action classifications."
+      }
     },
     {
       "id": "tools",
       "category": "Policy",
       "name": "Per-tool enablement and approval overrides",
-      "requirement": "Override individual tool policy.",
+      "requirement": "Resolve each field independently: explicit tool value, then tool default. A disabled plugin remains disabled.",
       "requirementEvidence": [
         {
-          "path": "docs/reference/drivers/plugin.md",
-          "start": 85,
-          "end": 111
+          "path": "docs/reference/agent-plugins.md",
+          "start": 229,
+          "end": 259
         }
       ],
       "cells": {
         "occ-plugin": {
-          "status": "unsupported",
-          "detail": "Any tools map is rejected at startup; catalog tools is null.",
+          "status": "supported",
+          "detail": "Known Diffs tools support enabled and native/approve overrides. Prompt and reviewer overrides are rejected.",
           "evidence": [
             {
               "path": "apps/controller/src/drivers/plugin/runtime-translator.ts",
-              "start": 423,
-              "end": 457
+              "start": 740,
+              "end": 772
+            },
+            {
+              "path": "apps/controller/src/drivers/plugin/runtime-translator.ts",
+              "start": 271,
+              "end": 285
             }
           ],
           "tests": [
             {
               "path": "tests/conformance/plugin-driver.test.mjs",
-              "start": 184,
-              "end": 193
+              "start": 198,
+              "end": 215
             }
           ]
         },
         "codex-plugin": {
-          "status": "unsupported",
-          "detail": "Any tools map is rejected; curated catalog projection reports tools:null.",
+          "status": "partial",
+          "detail": "Maps scoped app/action IDs to native enabled and approval_mode after startup ownership discovery. Nested tool/account readback is checked; complete effective policy and runtime enforcement remain draft gates.",
           "evidence": [
             {
               "path": "apps/controller/src/drivers/plugin/runtime-translator.ts",
-              "start": 130,
-              "end": 136
+              "start": 515,
+              "end": 543
+            },
+            {
+              "path": "apps/controller/src/drivers/compute/kubernetes/runtime-entrypoints.ts",
+              "start": 879,
+              "end": 902
             }
           ],
           "tests": [
             {
               "path": "tests/conformance/plugin-driver.test.mjs",
-              "start": 392,
-              "end": 404
+              "start": 406,
+              "end": 461
+            },
+            {
+              "path": "tests/conformance/plugin-compute.test.mjs",
+              "start": 1486,
+              "end": 1579
             }
           ]
         }
-      },
-      "requirementDetail": "Enable, disable, or set approval rules for individual tools inside a plugin, instead of using only the plugin-wide policy."
+      }
     }
   ]
 }

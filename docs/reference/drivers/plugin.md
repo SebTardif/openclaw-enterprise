@@ -95,7 +95,7 @@ and [Compute startup warnings](compute.md#plugin-startup-warnings).
   selection can remain installed while its execution is blocked locally.
 - A catalog response, rendered configuration, or direct MCP call does not prove
   native Agent execution. See [current mappings](plugin-bundled.md#native-mappings-and-limits); the
-  [feature matrix](plugin-matrix.md) preserves an older review snapshot.
+  [feature matrix](plugin-matrix.md) records the reviewed implementation and proof limits.
 
 ## Troubleshooting
 
