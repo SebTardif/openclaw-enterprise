@@ -54,22 +54,16 @@ graph TD
 
 ### Credential-scoped discovery
 
-Create Agent sends its PAT to `POST /namespaces/:namespaceId/agents/plugins`
-and returned remote IDs to `/agents/plugins/details`.
-`OpenClawController.discoverAgentPlugins` and `discoverAgentPluginDetails` authorize
-Namespace Agent creation and invoke the selected Driver outside State transactions,
-without creating resources.
+Create Agent posts entered PATs to `POST /namespaces/:namespaceId/agents/plugins`
+and remote IDs to `/agents/plugins/details`. OCC authorizes Namespace Agent creation,
+then calls the selected Driver without creating resources.
 
 `drivers/plugin/hosted-catalog.ts` resolves account identity through the PAT issuer
-and requests 20 entries from plugin-service's GLOBAL directory. The browser forwards cursors, even on short pages, and fetches selected details.
-The modal filters the current page locally because upstream search rejects PATs;
-configured selections remain accessible across pages. The Driver resolves native app
-identities, supported surfaces, and combined app/tool availability. Owner-qualified
-tool IDs URI-encode raw names. Missing metadata remains `tools:null`, never an empty list.
+and requests 20 GLOBAL entries. The modal forwards cursors, filters each
+page locally (upstream search rejects PATs), and loads details. Unknown tools stay `tools:null`.
 
-The Driver bounds bytes/time, refuses redirects, and maps failures to safe reasons.
-Metadata-only responses use `no-store`, excluding tokens, artifact URLs, and upstream errors. IAM denials use ordinary audit. Discovery does not prove runtime
-execution or policy enforcement. See [Console discovery](../reference/console/create-and-deploy.md)
+Bounded, redirect-free requests return `no-store` metadata excluding credentials,
+artifact URLs, and upstream errors. Discovery proves no execution or enforcement; see [Console discovery](../reference/console/create-and-deploy.md)
 and the [Driver contract](../reference/drivers/plugin.md).
 
 ### 1. Validate desired state under exact-Agent authority
@@ -187,14 +181,18 @@ subtree with `config/batchWrite`, removing stale per-app tool/link settings. It
 then rereads successful installations to check identity, version, and app mapping.
 Failed-only bindings are disabled; successful bindings retain admitted policy.
 Disabled selections do not contribute install attempts or startup results.
-`config/read` verifies the effective overlay before readiness.
+`config/read` verifies the effective overlay before readiness, including every
+nested tool's enablement and approval against its requested override or app
+default. Absent/null fields inherit. Unexpected explicit tool enablement is
+rejected when OCE omitted the default, because it can bypass category restrictions.
+Account/link approval defaults must match the requested app approval.
 
 `runtime-entrypoints.ts:verifyCodexReviewerConfiguration` checks explicit app
 reviewers against effective app/link settings and `configRequirements/read`.
 It rejects forbidden reviewers, incompatible automatic-review approval settings,
 and human review conflicting with current-model requirements. These startup
-checks do not establish later session/model routing, strict review, or complete
-policy readback. See the [remaining proof](../testing/plugins.md#current-proof-notes).
+checks do not establish later session/model routing, strict review, workspace
+configuration, or managed requirements beyond reviewer checks. See the [remaining proof](../testing/plugins.md#current-proof-notes).
 Codex owns cache integrity and runtime health.
 
 For Compute-owned Kubernetes workloads, a selected OpenClaw install command's
@@ -295,6 +293,7 @@ completed deployment attempt rather than ongoing runtime health.
 ## Changelog
 
 - 2026-09-24 08:00: Added transient PAT discovery through the selected PluginDriver before Agent creation. (01a0d1dd-aa36-7622-9f43-8376f6ff935e - f62e17c)
+- 2026-09-24 07:50: Verify nested tool and account/link policy before readiness; retain session and live-enforcement gates (codex/01a0b17c-68b6-7e11-bedc-f74de7d606ed - 073bb5c1)
 
 - 2026-09-24 07:02: Aligned the common reviewer contract and scoped capabilities with the accepted specification; runtime reviewer/session checks remain draft gates (codex/01a0b17c-68b6-7e11-bedc-f74de7d606ed - 3606f2e9)
 

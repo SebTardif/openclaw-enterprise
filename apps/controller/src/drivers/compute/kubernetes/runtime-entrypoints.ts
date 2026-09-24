@@ -876,6 +876,32 @@ async function readCodexAppConfiguration() {
   return response?.config;
 }
 
+function verifyCodexNestedPolicy(configuration, effective) {
+  for (const [appId, app] of Object.entries(configuration.apps ?? {})) {
+    if (appId === "_default") continue;
+    const actual = effective?.apps?.[appId];
+    // Native tables merge across layers; replacing the user app table does not
+    // remove inherited tool exceptions. Null fields mean inheritance, not overrides.
+    for (const [toolName, tool] of Object.entries(actual?.tools ?? {})) {
+      for (const [field, defaultField] of [
+        ["enabled", "default_tools_enabled"],
+        ["approval_mode", "default_tools_approval_mode"],
+      ]) {
+        const expected = app.tools?.[toolName]?.[field] ?? app[defaultField];
+        if (tool[field] != null && tool[field] !== expected) {
+          throw new Error("Codex effective tool policy conflicts with the admitted " + field + "; remove the native tool override or update the Agent policy.");
+        }
+      }
+    }
+    for (const link of Object.values(actual?.links ?? {})) {
+      if (link.default_tools_approval_mode != null &&
+          link.default_tools_approval_mode !== app.default_tools_approval_mode) {
+        throw new Error("Codex effective account policy conflicts with the admitted approval default; remove the native account override or update the Agent policy.");
+      }
+    }
+  }
+}
+
 async function verifyCodexReviewerConfiguration(configuration, effective) {
   const requestedApps = Object.entries(configuration.apps ?? {})
     .filter(([, app]) => app.approvals_reviewer !== undefined);
@@ -1091,11 +1117,10 @@ async function installCodexSelectionSet(selections, failures = []) {
     const detail = installedDetails[readParamsList.indexOf(readParams)];
     verifyCodexPluginDetail(plugin, readParams, detail);
   }
-  // TODO: verify the complete managed app policy before nested policies ship;
-  // extra effective tool/link overrides can outrank the requested app defaults.
   const effectiveConfiguration = await readCodexAppConfiguration();
   await verifyCodexReviewerConfiguration(effectiveResolvedArtifact.configuration, effectiveConfiguration);
   assertConfigContainsOverlay(effectiveConfiguration, effectiveResolvedArtifact.configuration);
+  verifyCodexNestedPolicy(effectiveResolvedArtifact.configuration, effectiveConfiguration);
   return { successfulPluginIds, failures: failed };
 }
 

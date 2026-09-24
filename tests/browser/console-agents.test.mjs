@@ -78,7 +78,9 @@ async function newPage(t, fixture, options = {}) {
     }
   });
   context = await browser.newContext();
-  return { page: await context.newPage(), artifacts };
+  const page = await context.newPage();
+  page.setDefaultTimeout(10_000);
+  return { page, artifacts };
 }
 
 async function login(page, fixture, path = "/console/agents", credentials = fixture.credentials) {
@@ -119,6 +121,13 @@ async function enterManualModel(page, apiKey, modelId = "gpt-4.1") {
   }
   await model.fill(modelId);
   await model.press("Tab");
+}
+
+async function openAdvancedSettings(page) {
+  const summary = page.locator(".launch-advanced:not([open]) > summary");
+  if (await summary.count()) {
+    await summary.click();
+  }
 }
 
 async function expectNoText(page, pattern) {
@@ -490,11 +499,24 @@ test("Agent creation stores its API key separately, grants exact access, and sav
   }
   // Textareas preserve literal markup as content and normalize browser newlines to LF.
   const customIdentity = "# Identity\r\n<em>Workspace author</em>\r\n";
+  await page.getByText("Advanced settings", { exact: true }).click();
   await page.getByLabel("IDENTITY.md", { exact: true }).fill(customIdentity);
   await page.getByLabel("USER.md", { exact: true }).fill("");
   await page.getByLabel("Agent name").fill("Console-created Agent");
   await page.getByLabel("Harness", { exact: true }).selectOption("codex");
+  await openAdvancedSettings(page);
   await page.getByLabel("Configuration JSON").fill(JSON.stringify(values, null, 2));
+  // Invalid manual bindings must not be replaced by a channel editor's empty snapshot.
+  await page.getByLabel("Secret bindings JSON").fill("[]");
+  await page
+    .getByText("Enter a valid Secret bindings JSON object before configuring channels.")
+    .waitFor();
+  assert.equal(await page.getByRole("button", { name: "Configure Slack" }).count(), 0);
+  // Applying Slack must preserve independent bindings authored in Advanced settings.
+  const manualBinding = { source: replacementSlackAppSecret.ref, delivery: { type: "env" } };
+  await page
+    .getByLabel("Secret bindings JSON")
+    .fill(JSON.stringify({ CUSTOM_CONTEXT: manualBinding }));
   await page.getByRole("button", { name: "Configure Slack" }).click();
   const createChannelDialog = page.getByRole("dialog", { name: /^(Configure|Edit) Slack$/ });
   await createChannelDialog
@@ -564,6 +586,7 @@ test("Agent creation stores its API key separately, grants exact access, and sav
   const stagedSecretBindings = JSON.parse(
     await page.getByLabel("Secret bindings JSON").inputValue(),
   );
+  assert.deepEqual(stagedSecretBindings.CUSTOM_CONTEXT, manualBinding);
   assert.deepEqual(stagedSecretBindings.SLACK_APP_TOKEN, {
     source: replacementSlackAppSecret.ref,
     delivery: { type: "env" },
@@ -573,6 +596,7 @@ test("Agent creation stores its API key separately, grants exact access, and sav
     stagedBotSecretId,
     /^sec_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
   );
+  await openAdvancedSettings(page);
   const stagedValues = JSON.parse(await page.getByLabel("Configuration JSON").inputValue());
   await page.getByLabel("Agent name").fill("A".repeat(200));
 
@@ -748,6 +772,7 @@ test("Agent creation stores its API key separately, grants exact access, and sav
   await page.getByText(/Repository choices are denied/).waitFor();
   await enterManualModel(page, "denied-agent-key", "gpt-5.1");
   await page.getByLabel("Agent name").fill("Denied Agent");
+  await openAdvancedSettings(page);
   await page.getByLabel("Configuration JSON").fill(JSON.stringify(values, null, 2));
   assert.equal(await page.getByRole("button", { name: "Create Agent" }).isDisabled(), true);
   await page.locator("#create-agent-form").evaluate((form) => form.requestSubmit());
@@ -803,15 +828,17 @@ test("Agent creation selects approved repositories with one common explicit prof
     })),
     { id: "repository-application", connected: true },
   );
-  assert.equal(await page.getByRole("radio", { name: /^Reader / }).count(), 1);
+  assert.equal(await page.getByRole("radio", { name: /^Read-only / }).count(), 1);
   assert.equal(await page.getByRole("radio", { name: /^Contributor / }).count(), 1);
-  assert.equal(await page.getByRole("radio", { name: /^Collaborator / }).count(), 1);
+  assert.equal(await page.getByRole("radio").count(), 2);
   assert.equal(await page.locator('[name="repository-profile"]:checked').count(), 0);
   const writeAccess = page.locator(".repository-write-access");
   assert.equal(await writeAccess.isVisible(), false);
-  await page.getByRole("radio", { name: /^Reader / }).check();
+  await page.getByRole("radio", { name: /^Read-only / }).check();
   assert.equal(await writeAccess.isVisible(), false);
-  await page.getByRole("radio", { name: /^Collaborator / }).check();
+  await page.getByRole("radio", { name: /^Contributor / }).check();
+  assert.equal(await writeAccess.isVisible(), false);
+  await page.getByText("Customize access", { exact: true }).click();
   assert.equal(await writeAccess.isVisible(), true);
   assert.match(await writeAccess.innerText(), /can permit merges and branch changes/);
   assert.match(await writeAccess.innerText(), /best effort and does not restrict GraphQL/);
@@ -829,8 +856,11 @@ test("Agent creation selects approved repositories with one common explicit prof
   await page.locator("#repository-release").uncheck();
   assert.equal(await page.locator("#repository-profile-git-write").count(), 1);
   await page.locator("#repository-profile-git-write").check();
+  await page.getByText("Customize access", { exact: true }).click();
   assert.equal(await writeAccess.isVisible(), true);
   await page.getByText(/Does not grant ordinary issue management/).waitFor();
+  assert.equal(await page.locator("#repository-issue-access").isDisabled(), true);
+  assert.equal(await page.locator("#repository-issue-access").isChecked(), false);
   await enterManualModel(page, "repository-fixture-model-key", "gpt-5.1");
   await page.getByLabel("Agent name").fill("Repository Agent");
 
@@ -854,9 +884,12 @@ test("Agent creation selects approved repositories with one common explicit prof
     { repositoryRef: "documentation", profile: "git-write" },
   ]);
   await page
-    .getByText("application · Contributor, documentation · Contributor", {
-      exact: true,
-    })
+    .getByText(
+      "application · Contributor · no issue management, documentation · Contributor · no issue management",
+      {
+        exact: true,
+      },
+    )
     .waitFor();
   assert.equal(await page.locator(".repository-write-access").isVisible(), true);
 });
@@ -1721,6 +1754,7 @@ test("Dedicated Agent creation provisions inline Configuration and masked new Se
   await page.locator("#repository-application").check();
   await page.locator("#repository-profile-git-write").check();
   await page.getByLabel("API key", { exact: true }).fill("model-secret-value");
+  await openAdvancedSettings(page);
   await page.getByLabel("Configuration JSON").fill(JSON.stringify(values, null, 2));
   await page.getByRole("button", { name: "Configure Slack" }).click();
   const channelDialog = page.getByRole("dialog", { name: "Configure Slack" });
@@ -1838,6 +1872,7 @@ test("Dedicated Agent creation uses regular create when provisioning is unsuppor
 
   await page.getByLabel("Agent name").fill("Unsupported Dedicated Agent");
   await page.getByLabel("API key", { exact: true }).fill("unsupported-model-key");
+  await openAdvancedSettings(page);
   await page.getByLabel("Configuration JSON").fill(JSON.stringify(values, null, 2));
   await page.getByRole("button", { name: "Configure Slack" }).click();
   const channelDialog = page.getByRole("dialog", { name: "Configure Slack" });
@@ -2076,6 +2111,7 @@ test("Dedicated Agent creation reuses separately saved Secret references after p
   await page.getByLabel("Agent name").fill(agent.name);
   await page.getByLabel("Authentication method").selectOption("codex_pat");
   await page.getByLabel("Service account token", { exact: true }).fill("model-secret-value");
+  await openAdvancedSettings(page);
   await page.getByLabel("Configuration JSON").fill(JSON.stringify(values, null, 2));
   await page.getByRole("button", { name: "Configure Slack" }).click();
   const channelDialog = page.getByRole("dialog", { name: "Configure Slack" });
@@ -2159,13 +2195,16 @@ test("Agent creation rejects non-object native Configuration JSON before any wri
 
   await enterManualModel(page, "unused-invalid-config-key", "gpt-4.1");
   await page.getByLabel("Agent name").fill("Broken Agent");
+  await openAdvancedSettings(page);
   await page.getByLabel("Configuration JSON").fill("[]");
+  await page.getByText("Advanced settings", { exact: true }).click();
   await page.getByRole("button", { name: "Create Agent" }).click();
 
   const validation = await page
     .getByLabel("Configuration JSON")
     .evaluate((node) => node.validationMessage);
   assert.equal(validation, "Enter a valid JSON object.");
+  assert.equal(await page.getByLabel("Configuration JSON").isVisible(), true);
   assert.deepEqual(nonAuthWriteRequests(requests), []);
 });
 
@@ -2492,8 +2531,10 @@ test("Agent creation reuses its saved Secret and Configuration after an Agent cr
   await page.getByLabel("Model ID", { exact: true }).press("Tab");
   assert.deepEqual(pathRequests(requests, "POST", `/namespaces/${namespace.id}/agents/models`), []);
   requests.length = 0;
+  await page.getByText("Advanced settings", { exact: true }).click();
   await page.getByLabel("SOUL.md", { exact: true }).fill("# Keep this draft\n");
   await page.getByLabel("Agent name").fill("Retry Agent");
+  await openAdvancedSettings(page);
   await page.getByLabel("Configuration JSON").fill(JSON.stringify(values, null, 2));
 
   const configurationResponse = page.waitForResponse(
@@ -2549,6 +2590,7 @@ test("Agent creation reuses its saved Secret and Configuration after an Agent cr
   assert.equal(await page.getByLabel("SOUL.md", { exact: true }).isEnabled(), true);
   assert.equal(await page.getByLabel("Plugin selections JSON").isEnabled(), true);
   await page.getByLabel("SOUL.md", { exact: true }).fill("# Corrected draft\n");
+  await openAdvancedSettings(page);
   await page.locator("summary").filter({ hasText: "Plugin selections JSON" }).click();
   await page.getByLabel("Plugin selections JSON").fill(
     JSON.stringify({
@@ -2727,6 +2769,7 @@ test("Agent creation preserves unrelated edited JSON across model changes and re
   await page.getByRole("heading", { name: "Create Agent" }).waitFor();
   await page.getByRole("button", { name: "Start without Preset" }).click();
   const harness = page.getByLabel("Harness", { exact: true });
+  await openAdvancedSettings(page);
   const configuration = page.getByLabel("Configuration JSON");
   assert.equal(JSON.parse(await configuration.inputValue()).agents?.defaults?.model, undefined);
   await enterManualModel(page, "template-edit-key", "gpt-5.1");
@@ -2883,6 +2926,7 @@ test("Agent creation blocks an incompatible fallback after changing provider unt
   await page.getByRole("button", { name: "Start without Preset" }).click();
   await enterManualModel(page, "fallback-openai-key", "gpt-5.1");
   await page.getByLabel("Harness", { exact: true }).selectOption("openclaw");
+  await openAdvancedSettings(page);
   const configuration = page.getByLabel("Configuration JSON");
   const values = JSON.parse(await configuration.inputValue());
   values.agents.defaults.model = {
@@ -3058,6 +3102,7 @@ test("Agent detail preserves admitted revision history while draft edits change 
   assertRevisionUrl(page, "draft");
 
   await page.getByRole("button", { name: "Edit Configuration" }).click();
+  await openAdvancedSettings(page);
   const editor = page.getByLabel("Configuration JSON");
   assert.match(await editor.inputValue(), /"marker": "draft-current"/);
   for (const invalidJson of ["{ invalid", "[]"]) {
@@ -3082,6 +3127,7 @@ test("Agent detail preserves admitted revision history while draft edits change 
   await page.getByRole("heading", { name: "Revisioned Agent" }).waitFor();
   await page.getByRole("button", { name: "Edit Configuration" }).click();
   const editedValues = nativeValues("draft-edited");
+  await openAdvancedSettings(page);
   await page.getByLabel("Configuration JSON").fill(JSON.stringify(editedValues, null, 2));
   await page.getByText("Save or cancel these Configuration edits before deploying.").waitFor();
   await page.getByText("Save or cancel Configuration edits before deploying.").waitFor();
@@ -3206,6 +3252,7 @@ test("Agent detail blocks repeat Configuration saves after an uncertain draft up
   await page.getByText("Configured on the runtime host").waitFor();
   assert.equal(await page.getByRole("button", { name: "Deploy new revision" }).isDisabled(), false);
   await page.getByRole("button", { name: "Edit Configuration" }).click();
+  await openAdvancedSettings(page);
   await page.getByLabel("Configuration JSON").fill(JSON.stringify(nextValues, null, 2));
   await page.getByText("Save or cancel Configuration edits before deploying.").waitFor();
   assert.equal(await page.getByRole("button", { name: "Deploy new revision" }).isDisabled(), true);
@@ -3644,7 +3691,8 @@ test("Agent deletion recovery returns a missing Agent detail to its Namespace li
     (url) =>
       url.pathname === "/console/agents" && url.searchParams.get("namespace") === namespace.id,
   );
-  await page.getByRole("heading", { name: "Agents" }).waitFor();
+  await page.getByRole("heading", { name: "No Agents yet", exact: true }).waitFor();
+  await page.getByRole("heading", { name: "Agents", exact: true }).waitFor();
 });
 
 test("Agent delete denial keeps the Agent visible with permission feedback", async (t) => {
@@ -4793,12 +4841,12 @@ test("Create Agent discovers hosted plugins with a transient PAT through the sel
   const heading = dialog.getByRole("heading", { name: "Calendar", exact: true });
   // Loading and completion replace the detail pane without losing the keyboard entry point.
   try {
-    assert.equal(await heading.evaluate((node) => node === document.activeElement), true);
+    assert.equal(await heading.evaluate((node) => node === node.ownerDocument.activeElement), true);
   } finally {
     detailRelease.resolve();
   }
   await dialog.getByText(/token was rejected or cannot access plugins/).waitFor();
-  assert.equal(await heading.evaluate((node) => node === document.activeElement), true);
+  assert.equal(await heading.evaluate((node) => node === node.ownerDocument.activeElement), true);
   assert.equal((await dialog.textContent()).includes("private upstream response"), false);
   failTools = false;
   await dialog.getByRole("button", { name: "Retry tools for Calendar", exact: true }).click();
@@ -4922,6 +4970,8 @@ test("Agent creation edits Preset plugin policies through the modal and persists
   const pluginEnabled = dialog.getByLabel(`Enable ${pluginId}`, { exact: true });
   const toolEnabled = dialog.getByLabel("Enable app_knowledge/search", { exact: true });
   const toolApproval = dialog.getByLabel("app_knowledge/search approval", { exact: true });
+  const toolToggle = dialog.getByLabel("app_knowledge/search enabled override", { exact: true });
+  assert.equal(await toolToggle.isDisabled(), true);
   assert.equal(await toolEnabled.isDisabled(), true);
   assert.equal(await toolApproval.isDisabled(), true);
   await pluginEnabled.check();
@@ -4954,7 +5004,24 @@ test("Agent creation edits Preset plugin policies through the modal and persists
   assert.deepEqual(JSON.parse(await json.inputValue())[pluginId].tools["app_knowledge/search"], {
     approval: "approve",
   });
-  await toolEnabled.selectOption("true");
+  // The summary toggle edits only enablement; an omitted override remains visibly inherited.
+  await searchTool.locator("summary").click();
+  assert.equal(await toolToggle.evaluate((node) => node.indeterminate), true);
+  await toolToggle.click();
+  assert.deepEqual(JSON.parse(await json.inputValue())[pluginId].tools["app_knowledge/search"], {
+    approval: "approve",
+    enabled: true,
+  });
+  assert.equal(await searchTool.evaluate((node) => node.open), false);
+  await toolToggle.click();
+  assert.deepEqual(JSON.parse(await json.inputValue())[pluginId].tools["app_knowledge/search"], {
+    approval: "approve",
+    enabled: false,
+  });
+  await searchTool.locator("summary").click();
+  await toolEnabled.selectOption("");
+  assert.equal(await toolToggle.evaluate((node) => node.indeterminate), true);
+  await toolToggle.click();
   await toolApproval.selectOption("");
   await dialog
     .locator('details.plugin-tool-row[data-tool="app_knowledge/summarize"] > summary')
@@ -4972,6 +5039,7 @@ test("Agent creation edits Preset plugin policies through the modal and persists
     },
   };
   await pluginEnabled.uncheck();
+  assert.equal(await toolToggle.isDisabled(), true);
   assert.equal(await toolEnabled.isDisabled(), true);
   assert.equal(await toolApproval.isDisabled(), true);
   assert.deepEqual(JSON.parse(await json.inputValue())[pluginId], {
@@ -5027,6 +5095,7 @@ test("API-key Presets keep their credential provider fixed while allowing model 
   await login(page, fixture, `/console/agents/new?namespace=${namespace.id}`);
   await page.getByLabel("Preset template").selectOption(preset.data.id);
   await page.getByRole("button", { name: "Use Preset" }).click();
+  await openAdvancedSettings(page);
   const configuration = page.getByLabel("Configuration JSON", { exact: true });
   const original = JSON.parse(await configuration.inputValue());
   assert.equal(await page.getByLabel("Harness", { exact: true }).inputValue(), "openclaw");
@@ -5203,6 +5272,7 @@ test("Presets render variables into independent Agent drafts and keep partial-sa
     await page.getByLabel("Configuration JSON", { exact: true }).inputValue(),
   );
   edited.plugins.entries.knowledge.config.thresholds = [5, 6];
+  await openAdvancedSettings(page);
   await page.getByLabel("Configuration JSON", { exact: true }).fill(JSON.stringify(edited));
   // Canceling Start over keeps the ordinary draft and its ability to save.
   page.once("dialog", (dialog) => dialog.dismiss());
@@ -5291,6 +5361,7 @@ test("Presets render variables into independent Agent drafts and keep partial-sa
   await page.getByLabel("Provider", { exact: true }).selectOption("anthropic");
   assert.equal(await presetKey.inputValue(), "");
   await presetKey.fill("preset-anthropic-key");
+  await openAdvancedSettings(page);
   const native = page.getByLabel("Configuration JSON");
   const changedProvider = JSON.parse(await native.inputValue());
   changedProvider.agents.defaults.model = "openai/gpt-4.1";

@@ -158,21 +158,22 @@ Codex; operator-managed credentials fix OpenClaw. Installation Provider
 discovery is hidden. The [creation reference](../reference/console/create-and-deploy.md)
 owns permissions and recovery.
 
+Advanced settings holds Configuration JSON, Secret bindings, and initial workspace files; no model is selected initially.
+Binding edits refresh channel settings, preserving unrelated bindings when applying
+Slack. Invalid binding JSON blocks channel editing.
+
 `agents/plugin-fields.mjs:createPluginFields` edits Agent-owned `plugins` through
-`#agent-plugins`, separately from Configuration. Invalid JSON, unedited fields,
-and undiscovered selections survive; clearing overrides restores inheritance.
-Submission, uncertain outcomes, or invalid JSON lock editing.
-`capabilities.pluginPolicies` gates enablement, approval, and reviewer choices
-independently at default/tool scope. Defaults inherit the Harness reviewer;
-tools inherit plugin defaults. Unsupported saved reviewers remain clearable.
-Driver controls follow the boolean/string-enum schema. Missing capabilities disable
-editing without changing JSON. Ordinary Agent submission saves the modal's draft.
+`#agent-plugins`, separately from Configuration. Invalid JSON and untouched fields
+survive; clearing overrides restores inheritance. Submission, uncertain outcomes,
+or invalid JSON lock editing. `capabilities.pluginPolicies` gates each policy scope;
+Missing capabilities preserve JSON and disable edits. Unsupported saved reviewers
+remain clearable. Agent submission saves the draft.
 
 `create.mjs:loadPluginCatalog` and `loadPluginTools` implement
-[transient PAT discovery](agent-plugins.md#credential-scoped-discovery): one upstream
-page per navigation, local page filtering, and tools loaded on selection.
-Credential, provider, and Harness changes clear the catalog and invalidate pending
-responses. The Driver owns upstream access.
+[transient PAT discovery](agent-plugins.md#credential-scoped-discovery): upstream
+pagination, local filtering, and tools loaded on selection. Credential, provider,
+and Harness changes clear results and invalidate pending reads. The Driver owns
+upstream access.
 
 `create.mjs:MODEL_CHOICES` supplies static provider lists before credentials,
 without discovery requests or account verification. Manual entry remains available;
@@ -180,7 +181,6 @@ Presets retain model/authentication.
 Credential edits preserve selection; Provider/authentication-method changes reset it.
 Model edits preserve transport and Codex plugin settings. Provider/Harness changes
 regenerate them, retaining unrelated JSON; reset restores the starter.
-TODO: revisit catalog refresh and credential-aware discovery.
 
 `configurationTemplate` enables Control UI with loopback origins on port 18789.
 Compute supplies gateway authentication from Installation trust; Presets replace
@@ -192,7 +192,8 @@ selected channel, leaving direct-message `allowFrom` unchanged. Cancellation dis
 selections but retains created Namespace Secrets.
 
 `GET /namespaces/:namespaceId/agents/repository-options` discovers approved choices.
-Console submits opaque references and an explicit common profile. Only
+Console submits opaque references and an explicit common profile. Read-only and
+Contributor use approved profiles; customization can disable issue management. Only
 `503 REPOSITORY_OPTIONS_UNAVAILABLE` permits a fresh draft without bindings;
 other failures block submission. Retry discovery before provisioning.
 

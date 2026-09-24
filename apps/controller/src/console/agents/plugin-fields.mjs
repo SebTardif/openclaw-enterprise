@@ -535,6 +535,11 @@ export function createPluginFields({
           });
           details.append(
             element("h4", {}, `Tools (${tools.size})`),
+            element(
+              "p",
+              { className: "hint" },
+              "A dash inherits plugin enablement. Use Tool policy to set approval overrides or restore inheritance.",
+            ),
             element("div", { className: "form-field" }, filter),
           );
         }
@@ -614,6 +619,21 @@ export function createPluginFields({
               ),
             ),
           );
+          const enabledOverride = element("input", {
+            type: "checkbox",
+            className: "plugin-tool-switch",
+            "aria-label": `${tool.name} enabled override`,
+            title: "Tool enabled override: a dash inherits plugin policy",
+            checked: policy.enabled === true,
+          });
+          enabledOverride.indeterminate = policy.enabled === undefined;
+          enabledOverride.dataset.policyUnsupported = String(
+            !selected?.enabled || tool.available === false || !capabilities?.tools.enabled,
+          );
+          enabledOverride.addEventListener("click", (event) => event.stopPropagation());
+          enabledOverride.addEventListener("change", () =>
+            writeTool("enabled", enabledOverride.checked),
+          );
           const toolDetails = element(
             "details",
             { className: "plugin-tool-row", "data-tool": tool.id },
@@ -637,6 +657,12 @@ export function createPluginFields({
               tool.description
                 ? element("span", { className: "hint plugin-tool-description" }, tool.description)
                 : null,
+              element(
+                "span",
+                { className: "plugin-tool-actions" },
+                element("span", { className: "plugin-tool-policy-action" }, "Tool policy"),
+                enabledOverride,
+              ),
             ),
             row,
           );

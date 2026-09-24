@@ -44,11 +44,10 @@ Presets and edited Configuration JSON retain their settings.
    your credential and runtime support your choice.
    The form writes the corresponding native model configuration. Credentials
    remain separate from Configuration JSON.
-4. Review Configuration JSON. Selection changes update model/runtime entries,
-   preserving unrelated edits; **Reset template** replaces edits. Confirm model
-   access. Primary and fallback models must share a supported provider and Harness.
-   Kubernetes Compute renders trusted-proxy settings from Installation
-   [operator-managed proxy trust](../drivers/kubernetes-compute/networking-and-isolation.md#gateway-authentication).
+4. Confirm your Installation has access to the chosen model. Primary and fallback
+   models must use the same supported provider and Harness. For custom settings,
+   open **Advanced settings**. Selection changes preserve unrelated JSON edits;
+   **Reset template** replaces them.
 5. Optional: under **Repository access**, select up to 16 repositories approved
    for this Namespace. Select one authorization level shared by every chosen
    repository. Kubernetes supports Codex (Dedicated) or OpenClaw (Embedded),
@@ -58,14 +57,14 @@ Presets and edited Configuration JSON retain their settings.
 
 6. If you need Slack, use OpenAI with the **Codex** harness and use its channel card. Each token
    menu lets you select a readable Namespace Secret or **Create new Secret...**.
-   The modal prefills the binding key and masks the value you enter. Creating a
-   Secret stores it immediately, even if you later cancel Agent creation.
+   Creating a Secret stores it immediately, even if you later cancel Agent creation.
    **Apply channel settings** stages settings and bindings into the form;
    cancelling the drawer discards its selections.
    Channel settings, plugin entries, and selected Secret bindings are saved with
    the Configuration when you select **Create Agent**. You can also supply Slack
    credentials from the Agent's **Credentials** tab after creation.
-7. Review **Workspace files**. Each field contains its rendered OpenClaw default.
+7. Optionally configure plugins as described below, or open **Advanced settings**
+   to review Configuration JSON, Secret bindings, and **Workspace files**. Workspace fields contain OpenClaw defaults.
    Edit any of the four files, keep the text to submit that default, or clear a
    field to create an empty file. The browser submits LF newlines. See
    [initial contents](../agents.md#initial-contents-at-creation) for limits.
@@ -78,25 +77,22 @@ Presets and edited Configuration JSON retain their settings.
    [workspace editor](../console.md#edit-workspace-files). Pending inputs have no
    update API; see [workspace recovery](../../guides/topics/workspace-files.md#set-files-when-creating-an-agent).
 
-With the Codex Plugin Driver selected, choose **Service Accounts** and **Codex**,
-enter a token, then open **Configure plugins**. **Previous page** and **Next page**
-fetch upstream pages; **Filter this page** filters only the current page. PAT catalog
-search is unavailable. Select a plugin to load its details and tools, then **Add**
-to configure plugin defaults. Expand individual tool rows to set overrides.
-**Configured plugins** includes selections from other pages. **Done** returns to
-the form; changes save with **Create Agent**.
+For Codex plugins, enter a **Service Accounts** token with **Codex** and open
+**Configure plugins**. **Previous page** and **Next page** fetch
+upstream pages; **Filter this page** filters locally. PAT catalog search is unavailable.
+Select a plugin to load tools, then **Add**. Use toggles for enablement and
+**Tool policy** for overrides. **Configured plugins** includes other pages' selections. **Done** closes the modal; **Create Agent** saves changes.
 
 [Discovery](../../flows/agent-plugins.md#credential-scoped-discovery) uses the entered
-token transiently and excludes saved Preset credentials. Credential/provider/Harness
-changes clear the catalog; **Plugin selections JSON** preserves selections separately
-from Configuration. For rejection, check catalog permissions; for service failure,
-check outbound access and retry. Editing follows installation capabilities and the
-[policy contract](../agent-plugins.md). Browsing does not establish runtime permission.
+token transiently, excluding saved Preset credentials. Credential/provider/Harness
+changes clear results; **Plugin selections JSON** preserves selections separately
+from Configuration. Check permissions for rejection or outbound access for service
+failure, then retry. Editing follows installation capabilities and the
+[policy contract](../agent-plugins.md); browsing proves no runtime permission.
 
-Credentials are masked Namespace Secrets, absent from Configuration JSON, Agent
-responses, and browser storage. Provisioning uses references and creates exact
-Secret grants. Ordinary drafts use separate browser requests and require IAM
-administration permission.
+Credentials are masked Namespace Secrets, excluded from Configuration JSON, Agent
+responses, and browser storage. Provisioning creates exact grants; ordinary drafts
+require IAM administration permission.
 
 Presets retain their authentication binding. API-key and Service Accounts Presets
 fix the provider, including JSON edits; saved service account tokens also fix Codex.
@@ -146,10 +142,16 @@ save response requires checking existing Namespace Secrets before starting again
 See the [provisioning flow](../../flows/agent-provisioning.md) for the API sequence.
 
 Repository discovery is independent of model authentication. The Console submits
-opaque references and never requests GitHub App or token configuration. **Reader**
-allows reads, **Contributor** adds pushes and PR work, and **Collaborator** adds
-issue management; their configuration values are `git-read`, `git-write`, and
-`git-full`. Writable choices warn that token-bounded GraphQL permits merges and
+opaque references and never requests GitHub App or token configuration. Choose
+**Read-only** (`git-read`) or **Contributor** (`git-full`), which includes pushes,
+pull requests, and issue creation and management. **Customize access** lets you
+turn off issue management (`git-write`) when that profile is approved. Push and
+pull request permissions are bundled together. The control is disabled when the
+selected repositories do not share both writable profiles; its explanation states
+whether issue management is required or unavailable. The selected permissions
+remain visible when the pane is closed. Changing repositories never silently
+upgrades a customized grant; an unavailable selection must be chosen again.
+The pane also explains that token-bounded GraphQL permits merges and
 ref changes; native push allowlists do not constrain API writes. Repository
 administration and workflow permissions remain excluded. See
 [access levels](../repository-credentials/access-levels.md) for exact permissions.

@@ -139,9 +139,15 @@ if managed `requiredOnModels` includes the current model, or model selection
 cannot be verified against a nonempty requirement. Omitted reviewers do not
 trigger these explicit-choice checks.
 
-These checks verify startup configuration. They do not prove future turn routing,
-session/model changes, the turn's strict-review flag, or complete effective-policy
-readback. Those and real Agent enforcement remain draft acceptance gates; see
+Before readiness, startup checks every effective nested tool's enablement and
+approval against its requested override or app default. Absent/null fields inherit;
+an explicit tool enablement is rejected if neither level requested it, because
+it can bypass category restrictions. Account/link approval defaults must match
+the requested app approval.
+
+These checks verify startup configuration. Future turn routing, session/model
+changes, strict review, workspace configuration, managed requirements beyond
+reviewer checks, and real Agent enforcement remain draft acceptance gates; see
 [runtime proof notes](../../testing/plugins.md#current-proof-notes).
 
 Dedicated Codex starts without user plugins/apps, including when no PluginDriver
