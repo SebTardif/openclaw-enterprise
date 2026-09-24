@@ -6,13 +6,13 @@
 
 ## Components and dependencies
 
-History extends the existing `AuditEvent` ledger. Lifecycle and work owners carry original causation. Audit constructs and validates closed owner-specific projections. State persists those facts and queries retained rows. The selected IAM Driver authorizes access, while authentication supplies current account and session validity. HTTP discloses an authorized result and the console renders it.
+History extends the existing `AuditEvent` ledger. Lifecycle and work owners carry the original cause of each action. Audit validates their facts; State stores and queries them. Authentication checks the account and session, the selected IAM Driver authorizes the read, and HTTP and the console present the result.
 
-These are existing ownership boundaries, not new network services. Repository-specific behavior stays in its credential Driver/Provider, exposing a provider-neutral consumer contract to core. Observability adds no execution store, invocation queue, authority lease or substitute native Gateway client. The [repository journey](repository-read.md#connect-authentic-handoffs) consumes actual owners' evidence.
+These are existing ownership boundaries, not new services. Repository behavior stays with its credential Driver/Provider. Observability adds no execution store, invocation queue, authority lease or substitute Gateway client. The [repository journey](repository-read.md#connect-authentic-handoffs) depends on evidence from the actual owners.
 
-At [pinned main](https://github.com/openclaw/openclaw-enterprise/blob/e9766f35a25afa240ee109b41a6ef821fb68687e/packages/occ/src/state/platform-state.ts#L410), State exposes `append` and unbounded `list`. Controller records describe deployment and reconciliation authority. They do not establish which human initiated a later invocation. The proposed [closed lifecycle shapes](interfaces.md#facts-and-events) still need the complete serving composition.
+At [pinned main](https://github.com/openclaw/openclaw-enterprise/blob/e9766f35a25afa240ee109b41a6ef821fb68687e/packages/occ/src/state/platform-state.ts#L410), State exposes `append` and unbounded `list`. Controller records do not establish who initiated a later Agent invocation. The proposed [lifecycle facts](interfaces.md#facts-and-events) still need the full serving integration.
 
-At newer main `12fddc4`, [deployment status](https://github.com/openclaw/openclaw-enterprise/blob/12fddc4805a1b090331af363ad10bf3b58ea5897/docs/reference/agents.md#L50-L77) reads the original revision reconcile work under exact AgentRevision `read`. It returns `queued/running/succeeded/failed`, safe errors and saved startup warnings. A `202` deploy response records admission. A saved success records historical activation or an already-active revision, not live health, human invocation attribution, physical termination or recovery from unknown mutation COMMIT. Later deployments do not rewrite the original result. This existing read grants no `read_audit` permission and does not implement protected History.
+At newer main `12fddc4`, [deployment status](https://github.com/openclaw/openclaw-enterprise/blob/12fddc4805a1b090331af363ad10bf3b58ea5897/docs/reference/agents.md#L50-L77) reads the original revision's reconcile result under AgentRevision `read`. A `202` records admission; a saved success records activation or an already-active revision. Neither proves live health, a later human invocation, physical termination or recovery from an unknown commit. Later deployments do not rewrite that result. This read does not grant `read_audit` or implement History.
 
 ## Request lifecycle
 
@@ -30,14 +30,11 @@ Exact mutation observation uses the same disclosure and restore gates. A prepare
 
 ## Availability and delivery
 
-The delivery sequence has four independently assessable outcomes:
+The [MVP checklist](mvp-scope.md) defines non-serving source cuts, the lifecycle serving gate and the repository-read acceptance required by the currently selected full MVP. A [review suggestion](../31-basic-observability.md#release-decision) would move that read to a follow-up.
 
-1. **Optional diagnostics.** Use real authenticated Compose OCC and supported Namespace lifecycle traffic to verify sanitized host-file output. Interrupt the sink and confirm API and mandatory audit outcomes remain intact. Verify file handling. Docker/Podman admission limits cannot prove Agent or model turns, which require supported Kubernetes.
-2. **Non-serving source cuts.** Review closed facts, shared account/policy guards, bounded query and recovery contracts, and every audit writer's SQL. These cuts do not enable History early.
-3. **First serving lifecycle History.** Join State, IAM, recovery, API and the actual browser across create/update/deploy/stop. Cover retries, supersession, lost COMMIT, restart/replica/key rotation, pagination and privacy. Exercise cross-scope access and races involving revoke, accounts, Groups and Restrictions. Limited-role PostgreSQL must prove exact audit grant/revoke/regrant after Agent deletion. Every console state must work. Both retention modes, actual restore continuity, installed durability and sweeper enforcement pass together.
-4. **Complete selected feature.** Distinct A/B/C complete the genuine [ordinary-Agent repository-read acceptance](repository-read.md#acceptance-and-delivery).
+Optional diagnostics have a separate acceptance: use authenticated Compose OCC and supported Namespace lifecycle traffic to verify sanitized host-file output. Interrupt the sink and confirm API and mandatory audit outcomes remain intact; verify file handling. Docker/Podman admission does not prove Agent or model turns, which require supported Kubernetes. Preserve the historical diagnostic checkpoint and its test evidence.
 
-Preserve the historical diagnostic checkpoint and its test evidence. Qualify proposed packaging through cumulative, buildable RFC-first successor cuts. Retain necessary supplier ancestry and final-tree equality. Complete contract/documentation checks, SQL review, security review and independent integrated review after writers stop. Repeat affected review after repairs. Update current references, generated API, guides and flows when implementation lands.
+Keep successor cuts buildable and preserve supplier ancestry and final-tree equality. Complete contract, documentation, SQL, security and independent integrated reviews after writers stop; repeat affected reviews after repairs. Update current references, generated API, guides and flows when implementation lands.
 
 Record exact revisions, dependencies, fixtures, cleanup and missing proof separately for source/database, composed, installed, live-provider and release evidence. These are acceptance requirements, not reported passes. A green source check cannot stand in for the next evidence level.
 

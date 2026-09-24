@@ -10,7 +10,7 @@
 
 Deployer A creates and deploys a personal/team Agent. Different authenticated human B requests one approved GitHub HEAD read. Separately granted audit-only reader C follows B's admission through an actual Harness turn, managed Git child, session and strongest observed or unknown result.
 
-[Lifecycle History](architecture.md#availability-and-delivery) can ship first. One qualified admission/runtime/channel profile and local accounts suffice for this scenario. Full neighboring provider, Harness and retained-workspace deliveries remain separate.
+[Lifecycle History](architecture.md#availability-and-delivery) can ship first. The [release decision](../31-basic-observability.md#release-decision) remains open: the current proposal requires this journey for the complete MVP; a review suggestion would move it to a follow-up. One qualified admission/runtime/channel profile and local accounts suffice. Full neighboring provider, Harness and retained-workspace deliveries remain separate.
 
 ## Current-source amendment — 2026-09-24
 

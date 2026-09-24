@@ -4,33 +4,35 @@
 
 **Status:** Proposed. Selected scope, implementation and qualification pending.
 
-## Review amendment — 2026-09-24
-
-This remains a proposal. At [current main](https://github.com/openclaw/openclaw-enterprise/blob/5ebd7305b0876db33276a249934bc82073b63424/packages/occ/src/state/platform-state.ts#L483), State still exposes audit append/list; protected History, exact mutation recovery and this retention contract are not serving capabilities.
-
-The [lifecycle-first review suggestion](https://github.com/openclaw/openclaw-enterprise/pull/250#issuecomment-5754821713) would make lifecycle History the complete first release and track repository observation separately. That release-boundary decision remains open. The original selected scope below is preserved pending a decision; none of its access, recovery, retention or restore requirements is waived.
-
-[Platform audit RFC #376](https://github.com/openclaw/openclaw-enterprise/pull/376) separately proposes a bounded view of existing bootstrap, Namespace and Secret facts. It does not replace retained-Agent History, authorize History readers, or qualify this RFC's repository journey. Its narrower Installation query is a proposed exception to deferred broad search, with its own approval and implementation gates.
-
-<a id="decision"></a><a id="problem-and-goal"></a>
+<a id="review-amendment--2026-09-24"></a><a id="decision"></a><a id="problem-and-goal"></a>
 
 ## Problem and proposal
 
-Accepting an Agent deployment does not tell an operator what later ran, who requested it, or what completed. This RFC proposes a bounded History view for personal and team Agents, extending the existing audit ledger with safe facts, a paginated API and a small console. History distinguishes requested work, local acceptance, observed results and unknown outcomes without exposing credentials or conversation content. Missing attribution remains unresolved.
+Operators need to know who requested an Agent action, what the system accepted and what it observed afterward. We propose **Agent History**: a bounded API and console backed by the audit ledger. It separates acceptance from observation, shows **unknown** when the outcome cannot be confirmed, and excludes prompts and credentials.
 
-Installation administrators explicitly grant `audit_reader` for an exact Agent or Namespace-wide Agents. Every page requires current `read_audit`; ownership, membership, participation and deployment rights confer no access. The separate `audit_retention_administrator` role manages Installation retention without granting History access. These grants use [common IAM policy administration](31-basic-observability/interfaces.md#authorization-and-policy-consumption).
+History is proposed, not implemented. [State on current main](https://github.com/openclaw/openclaw-enterprise/blob/5ebd7305b0876db33276a249934bc82073b63424/packages/occ/src/state/platform-state.ts#L483) exposes audit append/list, not the protected History, recovery and retention described here.
 
-<a id="current-boundary-and-scope"></a><a id="mvp-boundary-and-present-evidence"></a><a id="acceptance-and-delivery"></a>
+<a id="scope-and-delivery"></a><a id="current-boundary-and-scope"></a><a id="mvp-boundary-and-present-evidence"></a><a id="acceptance-and-delivery"></a>
 
-## Scope and delivery
+## What to build
 
-The **first usable History milestone** covers create, update, deploy and stop, including retries, supersession and exact mutation recovery. It requires current account/IAM checks, atomic evidence in original State, acknowledged disclosure commits, both retention modes, installed durability, sweeper enforcement and restore continuity. Missing dependencies keep protected History unavailable. Recovery observes only the bound mutation result and creates no new work.
+The first usable release covers personal and team Agents and their create, update, deploy and stop operations. It needs:
 
-[Retention](31-basic-observability/retention.md) defaults to expiry after 30 days and live-ledger deletion within another 24 hours; administrators may explicitly select indefinite retention. Expired evidence must not reappear after restore.
+1. **Lifecycle facts.** Record the requester, authorization, accepted action and observed outcome, including retries and supersession. Show missing attribution as unresolved.
+2. **Access and a view.** Provide an exact-Agent API and console. Administrators grant `audit_reader`; check current `read_audit` on every page, including after deletion. Deployment rights grant no access.
+3. **Safe evidence.** Store bounded facts. Commit required evidence with the mutation and disclosure evidence before returning a page.
+4. **Recovery.** Let the original authorized caller check an unknown mutation outcome without retrying it, using the returned recovery reference. Missing or erased evidence stays unknown.
+5. **Retention.** Expire evidence after 30 days and delete it within 24 more hours. An administrator can select indefinite retention; previously expired records must still be deleted. Prevent expired evidence from returning after restore.
 
-The **complete selected MVP** also proves one [ordinary-Agent repository read](31-basic-observability/repository-read.md): deployer A deploys a personal or team Agent, different requester B asks it to read an approved GitHub repository's HEAD, and separately granted reader C follows B's request, the Agent/revision executor, exact authorization and resource, and the strongest observed result. Local accounts and one qualified execution profile suffice; every control required by that profile remains a dependency.
+These items must work together before History serves a page. See the [MVP checklist and delivery cuts](31-basic-observability/mvp-scope.md) for acceptance criteria and dependencies. Local accounts suffice; federation is not required.
 
-Optional filtered diagnostics can ship independently. Preparatory source changes cannot enable History before its serving gates pass. The [MVP checklist](31-basic-observability/mvp-scope.md#required-outcomes) defines **twelve required outcomes** and [eight delivery cuts](31-basic-observability/mvp-scope.md#small-reviewable-deliverables), with [dependencies for each milestone](31-basic-observability/mvp-scope.md#dependency-cut-points).
+## Release decision
+
+The **current selected MVP** also requires a [repository-read journey](31-basic-observability/repository-read.md): A deploys an Agent, B asks it to read an approved GitHub repository's HEAD, and separately authorized C sees B's request and its result. Authentic attribution requires runtime and credential handoffs beyond the lifecycle facts.
+
+A [review suggestion](https://github.com/openclaw/openclaw-enterprise/pull/250#issuecomment-5754821713) would make lifecycle History the complete first MVP and track the read separately. **The release boundary remains open.** Until decided, lifecycle History is the first usable milestone and the read remains part of the full MVP.
+
+The [open decisions](31-basic-observability/mvp-scope.md#decisions-still-required) include expiry during disclosure, recovery keys, purge authority and restore custody. [Platform audit RFC #376](https://github.com/openclaw/openclaw-enterprise/pull/376) proposes a separate, narrower view and Installation query with its own gates.
 
 <a id="proposed-journey"></a>
 
@@ -70,7 +72,7 @@ flowchart TB
   linkStyle default stroke:#8B949E,stroke-width:1px
 ```
 
-Dashed arrows show the proposed complete journey. History records each producer's facts; it does not execute the repository operation. See the [full request lifecycle](31-basic-observability/architecture.md#request-lifecycle).
+Dashed arrows show the proposed complete journey, including the repository read whose MVP status is open. History records each producer's facts; it does not execute the read. See the [request lifecycle](31-basic-observability/architecture.md#request-lifecycle).
 
 <a id="design-and-failure-behavior"></a>
 
@@ -78,8 +80,8 @@ Dashed arrows show the proposed complete journey. History records each producer'
 
 - <a id="optional-diagnostics"></a>[Architecture](31-basic-observability/architecture.md) defines responsibilities, diagnostics and delivery gates.
 - <a id="facts-and-their-owners"></a><a id="access-and-disclosure"></a><a id="exact-mutation-recovery"></a>[Interfaces](31-basic-observability/interfaces.md) defines facts, authorization, queries, disclosure and exact recovery.
+- [Retention](31-basic-observability/retention.md) defines expiry, erasure and restore.
 - <a id="evidence-failure"></a>[Security](31-basic-observability/security.md) defines privacy, audit-failure behavior and local integrity limits.
-- [Open decisions](31-basic-observability/mvp-scope.md#decisions-still-required) cover event membership, expiry at disclosure, recovery keys, purge authority and restore custody.
 
 <a id="alternatives-and-follow-ups"></a>
 
