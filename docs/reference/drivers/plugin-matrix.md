@@ -15,6 +15,10 @@ filters, and expandable evidence. A status filter matches either Driver's cell.
 GitHub shows the generated table with caveats and pinned source/test links.
 Both views use the [same matrix data](../../assets/plugin-driver-matrix.json).
 The eight rows focus on plugin discovery and approval policy.
+The snapshot below predates generic native per-tool enablement from trusted
+pinned catalog metadata. Diffs remains the only admitted native entry.
+Tool approval modes and categories remain unsupported; see the
+[current native mappings](plugin-bundled.md#native-mappings-and-limits).
 Each **Scope** cell explains what the capability means. Open a Driver status
 to see its behavior, caveats, and evidence. Search includes the explanations.
 

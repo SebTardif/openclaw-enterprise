@@ -123,6 +123,57 @@ test(
       resultPattern,
     });
 
+    // Keep the plugin loaded while denying its tool, then rebuild policy from
+    // the reusable Configuration on redeploy so only the generated deny disappears.
+    await fixture.updatePluginPolicy(primary.id, pluginId, {
+      tools: { [toolName]: { enabled: false } },
+    });
+    const toolDisabled = await fixture.deployAndWait(primary);
+    assert.equal(toolDisabled.revision.plugins.plugins[pluginId].tools[toolName].enabled, false);
+    assert.deepEqual(await fixture.readOpenClawPluginPolicy(primary, nativePluginId), {
+      plugins: { allow: allowedPlugins, enabled: true },
+      tools: { allow: ["read", nativePluginId], deny: ["exec", toolName] },
+    });
+    const toolDisabledSession = `agent:main:tool-disabled-${randomUUID()}`;
+    const toolDisabledMarker = `TOOL_DISABLED_${randomUUID()}`;
+    await fixture.normalGatewayTurn({
+      agent: primary,
+      gatewayPassword: toolDisabled.gatewayPassword,
+      sessionKey: toolDisabledSession,
+      prompt: `Try to use the Diffs tool. If unavailable, answer ${toolDisabledMarker}.`,
+      expectedPatterns: [toolDisabledMarker],
+      secrets: [modelSecret],
+    });
+    await fixture.assertNoSessionToolCallEvidence(primary, {
+      sessionKey: toolDisabledSession,
+      turnMarker: toolDisabledMarker,
+      toolName,
+    });
+
+    await fixture.updatePluginPolicy(primary.id, pluginId, {
+      tools: { [toolName]: { enabled: true } },
+    });
+    const toolEnabled = await fixture.deployAndWait(primary);
+    assert.deepEqual(await fixture.readOpenClawPluginPolicy(primary, nativePluginId), {
+      plugins: { allow: allowedPlugins, enabled: true },
+      tools: { allow: ["read", nativePluginId], deny: ["exec"] },
+    });
+    const toolEnabledSession = `agent:main:tool-enabled-${randomUUID()}`;
+    await fixture.normalGatewayTurn({
+      agent: primary,
+      gatewayPassword: toolEnabled.gatewayPassword,
+      sessionKey: toolEnabledSession,
+      prompt,
+      expectedPatterns,
+      secrets: [modelSecret],
+    });
+    await fixture.assertSessionToolCallEvidence(primary, {
+      sessionKey: toolEnabledSession,
+      turnMarker,
+      toolName,
+      resultPattern,
+    });
+
     const disabled = await fixture.updatePluginPolicy(primary.id, pluginId, { enabled: false });
     assert.equal(disabled.enabled, false);
     const deniedConfiguration = {

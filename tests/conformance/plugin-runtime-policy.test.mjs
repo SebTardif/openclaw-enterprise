@@ -226,6 +226,28 @@ for (const [name, tools, expected] of [
   });
 }
 
+test("OpenClaw startup composes exact tool disablement with operator denies", () => {
+  for (const [enabled, operatorDeny, expectedDeny] of [
+    [false, ["exec"], ["exec", "diffs"]],
+    [true, ["exec"], ["exec"]],
+    [true, ["exec", "diffs"], ["exec", "diffs"]],
+  ]) {
+    const baseConfig = { tools: { allow: ["read"], deny: operatorDeny } };
+    const { files } = runOpenClawRuntimeHelper(
+      openClawRuntime({ tools: { diffs: { enabled } } }),
+      installedPluginResponses(),
+      { baseConfig },
+    );
+    const effective = JSON.parse(files.get("/home/node/.openclaw/openclaw.json"));
+    assert.equal(effective.plugins.entries.diffs.enabled, true);
+    assert.deepEqual(effective.tools, {
+      allow: ["read", "diffs"],
+      deny: expectedDeny,
+    });
+    assert.deepEqual(baseConfig.tools, { allow: ["read"], deny: operatorDeny });
+  }
+});
+
 for (const [field, plugins] of [
   ["plugins.enabled", { enabled: false }],
   ["plugins.deny", { deny: ["diffs"] }],

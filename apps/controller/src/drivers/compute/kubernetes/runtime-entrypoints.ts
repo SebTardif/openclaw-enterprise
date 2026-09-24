@@ -392,13 +392,13 @@ function assertNoOpenClawPluginConfigConflict(base, overlay, options = {}) {
 function mergeOpenClawPluginConfiguration(base, overlay, options = {}) {
   assertNoOpenClawPluginConfigConflict(base, overlay, options);
   const next = mergeConfig(base, overlay);
-  for (const key of ["allow", "alsoAllow"]) {
-    const baseAllow = Array.isArray(base?.tools?.[key]) ? base.tools[key] : [];
-    const overlayAllow = Array.isArray(overlay?.tools?.[key]) ? overlay.tools[key] : [];
-    if (overlayAllow.length === 0) continue;
+  for (const key of ["allow", "alsoAllow", "deny"]) {
+    const basePolicy = Array.isArray(base?.tools?.[key]) ? base.tools[key] : [];
+    const overlayPolicy = Array.isArray(overlay?.tools?.[key]) ? overlay.tools[key] : [];
+    if (overlayPolicy.length === 0) continue;
     next.tools[key] = [
-      ...baseAllow,
-      ...overlayAllow.filter((tool) => !baseAllow.includes(tool)),
+      ...basePolicy,
+      ...overlayPolicy.filter((tool) => !basePolicy.includes(tool)),
     ];
   }
   const overlayEntries = objectAtPath(overlay, ["plugins", "entries"]);
@@ -525,7 +525,7 @@ function assertConfigContainsOverlay(base, overlay, path) {
     }
     return;
   }
-  if (["tools.allow", "tools.alsoAllow"].includes(path) && Array.isArray(base) && Array.isArray(overlay)) {
+  if (["tools.allow", "tools.alsoAllow", "tools.deny"].includes(path) && Array.isArray(base) && Array.isArray(overlay)) {
     for (const tool of overlay) {
       if (!base.includes(tool)) {
         throw new Error("OpenClaw plugin effective config does not match admitted configuration.");

@@ -1489,7 +1489,9 @@ test("Agent create and update replace policy-only plugin maps and revisions free
   const pluginDriver = new OCCPluginDriver();
   controller.fixture.controller.registerDriver(pluginDriver);
   controller.fixture.controller.selectDriver("plugin", pluginDriver.id);
-  const initialPlugins = { [diffsPluginId]: pluginPolicy() };
+  const initialPlugins = {
+    [diffsPluginId]: pluginPolicy({ tools: { diffs: { enabled: false } } }),
+  };
 
   const created = await controller.request("POST", `/namespaces/${namespace.id}/agents`, {
     body: {

@@ -37,15 +37,56 @@ export type CodexPluginCatalogReader = {
   listCatalog(signal?: AbortSignal): Promise<readonly PluginCatalogEntry[]>;
 };
 
-export function createPluginRuntimeTranslator() {
+type OpenClawPluginDescriptor = {
+  readonly nativeId: string;
+  readonly name: string;
+  readonly packageName: string;
+  readonly version: string;
+  readonly integrity: string;
+  readonly toolNames: readonly string[];
+};
+
+// Admission metadata comes from the integrity-pinned package's manifest and
+// registration contract. Keep identities separate from policy translation.
+const OPENCLAW_PLUGIN_CATALOG: readonly OpenClawPluginDescriptor[] = [
+  {
+    nativeId: "diffs",
+    name: "Diffs",
+    packageName: "@openclaw/diffs",
+    version: "2026.8.2",
+    integrity:
+      "sha512-5VTDNEo7D3iOgRoL5C31JPTbA/EXQEFRuxOvLy67IMFmOajwroGsUMWeuKkmqzFbPNQxvn7GACDSr/5Vmpx3/g==",
+    toolNames: ["diffs"],
+  },
+];
+
+export function createPluginRuntimeTranslator(nativeCatalog: readonly OpenClawPluginDescriptor[]) {
   const OCC_DRIVER_ID = "occ-plugin";
   const OCC_IMPLEMENTATION = "occ/openclaw-plugin";
   const CODEX_DRIVER_ID = "codex-plugin";
   const CODEX_IMPLEMENTATION = "occ/codex-plugin";
   const CODEX_MARKETPLACE = "openai-curated-remote";
-  const OCC_DIFFS_VERSION = "2026.8.2";
-  const OCC_DIFFS_INTEGRITY =
-    "sha512-5VTDNEo7D3iOgRoL5C31JPTbA/EXQEFRuxOvLy67IMFmOajwroGsUMWeuKkmqzFbPNQxvn7GACDSr/5Vmpx3/g==";
+
+  // Native policy names are global: aliases/families can target core tools,
+  // and another plugin's ID targets its entire tool inventory.
+  const reservedPolicyNames = new Set(["bash", "apply-patch", "cron", "canvas", "update_plan"]);
+  const toolNames = new Set<string>();
+  for (const descriptor of nativeCatalog) {
+    for (const name of [descriptor.nativeId, ...descriptor.toolNames]) {
+      if (!/^[a-z][a-z0-9_-]*$/.test(name) || reservedPolicyNames.has(name)) {
+        throw new Error("OpenClaw catalog requires literal canonical policy names.");
+      }
+    }
+    for (const toolName of descriptor.toolNames) {
+      if (
+        toolNames.has(toolName) ||
+        nativeCatalog.some((other) => other.nativeId === toolName && other !== descriptor)
+      ) {
+        throw new Error("OpenClaw catalog tool identities must be unambiguous.");
+      }
+      toolNames.add(toolName);
+    }
+  }
 
   const CODEX_NO_PLUGIN_CONFIGURATION = {
     features: {
@@ -487,11 +528,13 @@ export function createPluginRuntimeTranslator() {
     const entries: Record<string, unknown> = {};
     const installs: Record<string, unknown>[] = [];
     const alsoAllow: string[] = [];
+    const deny: string[] = [];
     for (const [pluginId, selection] of selectionEntries(selections)) {
       const nativeId = pluginId.startsWith(OCC_DRIVER_ID + ":")
         ? pluginId.slice((OCC_DRIVER_ID + ":").length)
         : pluginId;
-      if (nativeId !== "diffs") {
+      const descriptor = nativeCatalog.find((entry) => entry.nativeId === nativeId);
+      if (descriptor === undefined) {
         throw new Error("Unknown OpenClaw plugin selection.");
       }
       if (reviewer(selection) !== undefined) {
@@ -504,42 +547,72 @@ export function createPluginRuntimeTranslator() {
       if (selection.destructiveActions !== undefined || selection.writes !== undefined) {
         throw new Error("OpenClaw plugin category policy is unsupported.");
       }
+      const pluginEnabled = selectionEnabledAfterFailures(pluginId, selection, failedPluginIds);
       if (selection.tools !== undefined) {
-        throw new Error("OpenClaw plugin tool policy is unavailable.");
+        if (!isRecord(selection.tools)) {
+          throw new Error("OpenClaw plugin tool policies must be an object.");
+        }
+        for (const [toolId, policy] of Object.entries(selection.tools)) {
+          if (!descriptor.toolNames.includes(toolId)) {
+            throw new Error("Unknown OpenClaw plugin tool selection.");
+          }
+          if (
+            !isRecord(policy) ||
+            typeof policy.enabled !== "boolean" ||
+            policy.approvalMode !== undefined
+          ) {
+            throw new Error("OpenClaw plugin tool policy supports only enablement.");
+          }
+          if (pluginEnabled && !policy.enabled) {
+            deny.push(toolId);
+          }
+        }
       }
       entries[nativeId] = {
-        enabled: selectionEnabledAfterFailures(pluginId, selection, failedPluginIds),
+        enabled: pluginEnabled,
       };
       installs.push({
         pluginId,
         nativeId,
-        packageName: "@openclaw/diffs",
-        version: OCC_DIFFS_VERSION,
-        integrity: OCC_DIFFS_INTEGRITY,
+        packageName: descriptor.packageName,
+        version: descriptor.version,
+        integrity: descriptor.integrity,
       });
-      if (selectionEnabledAfterFailures(pluginId, selection, failedPluginIds)) {
+      if (pluginEnabled) {
         alsoAllow.push(nativeId);
+      }
+    }
+    // A deny matching an owner ID suppresses every tool it owns. Reject a
+    // partial denial that would silently suppress an allowed sibling tool.
+    for (const descriptor of nativeCatalog) {
+      if (
+        deny.includes(descriptor.nativeId) &&
+        descriptor.toolNames.some((name) => !deny.includes(name))
+      ) {
+        throw new Error(
+          "OpenClaw cannot express this per-tool denial without blocking sibling tools.",
+        );
       }
     }
     return {
       kind: "openclaw",
       configuration: {
         plugins: { entries },
-        ...(alsoAllow.length === 0 ? {} : { tools: { alsoAllow } }),
+        ...(alsoAllow.length === 0
+          ? {}
+          : { tools: { alsoAllow, ...(deny.length === 0 ? {} : { deny }) } }),
       },
       installs,
     };
   }
 
   function openClawCatalogEntries(): readonly Record<string, unknown>[] {
-    const pluginId = OCC_DRIVER_ID + ":diffs";
-    return [
-      {
-        id: pluginId,
-        name: "Diffs",
-        tools: null,
-      },
-    ];
+    return nativeCatalog.map((entry) => ({
+      id: OCC_DRIVER_ID + ":" + entry.nativeId,
+      name: entry.name,
+      // Tool identities alone do not establish write/destructive classifications.
+      tools: null,
+    }));
   }
 
   return {
@@ -553,11 +626,12 @@ export function createPluginRuntimeTranslator() {
   };
 }
 
-export const PLUGIN_RUNTIME_TRANSLATOR_SOURCE = createPluginRuntimeTranslator.toString();
+export const PLUGIN_RUNTIME_TRANSLATOR_SOURCE = `() => (${createPluginRuntimeTranslator.toString()})(${JSON.stringify(OPENCLAW_PLUGIN_CATALOG)})`;
 
 type Translator = ReturnType<typeof createPluginRuntimeTranslator>;
 
-export const pluginRuntimeTranslator: Translator = createPluginRuntimeTranslator();
+export const pluginRuntimeTranslator: Translator =
+  createPluginRuntimeTranslator(OPENCLAW_PLUGIN_CATALOG);
 
 export function codexRuntimeArtifact(
   selections: PluginDesiredState,

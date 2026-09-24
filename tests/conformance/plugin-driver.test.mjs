@@ -8,6 +8,7 @@ import {
   OCCPluginDriver,
 } from "../../apps/controller/src/drivers/plugin/index.ts";
 import {
+  createPluginRuntimeTranslator,
   codexCatalogEntries,
   codexOpenClawConfiguration,
   codexRuntimeArtifact,
@@ -187,9 +188,117 @@ test("OpenClaw plugin startup translation rejects unsupported policies", () => {
     occSelection({ approvalsReviewer: "auto_review" }),
     occSelection({ destructiveActions: "never" }),
     occSelection({ tools: { diffs: { approvalMode: "never" } } }),
+    occSelection({ tools: { exec: { enabled: false } } }),
     { "occ-plugin:unknown": { enabled: true, approvalMode: "always" } },
   ]) {
     assert.throws(() => openClawRuntimeArtifact(selection));
+  }
+});
+
+test("OpenClaw tool enablement cannot revive a disabled or failed plugin", () => {
+  for (const [selection, failures] of [
+    [occSelection({ enabled: false, tools: { diffs: { enabled: true } } }), []],
+    [occSelection({ approvalMode: "never", tools: { diffs: { enabled: true } } }), []],
+    [occSelection({ tools: { diffs: { enabled: true } } }), [{ pluginId: "occ-plugin:diffs" }]],
+  ]) {
+    const artifact = openClawRuntimeArtifact(selection, failures);
+    assert.equal(artifact.configuration.plugins.entries.diffs.enabled, false);
+    assert.equal(Object.hasOwn(artifact.configuration, "tools"), false);
+  }
+});
+
+function nativeDescriptor(nativeId, toolNames) {
+  return {
+    nativeId,
+    name: nativeId,
+    packageName: "@example/" + nativeId,
+    version: "1.0.0",
+    integrity: OCC_DIFFS_DIGEST,
+    toolNames,
+  };
+}
+
+test("native tool translation uses the admitted package inventory across multiple plugins", () => {
+  const translator = createPluginRuntimeTranslator([
+    nativeDescriptor("notes", ["notes_read", "notes_write"]),
+    nativeDescriptor("search", ["search_query"]),
+  ]);
+  const artifact = translator.openClawRuntimeArtifact({
+    "occ-plugin:notes": {
+      enabled: true,
+      approvalMode: "always",
+      tools: { notes_write: { enabled: false } },
+    },
+    "occ-plugin:search": {
+      enabled: true,
+      approvalMode: "always",
+      tools: { search_query: { enabled: true } },
+    },
+  });
+  assert.deepEqual(artifact.configuration, {
+    plugins: { entries: { notes: { enabled: true }, search: { enabled: true } } },
+    tools: { alsoAllow: ["notes", "search"], deny: ["notes_write"] },
+  });
+  assert.equal(artifact.installs[0].packageName, "@example/notes");
+  assert.throws(
+    () =>
+      translator.openClawRuntimeArtifact({
+        "occ-plugin:notes": {
+          enabled: true,
+          approvalMode: "always",
+          tools: { search_query: { enabled: false } },
+        },
+      }),
+    /Unknown OpenClaw plugin tool/,
+  );
+});
+
+test("native tool denial cannot silently block an allowed sibling through its owner ID", () => {
+  const translator = createPluginRuntimeTranslator([
+    nativeDescriptor("notes", ["notes", "notes_write"]),
+  ]);
+  assert.throws(
+    () =>
+      translator.openClawRuntimeArtifact({
+        "occ-plugin:notes": {
+          enabled: true,
+          approvalMode: "always",
+          tools: { notes: { enabled: false } },
+        },
+      }),
+    /without blocking sibling tools/,
+  );
+  const artifact = translator.openClawRuntimeArtifact({
+    "occ-plugin:notes": {
+      enabled: true,
+      approvalMode: "always",
+      tools: { notes: { enabled: false }, notes_write: { enabled: false } },
+    },
+  });
+  assert.deepEqual(artifact.configuration.tools.deny, ["notes", "notes_write"]);
+});
+
+test("native catalog admission rejects names with broader native policy meanings", () => {
+  for (const toolName of [
+    "group:plugins",
+    "notes*",
+    "bash",
+    "apply-patch",
+    "cron",
+    "canvas",
+    "update_plan",
+    "Notes",
+  ]) {
+    assert.throws(
+      () => createPluginRuntimeTranslator([nativeDescriptor("notes", [toolName])]),
+      /canonical policy names/,
+    );
+  }
+  for (const descriptors of [
+    [nativeDescriptor("notes", ["query"]), nativeDescriptor("search", ["query"])],
+    [nativeDescriptor("notes", ["search"]), nativeDescriptor("search", ["query"])],
+  ]) {
+    assert.throws(() => createPluginRuntimeTranslator(descriptors), /unambiguous/);
   }
 });
 

@@ -50,7 +50,10 @@ packages are rejected. Existing required Driver selections remain necessary.
 | `occ-plugin`   | `occ/openclaw-plugin` | Embedded OpenClaw | Bundled OpenClaw catalog, including `occ-plugin:diffs` (`@openclaw/diffs`).                                      |
 | `codex-plugin` | `occ/codex-plugin`    | Dedicated Codex   | Existing native Codex `openai-curated-remote` catalog, exposed as `codex-plugin:<plugin>@openai-curated-remote`. |
 
-The OpenClaw catalog is bounded and pins Diffs `2026.8.2` plus npm integrity.
+The trusted OpenClaw catalog records each admitted plugin's native identity,
+package/version/integrity pin, and complete declared tool names. Diffs
+`2026.8.2` is currently its only entry. Policy translation uses this metadata;
+generic translation does not admit additional packages.
 The Codex catalog is discovered from the existing native curated marketplace at
 list/read time; Linear and Google Calendar are test fixtures, not production
 allowlist entries. API callers cannot choose arbitrary sources or versions.
@@ -86,8 +89,9 @@ Agent thread retains it.
 | --------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | OpenClaw `always` and enable/disable          | Set `plugins.entries.<id>.enabled`; extend a nonempty `tools.allow`, otherwise `tools.alsoAllow`, while preserving other native restrictions.                           |
 | OpenClaw `never`                              | Disable the selected plugin, blocking its owned execution surfaces.                                                                                                     |
+| OpenClaw `tools.<toolId>.enabled`             | For an enabled plugin, `false` adds the declared tool to native `tools.deny`; `true` adds no deny. Existing operator denies remain effective.                           |
 | OpenClaw `prompt`, `auto`, reviewer           | Startup failure; no equivalent generic native plugin approval control is implemented.                                                                                   |
-| Tool/category policy on catalog entries       | Startup failure when current curated entries do not expose reliable per-tool metadata to Enterprise.                                                                    |
+| OpenClaw tool approval modes and categories   | Startup failure; only per-tool enablement is translated. Unknown tool IDs and ambiguous native deny names are rejected.                                                 |
 | Codex internal `listCatalog`                  | Reads native `openai-curated-remote` entries when the optional catalog reader is configured; saved selections remain on Agent reads. No HTTP inventory endpoint exists. |
 | Codex selected-app `auto`                     | Render native Codex apps/plugins enablement with the selected app `enabled:true`, plus a selected-only OpenClaw Codex bridge entry.                                     |
 | Codex selected-app `never` or `enabled:false` | Render the resolved install identity while omitting the native app entry and disabling the selected bridge entry so execution remains blocked.                          |
@@ -95,6 +99,16 @@ Agent thread retains it.
 | Codex `always`                                | Set per-plugin `allow_destructive_actions:true`; the bridge accepts supported approvals without prompting. Explicit `auto_review` is unsupported for this mode.         |
 | Codex `prompt`, category/tool modes           | Startup failure when every-call prompting or reliable tool metadata is unavailable.                                                                                     |
 | Codex empty desired set                       | Apply a plugin-free native configuration; no remote install RPC runs.                                                                                                   |
+
+Tool overrides must name a tool declared by the selected catalog entry.
+Translation rejects a deny name when native matching would also block an enabled
+sibling, such as a tool sharing a multi-tool plugin's ID. The pinned Diffs package
+declares only `diffs` in `contracts.tools`, so that name also matching its plugin ID
+is unambiguous. Verified names do not supply the public catalog's required action
+classifications: it still returns `tools:null` and does not infer categories.
+Tool enablement cannot override a disabled plugin, plugin `never`, an installation
+failure, or an operator's native tool deny. Redeployment with the tool enabled
+removes only the deny generated from the prior Agent selection.
 
 The Codex boundary is separate from approval-mode translation. Marketplace
 visibility does not prove Agent support. The inspected `rust-v0.149.0` native
@@ -158,8 +172,9 @@ settings. It refreshes the native registry, reapplies the requested policy to it
 private writable configuration, and checks plugin ID, package name,
 runtime/install version, recorded integrity, and that the runtime source resolves
 within the resolved install path. This requires an OpenClaw runtime that supports
-`--no-enable`; the currently pinned `2026.9.1` image must be updated before this
-preparation path can ship. There is no fallback to installation that changes policy.
+`--no-enable`. The [runtime image](../../../deploy/runtime/Dockerfile) builds a
+pinned OpenClaw source revision; verify this path in the selected packaged image
+before deployment qualification. There is no fallback to installation that changes policy.
 Identity, integrity, or effective-policy verification failure prevents the
 replacement gateway from starting. A confirmed installation rejection can instead
 disable that optional selection and produce a warning. The previous revision

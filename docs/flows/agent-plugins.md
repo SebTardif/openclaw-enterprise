@@ -1,7 +1,7 @@
 ---
 created: 2026-09-08
-updated: 2026-09-21
-last_updated_session: codex/01a0b632-4907-7362-9c51-28129db5a3b9
+updated: 2026-09-24
+last_updated_session: public-pr-312-refresh
 ---
 
 # Agent Plugin Deployment Flow
@@ -110,13 +110,26 @@ before installation. It merges generated tool grants into an existing nonempty
 The resulting configuration is private to the revision. Installation uses
 `--pin --force --no-enable` so native installation cannot change enablement or
 plugin allow/deny lists; preparation then refreshes the registry and verifies the
-admitted configuration. The runtime image must first gain the required native
-flag; the pinned release does not support it.
+admitted configuration. The runtime image builds a pinned OpenClaw source
+revision; the selected packaged image still requires real deployment verification.
 Native inspection verifies plugin ID, package name, runtime/install version,
 recorded integrity, and the runtime source's containment in the install path.
 Verification failure stops startup before the replacement gateway becomes ready.
 A confirmed install rejection instead disables that optional selection and
 removes its managed tool allowance before the gateway starts.
+
+`apps/controller/src/drivers/plugin/runtime-translator.ts:openClawRuntimeArtifact`
+resolves selections against the trusted pinned native catalog and checks tool
+overrides against each entry's complete declared tool names. Diffs is currently
+the only admitted entry; the algorithm applies the same policy logic to every
+catalog entry. Unknown tools and ambiguous native deny names fail translation.
+For an enabled plugin, `tools.<toolId>.enabled:false` adds the
+tool to native `tools.deny`; the entrypoint unions that list with the operator's
+existing denies. An enabled tool adds no deny and cannot re-enable a disabled or
+failed plugin. Each revision rebuilds this overlay from its requested selection, so
+re-enabling the tool on redeployment removes its generated deny while retaining
+operator restrictions. Tool approval modes and category policies still fail
+translation; see the [native mappings](../reference/drivers/plugin-bundled.md#native-mappings-and-limits).
 
 Dedicated Codex uses one of two fixed bootstrap configurations in its isolated
 `CODEX_HOME`: empty selections disable the apps/plugins/remote-plugin features;
@@ -223,6 +236,9 @@ completed deployment attempt rather than ongoing runtime health.
 - Prove behavior with a model-chosen plugin call during a normal Agent turn,
   then disable/remove on a later deployment and verify another Agent is unchanged.
   Source or fixture tests alone do not establish native runtime compatibility.
+- For Diffs, also disable and re-enable its tool on later deployments. Check
+  normal turns, that the plugin remains enabled while the tool deny changes,
+  and that operator denies remain.
 - Use the opt-in real-runtime lane in [Agent plugin testing](../testing/plugins.md)
   for Kubernetes, database, credential, native-runtime, and historical proof
   details. A skipped native lane is not proof.
@@ -241,6 +257,12 @@ completed deployment attempt rather than ongoing runtime health.
 [keep this for the user to add notes. do not change between edits]
 
 ## Changelog
+
+- 2026-09-24 08:52: Reconciled runtime packaging prerequisites and retained pending native deployment qualification (public-pr-312-refresh - 5ebd7305)
+
+- 2026-09-23 04:24: Documented generic native tool enablement from trusted pinned catalog metadata, with Diffs still the only admitted entry and native proof pending (public-pr-312 - d200dc9b)
+
+- 2026-09-23 04:10: Documented the pending Diffs tool enablement change and native deny composition; compatible runtime and Kubernetes proof remain required (public-pr-312 - cbf18513)
 
 - 2026-09-21 21:23: Reconciled policy composition and installation without enablement changes with optional-plugin warnings and the bundled Driver reference; runtime release and Kubernetes proof remain pending (codex/01a0b17c-68b6-7e11-bedc-f74de7d606ed - 9405e20)
 

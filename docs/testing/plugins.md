@@ -11,7 +11,7 @@ behavior; this page owns contributor setup, fixture inputs, and proof notes.
 | ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Contract and API behavior      | `pnpm test:conformance` and `node --test tests/integration/occ-api.test.mjs`                                                                                                             | Plugin map schemas, exact-Agent authorization, omission/replacement/clear semantics, audit, deployment-status polling, and immutable requested-state snapshots. |
 | Driver translation and startup | `node --test tests/conformance/plugin-driver.test.mjs tests/integration/plugin-driver-startup.test.mjs`                                                                                  | Curated catalog projection, selected-only Codex defaults, unsupported-policy startup failure, and native configuration rendering.                               |
-| Compute boundaries             | `node --test tests/conformance/plugin-compute.test.mjs tests/conformance/ssh-compute.test.mjs`                                                                                           | Native install classification, verified failed-plugin exclusion, current startup status, and SSH rejection before host effects.                                 |
+| Compute boundaries             | `node --test tests/conformance/plugin-compute.test.mjs tests/conformance/plugin-runtime-policy.test.mjs tests/conformance/ssh-compute.test.mjs`                                          | Native install classification, failed-plugin exclusion, native tool deny composition, startup status, and SSH rejection before host effects.                    |
 | PostgreSQL persistence         | `node --test --test-concurrency=1 tests/integration/postgres-restart-recovery.test.mjs tests/integration/postgres-worker-agent-revision.test.mjs` with [PostgreSQL setup](postgresql.md) | Successful deployment warnings, exact status authorization, claim fencing, and recovery.                                                                        |
 | Controlled status boundary     | `node --test tests/integration/kubernetes-plugin-status-real.test.mjs`                                                                                                                   | Real Kubernetes Compute status transport, workload identity, safe readiness and runtime restart behavior with controlled producers.                             |
 | Native runtime proof           | `node --test tests/integration/plugin-driver-real.test.mjs`                                                                                                                              | Opt-in Kubernetes proof against real OpenClaw or Codex, including continued operation after a selected Codex install/auth failure.                              |
@@ -20,6 +20,11 @@ Skipped infrastructure or native-runtime cases are not evidence. Record the exac
 commit, selected suite, nonsecret image references, native runtime versions,
 model, pass/fail/skip counts, and relevant sanitized log path for every claimed
 proof.
+
+Native tool enablement uses the trusted pinned catalog's declared tool names.
+Check ownership and ambiguous native deny handling in translator/startup tests.
+Diffs remains the only admitted native entry and the real-runtime test case;
+synthetic catalog fixtures do not establish support for additional packages.
 
 Plugin warning proof has three layers. Conformance verifies native operation
 classification and effective disabled configuration. PostgreSQL worker tests
@@ -75,11 +80,14 @@ All native scenarios use Kubernetes. Provide
 `OCC_TEST_PLUGIN_DRIVER_CODEX_CALENDAR_DATABASE_URL`. The Codex failure scenario
 requires its own distinct `OCC_TEST_PLUGIN_DRIVER_CODEX_FAILURE_DATABASE_URL`.
 The OpenClaw scenario also requires `OPENAI_API_KEY` in the process environment
-and a runtime image with `plugins install --no-enable` support. The repository
-still pins OpenClaw `2026.9.1`, which lacks that flag; update the pin after the
-prerequisite release. The extended scenario checks explicit tool allowlist
-composition, preserved plugin deny policy on a disabled deployment, and rejection
-of a later conflicting enabled selection before the replacement becomes ready.
+and a runtime image with `plugins install --no-enable` support. The
+[runtime image](../../deploy/runtime/Dockerfile) now builds a pinned OpenClaw
+source revision; verify the flag in the selected packaged image. The extended
+scenario checks explicit tool allowlist
+composition and disables then re-enables the Diffs tool through Agent updates
+and redeployment, checking ordinary turns and preservation of operator tool
+denies. It also checks preserved plugin deny policy on a disabled deployment and
+rejection of a later conflicting enabled selection before the replacement becomes ready.
 
 Codex scenarios additionally need a Codex runtime image via
 `OCC_TEST_KUBERNETES_AGENT_IMAGE` or `OCC_TEST_KUBERNETES_CODEX_IMAGE`, an
@@ -123,10 +131,12 @@ identifiers.
 
 ## Current proof notes
 
-The policy-composition and installation changes have not been verified in a real
-Kubernetes Agent deployment. The extended scenario requires the prerequisite
-OpenClaw release plus the cluster, database, image, and credentials above. The
-proofs below predate these changes and do not cover them.
+Policy composition, installation without enablement changes, and native per-tool
+enablement have not been verified in a real Kubernetes Agent deployment. The
+extended scenario requires a compatible packaged runtime plus the cluster,
+database, image, and credentials above. The tool-enablement scenario was not run
+on 2026-09-23 because no cluster or image was configured. The proofs below predate
+these changes and do not cover them.
 
 Best-effort installation verification for
 [PR #228](https://github.com/openclaw/openclaw-enterprise/pull/228) uses an isolated

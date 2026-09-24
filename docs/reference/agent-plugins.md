@@ -14,10 +14,13 @@ approval policy.
 
 ## Current support
 
-Embedded OpenClaw supports the bundled Diffs plugin, enabling or disabling it,
-and the `always` and `never` approval policies. Its curated entries currently
-return `tools: null`. A saved tool or category policy therefore prevents the
-new deployment from becoming ready.
+For embedded OpenClaw, the Driver translates plugin enablement, `always` and
+`never` plugin policies, and per-tool enablement using its trusted pinned
+catalog's declared tool names. Diffs is the only admitted native plugin; its
+tool is `diffs`. Tool approval modes, category overrides, and reviewer selection
+still prevent startup, as do unknown tools or ambiguous native deny names.
+Deployment requires a compatible runtime image; see the
+[native mappings and prerequisites](drivers/plugin-bundled.md#native-mappings-and-limits).
 
 Dedicated Codex Agents can enable selected apps from the
 `openai-curated-remote` catalog when the Codex runtime can apply the requested
@@ -166,9 +169,7 @@ A later Agent update can disable that selection without deleting it:
 }
 ```
 
-The following illustrates the nested request shape only. The current Diffs
-catalog lacks tool metadata, so the API can save this request, but the
-deployment will not become ready:
+To keep the Diffs plugin enabled while blocking its tool on the next deployment:
 
 ```json
 {
@@ -177,15 +178,18 @@ deployment will not become ready:
     "occ-plugin:diffs": {
       "enabled": true,
       "approvalMode": "always",
-      "destructiveActions": "never",
-      "writes": "prompt",
       "tools": {
-        "example_tool": { "enabled": true, "approvalMode": "always" }
+        "diffs": { "enabled": false }
       }
     }
   }
 }
 ```
+
+Set the tool's `enabled` value to `true` in a later update and redeploy to remove
+that restriction. Other plugin and native tool restrictions still apply. This
+mapping requires the [runtime prerequisites](drivers/plugin-bundled.md#preparation-and-security);
+its real deployment proof is [pending](../testing/plugins.md#current-proof-notes).
 
 ### Response fields
 
@@ -260,9 +264,10 @@ missing destructive metadata is conservative. Writes means native
 
 The API saves structurally valid policy without proving that the selected
 Driver can represent it exactly. Startup performs that validation. See
-[native mappings and current limits](drivers/plugin.md#native-mappings-and-limits).
-Unknown tool metadata produces `tools:null`; tool/category selections then fail
-the deployment/startup candidate when the selected Driver cannot represent them.
+[native mappings and current limits](drivers/plugin-bundled.md#native-mappings-and-limits).
+Incomplete tool classifications produce `tools:null`. Verified tool identities
+in the trusted native catalog permit enablement translation without those
+classifications; unsupported tool and category policies still fail startup.
 
 ## Failures and boundaries
 
