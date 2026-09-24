@@ -52,19 +52,21 @@ graph TD
 
 ## Execution Trace
 
-### Credential-scoped discovery
+### Pre-Agent discovery
 
-Create Agent posts entered PATs to `POST /namespaces/:namespaceId/agents/plugins`
-and remote IDs to `/agents/plugins/details`. OCC authorizes Namespace Agent creation,
-then calls the selected Driver without creating resources.
+`OpenClawController.getInstallation` advertises authentication/search requirements.
+OCC authorizes Namespace Agent creation before `/agents/plugins` list/query or
+`/details` reads.
 
-`drivers/plugin/hosted-catalog.ts` resolves account identity through the PAT issuer
-and requests 20 GLOBAL entries. The modal forwards cursors, filters each
-page locally (upstream search rejects PATs), and loads details. Unknown tools stay `tools:null`.
+`drivers/plugin/hosted-catalog.ts` pages 20 GLOBAL entries using PAT identity.
+Upstream rejects PAT search; unknown tools stay `tools:null`.
 
-Bounded, redirect-free requests return `no-store` metadata excluding credentials,
-artifact URLs, and upstream errors. Discovery proves no execution or enforcement; see [Console discovery](../reference/console/create-and-deploy.md)
-and the [Driver contract](../reference/drivers/plugin.md).
+`drivers/plugin/clawhub-catalog.ts` anonymously pages public plugins and forwards
+unpaginated searches. Published `metadata.declaredTools` grants no policies;
+ClawHub entries cannot be selected. Runtime admission is unchanged.
+
+Both readers bound responses, reject redirects, and persist nothing;
+see the [Driver contract](../reference/drivers/plugin.md).
 
 ### 1. Validate desired state under exact-Agent authority
 
@@ -291,6 +293,8 @@ completed deployment attempt rather than ongoing runtime health.
 [keep this for the user to add notes. do not change between edits]
 
 ## Changelog
+
+- 2026-09-24 09:03: Added public ClawHub browse/search metadata without runtime admission. (01a0d1dd-aa36-7622-9f43-8376f6ff935e - aa24be00)
 
 - 2026-09-24 08:00: Added transient PAT discovery through the selected PluginDriver before Agent creation. (01a0d1dd-aa36-7622-9f43-8376f6ff935e - f62e17c)
 - 2026-09-24 07:50: Verify nested tool and account/link policy before readiness; retain session and live-enforcement gates (codex/01a0b17c-68b6-7e11-bedc-f74de7d606ed - 073bb5c1)

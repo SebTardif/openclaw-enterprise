@@ -911,6 +911,7 @@ export class OpenClawController {
       ...this.installation,
       capabilities: {
         ...this.installation.capabilities,
+        ...(driver.discoveryCapabilities ? { pluginDiscovery: driver.discoveryCapabilities } : {}),
         pluginPolicies: {
           driver: { id: driver.id, implementation: driver.implementation },
           ...driver.policyCapabilities,
@@ -2698,7 +2699,7 @@ export class OpenClawController {
   async discoverAgentPlugins(
     principalId: string,
     namespaceId: string,
-    input: { readonly accessToken: string; readonly cursor?: string },
+    input: { readonly accessToken?: string; readonly cursor?: string; readonly query?: string },
     signal?: AbortSignal,
   ): Promise<PluginCatalogPage> {
     await this.authorize(principalId, "create", { kind: "agent", id: namespaceId, namespaceId });
@@ -2720,7 +2721,7 @@ export class OpenClawController {
   async discoverAgentPluginDetails(
     principalId: string,
     namespaceId: string,
-    input: { readonly accessToken: string; readonly pluginId: string },
+    input: { readonly accessToken?: string; readonly pluginId: string },
     signal?: AbortSignal,
   ): Promise<PluginCatalogEntry> {
     await this.authorize(principalId, "create", { kind: "agent", id: namespaceId, namespaceId });

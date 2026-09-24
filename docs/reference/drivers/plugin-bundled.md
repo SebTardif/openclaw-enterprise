@@ -46,6 +46,15 @@ request has a 15-second deadline and a 4 MiB response limit. It does not read th
 operator's Codex home, install plugins, or return download URLs. Discovery supports
 entered PATs; saved Secret and managed ServiceAccount references are not accepted.
 
+The OpenClaw Driver also browses public ClawHub plugins without credentials.
+Browse requests forward the registry cursor with a 20-item limit; search forwards
+`query` to the plugin-only search endpoint, which does not paginate. Details show
+published package, version, publisher, and declared tools. Skills are excluded.
+These bounded, redirect-free reads use the same 15-second/4 MiB limits. ClawHub
+entries remain unavailable for selection: their registry IDs and tool declarations
+are not admitted runtime identities. Browse does not install packages or change
+the pinned OpenClaw runtime catalog. Private ClawHub credentials are unsupported.
+
 Agent startup uses its own projected credentials to resolve selections independently of this
 reader. Unknown options, arbitrary package selectors, and external PluginDriver
 packages are rejected. Existing required Driver selections remain necessary.

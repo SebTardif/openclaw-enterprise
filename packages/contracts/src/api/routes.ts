@@ -701,7 +701,7 @@ export const occApiRoutes = [
     iamAction: "create",
     resourceKind: "agent",
     authorizationTarget: "namespace_collection",
-    summary: "List available plugins for Agent creation without storing the supplied credential",
+    summary: "Browse or search the selected Driver plugin catalog for Agent creation",
     tags: ["Agents"],
     schema: {
       querystring: EmptyQuery,
@@ -723,7 +723,7 @@ export const occApiRoutes = [
     iamAction: "create",
     resourceKind: "agent",
     authorizationTarget: "namespace_collection",
-    summary: "Read available plugin tools without storing the supplied credential",
+    summary: "Read plugin details and published metadata through the selected Driver",
     tags: ["Agents"],
     schema: {
       querystring: EmptyQuery,
