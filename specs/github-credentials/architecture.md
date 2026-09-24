@@ -2,6 +2,8 @@
 
 [Overview](../github-credentials.md) · [Contract](contract.md)
 
+**Historical scope:** This page records the September 22 design and delivery contract. Read the [September 24 amendment](../github-credentials.md#current-source-amendment--24-september-2026) and its living references for later supported behavior.
+
 This design gives an ordinary Agent temporary repository access while a separate credential process owns GitHub credentials. The [delivery record](../github-credentials.md#objective) distinguishes merged implementation from runtime qualification.
 
 ## Vocabulary

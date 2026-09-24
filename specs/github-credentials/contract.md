@@ -2,6 +2,8 @@
 
 [Overview](../github-credentials.md) · [Architecture](architecture.md). This contract binds admission, worker, Compute and credential-service implementations. The overview's delivery record distinguishes merged source from runtime qualification.
 
+**Historical scope:** This page records the September 22 design and delivery contract. Read the [September 24 amendment](../github-credentials.md#current-source-amendment--24-september-2026) and its living references for later supported behavior.
+
 ## Admission and authority
 
 An Agent requests `repositoryRef` and optional `profile`. Resolution returns the profile, configured `providerId` and grant `{providerInstanceId, repositoryId, grantId}`, identifying upstream instance, repository and authority independently. Opaque identities are nonempty, at most 512 UTF-8 bytes, without ASCII controls.
