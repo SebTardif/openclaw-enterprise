@@ -2438,6 +2438,9 @@ test("Agent creation reports unavailable Secret storage before creating Configur
 test("Agent creation reuses its saved Secret and Configuration after an Agent creation conflict", async (t) => {
   const fixture = await createConsoleAppFixture(t);
   await fixture.bootstrap();
+  const pluginDriver = new CodexPluginDriver();
+  fixture.controller.registerDriver(pluginDriver);
+  fixture.controller.selectDriver("plugin", pluginDriver.id);
   const namespace = await fixture.createNamespace("Partial save retry", { ready: true });
   await fixture.createAgent(namespace.id, "Retry Agent");
   const values = nativeValues("partial-save", { harnessId: "codex", providerModel: "gpt-5.1" });
@@ -2549,7 +2552,10 @@ test("Agent creation reuses its saved Secret and Configuration after an Agent cr
   await page.locator("summary").filter({ hasText: "Plugin selections JSON" }).click();
   await page.getByLabel("Plugin selections JSON").fill(
     JSON.stringify({
-      "occ-plugin:diffs": { enabled: true, approvalMode: "always" },
+      "codex-plugin:linear@openai-curated-remote": {
+        enabled: true,
+        toolDefaults: { approval: "approve" },
+      },
     }),
   );
   await page.getByLabel("Agent name").fill("Retry Agent Corrected");
@@ -2580,7 +2586,10 @@ test("Agent creation reuses its saved Secret and Configuration after an Agent cr
   assert.equal(attempts[0].body.initialWorkspaceFiles["SOUL.md"], "# Keep this draft\n");
   assert.equal(attempts[1].body.initialWorkspaceFiles["SOUL.md"], "# Corrected draft\n");
   assert.deepEqual(retried.data.plugins, {
-    "occ-plugin:diffs": { enabled: true, approvalMode: "always" },
+    "codex-plugin:linear@openai-curated-remote": {
+      enabled: true,
+      toolDefaults: { approval: "approve" },
+    },
   });
   for (const request of attempts) {
     assert.equal(request.body.workspaceDefaultsId, WORKSPACE_DEFAULTS_ID);
@@ -4639,13 +4648,15 @@ test("Create Agent discovers hosted plugins with a transient PAT through the sel
   const namespace = await fixture.createNamespace("Hosted plugin discovery", { ready: true });
   const { page } = await newPage(t, fixture);
   const originalFetch = globalThis.fetch;
-  let failTools = false;
+  let failTools = true;
   let releaseList;
   let listStarted;
   let holdList = false;
   const listPending = new Promise((resolve) => {
     listStarted = resolve;
   });
+  const detailStarted = Promise.withResolvers();
+  const detailRelease = Promise.withResolvers();
   const hosted = (name, overrides = {}) => ({
     id: `remote-${name}`,
     name,
@@ -4681,20 +4692,34 @@ test("Create Agent discovers hosted plugins with a transient PAT through the sel
     assert.equal(options.headers["OAI-Product-Sku"], "codex");
     if (url.pathname.endsWith("/plugins/list")) {
       assert.equal(url.searchParams.get("scope"), "GLOBAL");
-      if (holdList) {
+      if (holdList && options.headers.Authorization === "Bearer at-browser-plugin-one") {
         listStarted();
         await new Promise((resolve) => {
           releaseList = resolve;
         });
       }
+      if (options.headers.Authorization === "Bearer at-browser-plugin-two") {
+        return Response.json({
+          plugins: [hosted("New-account-plugin")],
+          pagination: { next_page_token: null },
+        });
+      }
       return Response.json({
         plugins: url.searchParams.has("pageToken")
           ? [hosted("Documents")]
-          : [hosted("Admin-disabled", { status: "DISABLED_BY_ADMIN" }), hosted("calendar")],
+          : [
+              hosted("Admin-disabled", { status: "DISABLED_BY_ADMIN" }),
+              hosted("calendar"),
+              ...Array.from({ length: 18 }, (_, index) => hosted(`plugin-${index}`)),
+            ],
         pagination: { next_page_token: url.searchParams.has("pageToken") ? null : "page-two" },
       });
     }
     if (url.pathname.endsWith("/plugins/remote-calendar")) {
+      if (failTools) {
+        detailStarted.resolve();
+        await detailRelease.promise;
+      }
       return Response.json(hosted("calendar"));
     }
     assert.equal(url.pathname, "/backend-api/ps/apps/batch");
@@ -4724,63 +4749,94 @@ test("Create Agent discovers hosted plugins with a transient PAT through the sel
     });
   });
   t.after(() => releaseList?.());
+  t.after(() => detailRelease.resolve());
   const requests = apiRequests(page, fixture.origin);
   await login(page, fixture, `/console/agents/new?namespace=${namespace.id}`);
   await page.getByRole("button", { name: "Start without Preset" }).click();
   await page.getByLabel("Authentication method", { exact: true }).selectOption("codex_pat");
   const token = page.getByLabel("Service account token", { exact: true });
   await token.fill("at-browser-plugin-one");
-  await page.getByRole("button", { name: "Load plugins", exact: true }).click();
-  await page
-    .locator(".plugin-card summary strong")
-    .filter({ hasText: /^Calendar$/ })
-    .waitFor();
-  assert.equal(await page.locator(".plugin-card summary strong").first().textContent(), "Calendar");
-  await page.getByRole("button", { name: "Load more plugins", exact: true }).click();
-  await page
-    .locator(".plugin-card summary strong")
-    .filter({ hasText: /^Documents$/ })
-    .waitFor();
-  await page.locator(".plugin-card summary").filter({ hasText: "Calendar" }).click();
-  await page.getByRole("button", { name: "Load tools for Calendar", exact: true }).click();
-  await page.locator('[data-tool="app_calendar/events%2Flist"]').waitFor();
-  assert.equal(await page.locator('[data-tool="app_shared/events%2Flist"]').count(), 1);
+  await page.getByRole("button", { name: "Configure plugins", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "Configure plugins", exact: true });
+  const calendar = dialog.getByRole("button", { name: "Calendar", exact: true });
+  await calendar.waitFor();
   assert.equal(
-    await page.getByRole("button", { name: "Add Calendar", exact: true }).isDisabled(),
+    await calendar.evaluate(
+      (node, unavailable) =>
+        Boolean(
+          node.compareDocumentPosition(unavailable) &
+          node.ownerDocument.defaultView.Node.DOCUMENT_POSITION_FOLLOWING,
+        ),
+      await dialog.getByRole("button", { name: "Admin-disabled", exact: true }).elementHandle(),
+    ),
     true,
   );
-  assert.deepEqual(JSON.parse(await page.locator("#agent-plugins").inputValue()), {});
 
-  // Refresh revalidates tool availability and a denied upstream body stays private.
-  failTools = true;
-  await page.getByRole("button", { name: "Load plugins", exact: true }).click();
-  await page.getByRole("button", { name: "Load tools for Calendar", exact: true }).click();
-  await page.getByText(/token was rejected or cannot access plugins/).waitFor();
+  // Each navigation fetches a server page and replaces the available list.
+  await dialog.getByRole("button", { name: "Next page", exact: true }).click();
+  await dialog.getByRole("button", { name: "Documents", exact: true }).waitFor();
+  assert.equal(await calendar.count(), 0);
+  await dialog.getByRole("button", { name: "Previous page", exact: true }).click();
+  await calendar.waitFor();
+  assert.equal(await dialog.getByRole("button", { name: "Documents", exact: true }).count(), 0);
+  const filter = dialog.getByLabel("Filter this page", { exact: true });
+  await filter.fill("Calendar");
   assert.equal(
-    (await page.locator("body").textContent()).includes("private upstream response"),
-    false,
+    await dialog.getByRole("button", { name: "Admin-disabled", exact: true }).count(),
+    0,
   );
-  failTools = false;
-  await page.getByRole("button", { name: "Load tools for Calendar", exact: true }).click();
-  await page.locator('[data-tool="app_calendar/events%2Flist"]').waitFor();
-  assert.equal(await page.getByText(/token was rejected or cannot access plugins/).count(), 0);
+  await filter.fill("");
 
-  // Editing the credential fences an in-flight response and clears its catalog.
+  // Selecting a plugin loads its tools; a rejected upstream body stays private and is retryable.
+  await calendar.click();
+  await detailStarted.promise;
+  const heading = dialog.getByRole("heading", { name: "Calendar", exact: true });
+  // Loading and completion replace the detail pane without losing the keyboard entry point.
+  try {
+    assert.equal(await heading.evaluate((node) => node === document.activeElement), true);
+  } finally {
+    detailRelease.resolve();
+  }
+  await dialog.getByText(/token was rejected or cannot access plugins/).waitFor();
+  assert.equal(await heading.evaluate((node) => node === document.activeElement), true);
+  assert.equal((await dialog.textContent()).includes("private upstream response"), false);
+  failTools = false;
+  await dialog.getByRole("button", { name: "Retry tools for Calendar", exact: true }).click();
+  await dialog.locator('details.plugin-tool-row[data-tool="app_calendar/events%2Flist"]').waitFor();
+  assert.equal(
+    await dialog.locator('details.plugin-tool-row[data-tool="app_shared/events%2Flist"]').count(),
+    1,
+  );
+  assert.equal(await dialog.getByText(/token was rejected or cannot access plugins/).count(), 0);
+  await dialog.getByRole("button", { name: "Add Calendar", exact: true }).click();
+  const selected = { "codex-plugin:calendar@openai-curated-remote": { enabled: true } };
+  assert.deepEqual(JSON.parse(await page.locator("#agent-plugins").inputValue()), selected);
+  await dialog.getByRole("button", { name: "Configured plugins", exact: true }).click();
+  await dialog.getByRole("button", { name: "Calendar", exact: true }).waitFor();
+  await dialog.getByRole("button", { name: "Available plugins", exact: true }).click();
+
+  // A credential change fences an older page response while preserving explicit selections.
   holdList = true;
-  await page.getByRole("button", { name: "Load more plugins", exact: true }).click();
+  await dialog.getByRole("button", { name: "Next page", exact: true }).click();
   await listPending;
+  await dialog.getByRole("button", { name: "Done", exact: true }).click();
   await token.fill("at-browser-plugin-two");
-  const staleResponse = page.waitForResponse((response) =>
-    response.url().endsWith("/agents/plugins"),
+  await page.getByRole("button", { name: "Configure plugins", exact: true }).click();
+  await dialog.getByRole("button", { name: "New-account-plugin", exact: true }).waitFor();
+  const staleResponse = page.waitForResponse(
+    (response) =>
+      response.url().endsWith("/agents/plugins") &&
+      response.request().postDataJSON().cursor === "page-two",
   );
   releaseList();
   await staleResponse;
-  await page
-    .getByText("Load plugins available to this service account token.", { exact: false })
-    .waitFor();
-  assert.equal(await page.locator(".plugin-card").count(), 0);
+  await dialog.getByRole("button", { name: "New-account-plugin", exact: true }).waitFor();
+  assert.equal(await dialog.getByRole("button", { name: "Documents", exact: true }).count(), 0);
+  assert.deepEqual(JSON.parse(await page.locator("#agent-plugins").inputValue()), selected);
+  await dialog.getByRole("button", { name: "Done", exact: true }).click();
+  assert.equal(await dialog.isVisible(), false);
   assert.equal(
-    upstreamCalls.every((call) => call.token === "Bearer at-browser-plugin-one"),
+    upstreamCalls.some((call) => call.token === "Bearer at-browser-plugin-two"),
     true,
   );
   assert.equal(
@@ -4796,6 +4852,151 @@ test("Create Agent discovers hosted plugins with a transient PAT through the sel
     ),
     false,
   );
+});
+
+test("Agent creation edits Preset plugin policies through the modal and persists inherited fields independently", async (t) => {
+  const fixture = await createConsoleAppFixture(t);
+  await fixture.bootstrap();
+  const pluginDriver = new CodexPluginDriver();
+  fixture.controller.registerDriver(pluginDriver);
+  fixture.controller.selectDriver("plugin", pluginDriver.id);
+  const root = await mkdtemp(join(tmpdir(), "occ-plugin-policy-preset-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const configurationDriver = new FilesystemConfigurationDriver(root);
+  fixture.controller.registerDriver(configurationDriver);
+  fixture.controller.selectDriver("configuration", configurationDriver.id);
+  const namespace = await fixture.createNamespace("Plugin policy authoring", { ready: true });
+  const secret = await fixture.createSecret(namespace.id, "Model key", "preset-plugin-model-key");
+  const pluginId = "codex-plugin:knowledge@openai-curated-remote";
+  const removedPluginId = "codex-plugin:diffs@openai-curated-remote";
+  const plugins = {
+    [pluginId]: {
+      enabled: false,
+      toolDefaults: { enabled: true, approval: "native", reviewer: "human" },
+      tools: {
+        "app_knowledge/search": { enabled: false, approval: "native" },
+        "app_knowledge/summarize": { enabled: true, approval: "approve" },
+        "app_knowledge/unknown-tool": { approval: "native" },
+      },
+    },
+    [removedPluginId]: { enabled: true },
+  };
+  const preset = await fixture.request("POST", `/namespaces/${namespace.id}/presets`, {
+    body: {
+      name: "Plugin policies",
+      template: {
+        agent: {
+          name: "Plugin policy Agent",
+          executionMode: "dedicated",
+          harnessAuth: { method: "api_key", source: secret.ref },
+          plugins,
+        },
+        configuration: { values: nativeValues("plugin-policies", { harnessId: "codex" }) },
+      },
+    },
+  });
+  assert.equal(preset.status, 201, JSON.stringify(preset.body));
+  const { page } = await newPage(t, fixture);
+  const requests = apiRequests(page, fixture.origin);
+  await login(page, fixture, `/console/agents/new?namespace=${namespace.id}`);
+  await page.getByLabel("Preset template").selectOption(preset.data.id);
+  await page.getByRole("button", { name: "Use Preset" }).click();
+  await page.locator("summary").filter({ hasText: "Plugin selections JSON" }).click();
+  const json = page.getByLabel("Plugin selections JSON", { exact: true });
+  assert.deepEqual(JSON.parse(await json.inputValue()), plugins);
+
+  // Invalid manual input remains recoverable and cannot submit a different policy.
+  requests.length = 0;
+  await json.fill("{");
+  await page.getByRole("button", { name: "Create Agent", exact: true }).click();
+  assert.equal(await json.inputValue(), "{");
+  assert.notEqual(await json.evaluate((node) => node.validationMessage), "");
+  assert.deepEqual(nonAuthWriteRequests(requests), []);
+  await json.fill(JSON.stringify(plugins));
+  await page.getByRole("button", { name: "Configure plugins", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "Configure plugins", exact: true });
+  await dialog.getByRole("button", { name: "Configured plugins", exact: true }).click();
+  await dialog.getByRole("button", { name: pluginId, exact: true }).click();
+  const searchTool = dialog.locator('details.plugin-tool-row[data-tool="app_knowledge/search"]');
+  await searchTool.locator("summary").click();
+  const pluginEnabled = dialog.getByLabel(`Enable ${pluginId}`, { exact: true });
+  const toolEnabled = dialog.getByLabel("Enable app_knowledge/search", { exact: true });
+  const toolApproval = dialog.getByLabel("app_knowledge/search approval", { exact: true });
+  assert.equal(await toolEnabled.isDisabled(), true);
+  assert.equal(await toolApproval.isDisabled(), true);
+  await pluginEnabled.check();
+  await dialog.getByLabel(`${pluginId} tools enabled by default`, { exact: true }).selectOption("");
+  assert.deepEqual(JSON.parse(await json.inputValue())[pluginId].toolDefaults, {
+    approval: "native",
+    reviewer: "human",
+  });
+  const reviewer = dialog.getByLabel(`${pluginId} default reviewer`, { exact: true });
+  assert.deepEqual(
+    (await optionValues(reviewer)).map(({ value }) => value),
+    ["", "human", "auto"],
+  );
+  await reviewer.selectOption("");
+  assert.deepEqual(JSON.parse(await json.inputValue())[pluginId].toolDefaults, {
+    approval: "native",
+  });
+  await reviewer.selectOption("auto");
+  await dialog.getByLabel(`${pluginId} default approval`, { exact: true }).selectOption("prompt");
+
+  // Codex advertises default reviewers only; tool approval still inherits independently.
+  const toolReviewer = dialog.getByLabel("app_knowledge/search reviewer", { exact: true });
+  assert.equal(await toolReviewer.isDisabled(), true);
+  assert.deepEqual(
+    (await optionValues(toolReviewer)).map(({ value }) => value),
+    [""],
+  );
+  await toolApproval.selectOption("approve");
+  await toolEnabled.selectOption("");
+  assert.deepEqual(JSON.parse(await json.inputValue())[pluginId].tools["app_knowledge/search"], {
+    approval: "approve",
+  });
+  await toolEnabled.selectOption("true");
+  await toolApproval.selectOption("");
+  await dialog
+    .locator('details.plugin-tool-row[data-tool="app_knowledge/summarize"] > summary')
+    .click();
+  await dialog.getByLabel("Enable app_knowledge/summarize", { exact: true }).selectOption("");
+  await dialog.getByLabel("app_knowledge/summarize approval", { exact: true }).selectOption("");
+  const expected = {
+    [pluginId]: {
+      enabled: true,
+      toolDefaults: { approval: "prompt", reviewer: "auto" },
+      tools: {
+        "app_knowledge/search": { enabled: true },
+        "app_knowledge/unknown-tool": { approval: "native" },
+      },
+    },
+  };
+  await pluginEnabled.uncheck();
+  assert.equal(await toolEnabled.isDisabled(), true);
+  assert.equal(await toolApproval.isDisabled(), true);
+  assert.deepEqual(JSON.parse(await json.inputValue())[pluginId], {
+    ...expected[pluginId],
+    enabled: false,
+  });
+  await pluginEnabled.check();
+  await dialog.getByRole("button", { name: removedPluginId, exact: true }).click();
+  await dialog.getByRole("button", { name: `Remove ${removedPluginId}`, exact: true }).click();
+  await dialog.getByRole("button", { name: "Done", exact: true }).click();
+  assert.equal(await dialog.isVisible(), false);
+  assert.deepEqual(JSON.parse(await json.inputValue()), expected);
+
+  const createdResponse = page.waitForResponse(
+    (response) =>
+      response.url() === `${fixture.origin}/namespaces/${namespace.id}/agents` &&
+      response.request().method() === "POST",
+  );
+  await page.getByRole("button", { name: "Create Agent", exact: true }).click();
+  const response = await createdResponse;
+  assert.equal(response.status(), 201);
+  const created = (await response.json()).data;
+  const saved = await fixture.request("GET", `/namespaces/${namespace.id}/agents/${created.id}`);
+  assert.equal(saved.status, 200);
+  assert.deepEqual(saved.data.plugins, expected);
 });
 
 test("API-key Presets keep their credential provider fixed while allowing model and runtime changes", async (t) => {
@@ -4876,6 +5077,9 @@ test("API-key Presets keep their credential provider fixed while allowing model 
 test("Presets render variables into independent Agent drafts and keep partial-save retries fixed", async (t) => {
   const fixture = await createConsoleAppFixture(t);
   await fixture.bootstrap();
+  const pluginDriver = new CodexPluginDriver();
+  fixture.controller.registerDriver(pluginDriver);
+  fixture.controller.selectDriver("plugin", pluginDriver.id);
   const root = await mkdtemp(join(tmpdir(), "occ-preset-browser-"));
   t.after(() => rm(root, { recursive: true, force: true }));
   // Use production Configuration admission, including native credential restrictions.
@@ -4895,7 +5099,12 @@ test("Presets render variables into independent Agent drafts and keep partial-sa
   });
   values.plugins.entries.knowledge.config.enabled = "{{ vars.enabled }}";
   values.plugins.entries.knowledge.config.count = "{{ vars.count }}";
-  const plugins = { "occ-plugin:diffs": { enabled: true, approvalMode: "always" } };
+  const plugins = {
+    "codex-plugin:linear@openai-curated-remote": {
+      enabled: true,
+      toolDefaults: { approval: "approve" },
+    },
+  };
   const secretBindings = { CHANNEL_TOKEN: { source: secret.ref, delivery: { type: "env" } } };
   const preset = await fixture.request("POST", `/namespaces/${namespace.id}/presets`, {
     body: {

@@ -158,22 +158,21 @@ Codex; operator-managed credentials fix OpenClaw. Installation Provider
 discovery is hidden. The [creation reference](../reference/console/create-and-deploy.md)
 owns permissions and recovery.
 
-Native JSON and optional plugins start without a model.
-`agents/plugin-fields.mjs:createPluginFields` edits the Agent-owned `plugins` map
-through `#agent-plugins`, separately from Configuration. It preserves invalid JSON,
-unedited fields, and undiscovered selections; clearing a tool override restores
-inheritance. Submission, uncertain outcomes, or invalid JSON lock structured edits.
-`capabilities.pluginPolicies` gates enablement and independently filters approval
-and reviewer choices at default/tool scope. Omitted defaults inherit the Harness
-reviewer; tools inherit plugin defaults. Unsupported saved reviewers remain visible
-and clearable. Driver policy fields
-use the supplied boolean/string-enum schema. Policy integration remains pending;
-missing capabilities disable controls without changing JSON.
+`agents/plugin-fields.mjs:createPluginFields` edits Agent-owned `plugins` through
+`#agent-plugins`, separately from Configuration. Invalid JSON, unedited fields,
+and undiscovered selections survive; clearing overrides restores inheritance.
+Submission, uncertain outcomes, or invalid JSON lock editing.
+`capabilities.pluginPolicies` gates enablement, approval, and reviewer choices
+independently at default/tool scope. Defaults inherit the Harness reviewer;
+tools inherit plugin defaults. Unsupported saved reviewers remain clearable.
+Driver controls follow the boolean/string-enum schema. Missing capabilities disable
+editing without changing JSON. Ordinary Agent submission saves the modal's draft.
 
 `create.mjs:loadPluginCatalog` and `loadPluginTools` implement
-[transient PAT discovery](agent-plugins.md#credential-scoped-discovery).
+[transient PAT discovery](agent-plugins.md#credential-scoped-discovery): one upstream
+page per navigation, local page filtering, and tools loaded on selection.
 Credential, provider, and Harness changes clear the catalog and invalidate pending
-responses. The Plugin Driver owns upstream access; Storybook uses fixtures.
+responses. The Driver owns upstream access.
 
 `create.mjs:MODEL_CHOICES` supplies static provider lists before credentials,
 without discovery requests or account verification. Manual entry remains available;

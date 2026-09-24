@@ -79,6 +79,48 @@ function useService(t, detail, apps, onAppsRequest = () => {}) {
   return new CodexPluginDriver();
 }
 
+test("hosted plugin discovery requests one upstream page and preserves opaque cursors", async (t) => {
+  const cursor = "opaque/+cursor?offset=20&rank=a b";
+  const requests = [];
+  t.mock.method(globalThis, "fetch", async (url) => {
+    if (url === whoamiUrl) {
+      return Response.json({
+        chatgpt_account_id: "account_fixture",
+        chatgpt_account_is_fedramp: false,
+      });
+    }
+    const request = new URL(url);
+    requests.push(request);
+    return Response.json({
+      plugins: request.searchParams.has("pageToken") ? [] : [plugin()],
+      pagination: {
+        limit: 20,
+        next_page_token: request.searchParams.has("pageToken") ? null : cursor,
+      },
+    });
+  });
+  const driver = new CodexPluginDriver();
+  const first = await driver.discoverCatalog({ accessToken });
+  assert.equal(requests.length, 1);
+  assert.equal(first.plugins[0].id, "codex-plugin:discovery-fixture@openai-curated-remote");
+  assert.equal(first.nextCursor, cursor);
+  const second = await driver.discoverCatalog({ accessToken, cursor: first.nextCursor });
+  assert.deepEqual(second, { plugins: [], nextCursor: null });
+  assert.deepEqual(
+    requests.map((url) => ({
+      endpoint: `${url.origin}${url.pathname}`,
+      parameters: Object.fromEntries(url.searchParams),
+    })),
+    [
+      { endpoint: `${catalogUrl}plugins/list`, parameters: { scope: "GLOBAL", limit: "20" } },
+      {
+        endpoint: `${catalogUrl}plugins/list`,
+        parameters: { scope: "GLOBAL", limit: "20", pageToken: cursor },
+      },
+    ],
+  );
+});
+
 test("hosted plugin tools respect parent app access independently of action policy", async (t) => {
   const driver = useService(
     t,

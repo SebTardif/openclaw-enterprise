@@ -8,7 +8,7 @@ import { asRecord, isNonEmptyString } from "@openclaw-enterprise/utils";
 
 const CATALOG_URL = "https://chatgpt.com/backend-api/ps/";
 const MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
-const PAGE_SIZE = 200;
+const PAGE_SIZE = 20;
 
 function invalid(): never {
   throw new PluginDiscoveryError("invalid_response");

@@ -79,18 +79,19 @@ Presets and edited Configuration JSON retain their settings.
    update API; see [workspace recovery](../../guides/topics/workspace-files.md#set-files-when-creating-an-agent).
 
 With the Codex Plugin Driver selected, choose **Service Accounts** and **Codex**,
-enter a token, then **Load plugins**. Search loaded results, **Load more plugins**,
-or expand a card to **Load tools**. Available plugins appear first; unavailable
-entries explain why. [Discovery](../../flows/agent-plugins.md#credential-scoped-discovery)
-uses the entered token transiently, creates no resources, and excludes saved
-Preset credentials. Credential/provider/Harness changes clear the catalog.
-For rejection, check catalog permissions; for service failure, check outbound
-access and retry.
+enter a token, then open **Configure plugins**. **Previous page** and **Next page**
+fetch upstream pages; **Filter this page** filters only the current page. PAT catalog
+search is unavailable. Select a plugin to load its details and tools, then **Add**
+to configure plugin defaults. Expand individual tool rows to set overrides.
+**Configured plugins** includes selections from other pages. **Done** returns to
+the form; changes save with **Create Agent**.
 
-**Plugin selections JSON** owns the Agent plugin map separately from Configuration
-and survives discovery refreshes/errors. Structured editing requires installation
-capabilities; [policy integration](../agent-plugins.md) remains pending. Browsing
-neither enables plugins nor establishes tool invocation permission.
+[Discovery](../../flows/agent-plugins.md#credential-scoped-discovery) uses the entered
+token transiently and excludes saved Preset credentials. Credential/provider/Harness
+changes clear the catalog; **Plugin selections JSON** preserves selections separately
+from Configuration. For rejection, check catalog permissions; for service failure,
+check outbound access and retry. Editing follows installation capabilities and the
+[policy contract](../agent-plugins.md). Browsing does not establish runtime permission.
 
 Credentials are masked Namespace Secrets, absent from Configuration JSON, Agent
 responses, and browser storage. Provisioning uses references and creates exact

@@ -14,6 +14,8 @@ export const PluginsConfigured = {
 };
 export const PluginsDiscovered = story("createPluginsDiscovered");
 export const PluginsTools = story("createPluginsTools");
+export const PluginsPolicies = story("createPluginsPolicies");
+export const PluginsSecondPage = story("createPluginsSecondPage");
 export const PluginsEmpty = story("createPluginsEmpty");
 export const PluginsLoading = story("createPluginsLoading");
 export const PluginsRejected = story("createPluginsRejected");

@@ -725,6 +725,74 @@ summary:focus-visible {
 .plugin-fields {
   margin-block: 1.5rem;
 }
+.plugin-dialog {
+  width: min(72rem, calc(100vw - 2rem));
+  max-height: calc(100dvh - 2rem);
+  padding: 24px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: 0 12px 48px rgba(13, 20, 33, 0.24);
+}
+.plugin-dialog::backdrop {
+  background: rgba(15, 23, 42, 0.4);
+}
+.plugin-dialog-header,
+.plugin-detail-header,
+.plugin-tool-heading,
+.plugin-list-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.plugin-dialog-header h2,
+.plugin-detail-header h3 {
+  margin: 0;
+}
+.plugin-workspace {
+  display: grid;
+  grid-template-columns: minmax(15rem, 1fr) minmax(0, 2fr);
+  height: min(38rem, 70dvh);
+  min-height: 18rem;
+  gap: 24px;
+}
+.plugin-browser,
+.plugin-detail {
+  min-width: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+.plugin-browser {
+  padding-right: 12px;
+  border-right: 1px solid var(--line);
+}
+.plugin-tabs,
+.plugin-pagination {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-block: 12px;
+}
+.plugin-tabs [aria-pressed="true"],
+.plugin-list-item[aria-current="true"] {
+  background: #e8f2ec;
+  border-color: var(--accent);
+}
+.plugin-list-item {
+  width: 100%;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+.plugin-list-item .badge {
+  font-size: 0.75rem;
+}
+.plugin-detail-empty {
+  margin: 4rem 2rem;
+  text-align: center;
+}
+.plugin-back {
+  display: none;
+}
 .plugin-list {
   display: grid;
   gap: 0.75rem;
@@ -734,13 +802,6 @@ summary:focus-visible {
   border: 1px solid var(--line);
   border-radius: 8px;
   padding: 1rem;
-}
-.plugin-card > summary {
-  cursor: pointer;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 1rem;
 }
 .plugin-controls {
   display: flex;
@@ -769,6 +830,27 @@ summary:focus-visible {
   margin-block: 0.75rem;
   min-width: 0;
 }
+.plugin-tool-row {
+  margin-block: 10px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.plugin-tool-row > summary {
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+.plugin-tool-description {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  margin-top: 6px;
+}
+.plugin-tool-row .plugin-tool {
+  border: 0;
+  padding: 0;
+}
 .plugin-id {
   overflow-wrap: anywhere;
 }
@@ -778,4 +860,27 @@ summary:focus-visible {
 }
 .plugin-json textarea {
   width: 100%;
+}
+.plugin-json {
+  margin-top: 16px;
+}
+@media (max-width: 760px) {
+  .plugin-dialog {
+    padding: 16px;
+  }
+  .plugin-workspace {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .plugin-browser {
+    border: 0;
+    padding: 0;
+  }
+  .plugin-workspace[data-show-details="true"] .plugin-browser,
+  .plugin-workspace[data-show-details="false"] .plugin-detail {
+    display: none;
+  }
+  .plugin-back {
+    display: inline-block;
+    margin-bottom: 16px;
+  }
 }

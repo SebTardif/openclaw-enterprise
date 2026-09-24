@@ -610,9 +610,12 @@ function renderAgentForm(context, rendered) {
   let pluginDiscoveryGeneration = 0;
   let pluginCatalog = { status: "idle", nextCursor: null };
   const pluginEntries = new Map();
+  let pluginPageIds = [];
+  let pluginCursors = [null];
+  let pluginPageIndex = 0;
   const pluginFields = createPluginFields({
     input: plugins,
-    onLoadPlugins: (cursor) => void loadPluginCatalog(cursor),
+    onLoadPlugins: (direction) => void loadPluginCatalog(direction),
     onLoadTools: (id) => void loadPluginTools(id),
   });
   function canDiscoverPlugins() {
@@ -627,7 +630,10 @@ function renderAgentForm(context, rendered) {
   function updatePluginDiscovery() {
     pluginFields.setCatalog({
       ...pluginCatalog,
-      entries: [...pluginEntries.values()],
+      entries: pluginPageIds.map((id) => pluginEntries.get(id)),
+      knownEntries: [...pluginEntries.values()],
+      pageNumber: pluginPageIndex + 1,
+      hasPrevious: pluginPageIndex > 0,
       canLoad: canDiscoverPlugins(),
       message:
         pluginCatalog.message ??
@@ -640,6 +646,9 @@ function renderAgentForm(context, rendered) {
     // A catalog belongs to the entered credential and harness; late responses cannot restore it.
     pluginDiscoveryGeneration += 1;
     pluginEntries.clear();
+    pluginPageIds = [];
+    pluginCursors = [null];
+    pluginPageIndex = 0;
     pluginCatalog = { status: "idle", nextCursor: null };
     updatePluginDiscovery();
   }
@@ -655,17 +664,31 @@ function renderAgentForm(context, rendered) {
     }[error.code];
     return `${reason ?? "Plugins could not be loaded. Check the credential and retry."}${error.requestId ? ` Request: ${error.requestId}` : ""}`;
   }
-  async function loadPluginCatalog(cursor) {
+  async function loadPluginCatalog(direction = "refresh") {
     if (!canDiscoverPlugins() || pending || pluginCatalog.status === "loading") {
       return;
     }
-    const generation = cursor ? pluginDiscoveryGeneration : ++pluginDiscoveryGeneration;
-    if (!cursor) {
-      for (const [id, entry] of pluginEntries) {
-        pluginEntries.set(id, { ...entry, toolStatus: undefined, toolError: undefined });
+    let pageIndex = pluginPageIndex;
+    let cursor = pluginCursors[pageIndex];
+    if (direction === "next") {
+      if (!pluginCatalog.nextCursor) {
+        return;
       }
+      pageIndex += 1;
+      cursor = pluginCatalog.nextCursor;
+    } else if (direction === "previous") {
+      if (pageIndex === 0) {
+        return;
+      }
+      pageIndex -= 1;
+      cursor = pluginCursors[pageIndex];
     }
-    pluginCatalog = { status: "loading", nextCursor: cursor };
+    // Every navigation invalidates in-flight details; the service owns page boundaries.
+    const generation = ++pluginDiscoveryGeneration;
+    for (const [id, entry] of pluginEntries) {
+      pluginEntries.set(id, { ...entry, toolStatus: undefined });
+    }
+    pluginCatalog = { ...pluginCatalog, status: "loading" };
     updatePluginDiscovery();
     try {
       const page = await request(`${namespacePath(namespaceId)}/agents/plugins`, {
@@ -675,14 +698,12 @@ function renderAgentForm(context, rendered) {
       if (!context.isCurrent() || generation !== pluginDiscoveryGeneration) {
         return;
       }
-      if (!cursor) {
-        pluginEntries.clear();
-      }
       for (const entry of page.plugins) {
-        if (!pluginEntries.has(entry.id)) {
-          pluginEntries.set(entry.id, entry);
-        }
+        pluginEntries.set(entry.id, entry);
       }
+      pluginPageIds = page.plugins.map((entry) => entry.id);
+      pluginCursors = [...pluginCursors.slice(0, pageIndex), cursor];
+      pluginPageIndex = pageIndex;
       pluginCatalog = { status: "ready", nextCursor: page.nextCursor };
     } catch (error) {
       if (!context.isCurrent() || generation !== pluginDiscoveryGeneration) {
@@ -692,11 +713,7 @@ function renderAgentForm(context, rendered) {
         context.onExpired();
         return;
       }
-      pluginCatalog = {
-        status: "error",
-        nextCursor: cursor,
-        message: pluginDiscoveryError(error),
-      };
+      pluginCatalog = { ...pluginCatalog, status: "error", message: pluginDiscoveryError(error) };
     } finally {
       if (context.isCurrent() && generation === pluginDiscoveryGeneration) {
         updatePluginDiscovery();

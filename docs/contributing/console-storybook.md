@@ -99,23 +99,24 @@ remain operator prerequisites; the fixture does not verify them.
 ### Discover and configure plugins
 
 **Create Agent / Discover plugins with a service account token** uses a dummy
-token to call the simulated OCC discovery routes. Review available entries before
-unavailable entries, load the next page, then expand Calendar and select **Load
-tools for Calendar**. Search the loaded tools and inspect their identities without
-changing Plugin selections JSON. Replacing the token or switching authentication,
-provider, or harness clears the discovered catalog. Companion stories cover empty
-results, pending reads, rejected tokens, service failures, and tool lookup errors.
+token and simulated OCC discovery routes. Open **Configure plugins**, browse the
+pages, and select Calendar to load its details. **Add Calendar** exposes plugin
+policies; expand a tool row to edit an override. **Done** returns to the form,
+where **Plugin selections JSON** shows the draft. **Filter this page** searches
+only the current page. Replacing the token or switching authentication, provider,
+or Harness clears the catalog while preserving selections. Companion stories
+cover empty results, pending reads, rejected tokens, service failures, tool lookup
+errors, and the next page.
 
-Discovery requires an entered Service Accounts token with the Codex harness;
-saved Preset credentials and API keys do not enable it. The discovery stories
-leave policy editing unavailable while that contract is pending. Catalog
-visibility does not establish that a plugin or tool can be invoked.
+Discovery requires an entered Service Accounts token with the Codex Harness;
+saved Preset credentials and API keys do not enable it. Fixtures provide the
+capability descriptor used by the editor. Catalog visibility does not establish
+that a plugin or tool can be invoked.
 
-**Components/Plugins** previews the draft plugin policy editor with a simulated
-catalog and capability descriptor: available plugins, selected tool overrides, unknown tools, empty,
-loading, denied, and unavailable states. Search for a plugin or tool, expand its
-card, and select **Add**. Review its tool enablement, approval, and reviewer settings.
-Each field inherits independently; inspect **Plugin selections JSON** to see changes.
+**Components/Plugins** covers the modal with simulated catalogs and capabilities:
+available plugins, selected overrides, unknown tools, and empty, loading, denied,
+and capability-unavailable states. Select a plugin, expand a tool row, and inspect
+its enablement, approval, and reviewer fields. Each field inherits independently.
 Adding a plugin leaves its tool defaults omitted. Reviewer omission inherits the
 Harness reviewer, and automatic review can deny a call. The Codex fixture offers
 reviewer selection at the plugin default scope only. **Unsupported saved tool
