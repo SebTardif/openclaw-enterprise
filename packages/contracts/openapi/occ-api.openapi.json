@@ -9641,6 +9641,32 @@
                                 "properties": {
                                   "executionMode": { "$ref": "#/components/schemas/def-0" },
                                   "harnessAuth": { "$ref": "#/components/schemas/def-0" },
+                                  "initialWorkspaceFiles": {
+                                    "additionalProperties": false,
+                                    "properties": {
+                                      "AGENTS.md": {
+                                        "maxLength": 16384,
+                                        "pattern": "^[^\\u0000]*$",
+                                        "type": "string"
+                                      },
+                                      "IDENTITY.md": {
+                                        "maxLength": 16384,
+                                        "pattern": "^[^\\u0000]*$",
+                                        "type": "string"
+                                      },
+                                      "SOUL.md": {
+                                        "maxLength": 16384,
+                                        "pattern": "^[^\\u0000]*$",
+                                        "type": "string"
+                                      },
+                                      "USER.md": {
+                                        "maxLength": 16384,
+                                        "pattern": "^[^\\u0000]*$",
+                                        "type": "string"
+                                      }
+                                    },
+                                    "type": "object"
+                                  },
                                   "name": { "$ref": "#/components/schemas/def-0" },
                                   "plugins": { "$ref": "#/components/schemas/def-0" },
                                   "providerId": { "$ref": "#/components/schemas/def-0" }
@@ -9821,6 +9847,32 @@
                         "properties": {
                           "executionMode": { "$ref": "#/components/schemas/def-0" },
                           "harnessAuth": { "$ref": "#/components/schemas/def-0" },
+                          "initialWorkspaceFiles": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "AGENTS.md": {
+                                "maxLength": 16384,
+                                "pattern": "^[^\\u0000]*$",
+                                "type": "string"
+                              },
+                              "IDENTITY.md": {
+                                "maxLength": 16384,
+                                "pattern": "^[^\\u0000]*$",
+                                "type": "string"
+                              },
+                              "SOUL.md": {
+                                "maxLength": 16384,
+                                "pattern": "^[^\\u0000]*$",
+                                "type": "string"
+                              },
+                              "USER.md": {
+                                "maxLength": 16384,
+                                "pattern": "^[^\\u0000]*$",
+                                "type": "string"
+                              }
+                            },
+                            "type": "object"
+                          },
                           "name": { "$ref": "#/components/schemas/def-0" },
                           "plugins": { "$ref": "#/components/schemas/def-0" },
                           "providerId": { "$ref": "#/components/schemas/def-0" }
@@ -9940,6 +9992,32 @@
                               "properties": {
                                 "executionMode": { "$ref": "#/components/schemas/def-0" },
                                 "harnessAuth": { "$ref": "#/components/schemas/def-0" },
+                                "initialWorkspaceFiles": {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "AGENTS.md": {
+                                      "maxLength": 16384,
+                                      "pattern": "^[^\\u0000]*$",
+                                      "type": "string"
+                                    },
+                                    "IDENTITY.md": {
+                                      "maxLength": 16384,
+                                      "pattern": "^[^\\u0000]*$",
+                                      "type": "string"
+                                    },
+                                    "SOUL.md": {
+                                      "maxLength": 16384,
+                                      "pattern": "^[^\\u0000]*$",
+                                      "type": "string"
+                                    },
+                                    "USER.md": {
+                                      "maxLength": 16384,
+                                      "pattern": "^[^\\u0000]*$",
+                                      "type": "string"
+                                    }
+                                  },
+                                  "type": "object"
+                                },
                                 "name": { "$ref": "#/components/schemas/def-0" },
                                 "plugins": { "$ref": "#/components/schemas/def-0" },
                                 "providerId": { "$ref": "#/components/schemas/def-0" }
@@ -10234,6 +10312,32 @@
                               "properties": {
                                 "executionMode": { "$ref": "#/components/schemas/def-0" },
                                 "harnessAuth": { "$ref": "#/components/schemas/def-0" },
+                                "initialWorkspaceFiles": {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "AGENTS.md": {
+                                      "maxLength": 16384,
+                                      "pattern": "^[^\\u0000]*$",
+                                      "type": "string"
+                                    },
+                                    "IDENTITY.md": {
+                                      "maxLength": 16384,
+                                      "pattern": "^[^\\u0000]*$",
+                                      "type": "string"
+                                    },
+                                    "SOUL.md": {
+                                      "maxLength": 16384,
+                                      "pattern": "^[^\\u0000]*$",
+                                      "type": "string"
+                                    },
+                                    "USER.md": {
+                                      "maxLength": 16384,
+                                      "pattern": "^[^\\u0000]*$",
+                                      "type": "string"
+                                    }
+                                  },
+                                  "type": "object"
+                                },
                                 "name": { "$ref": "#/components/schemas/def-0" },
                                 "plugins": { "$ref": "#/components/schemas/def-0" },
                                 "providerId": { "$ref": "#/components/schemas/def-0" }
@@ -10418,6 +10522,32 @@
                         "properties": {
                           "executionMode": { "$ref": "#/components/schemas/def-0" },
                           "harnessAuth": { "$ref": "#/components/schemas/def-0" },
+                          "initialWorkspaceFiles": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "AGENTS.md": {
+                                "maxLength": 16384,
+                                "pattern": "^[^\\u0000]*$",
+                                "type": "string"
+                              },
+                              "IDENTITY.md": {
+                                "maxLength": 16384,
+                                "pattern": "^[^\\u0000]*$",
+                                "type": "string"
+                              },
+                              "SOUL.md": {
+                                "maxLength": 16384,
+                                "pattern": "^[^\\u0000]*$",
+                                "type": "string"
+                              },
+                              "USER.md": {
+                                "maxLength": 16384,
+                                "pattern": "^[^\\u0000]*$",
+                                "type": "string"
+                              }
+                            },
+                            "type": "object"
+                          },
                           "name": { "$ref": "#/components/schemas/def-0" },
                           "plugins": { "$ref": "#/components/schemas/def-0" },
                           "providerId": { "$ref": "#/components/schemas/def-0" }
@@ -10536,6 +10666,32 @@
                               "properties": {
                                 "executionMode": { "$ref": "#/components/schemas/def-0" },
                                 "harnessAuth": { "$ref": "#/components/schemas/def-0" },
+                                "initialWorkspaceFiles": {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "AGENTS.md": {
+                                      "maxLength": 16384,
+                                      "pattern": "^[^\\u0000]*$",
+                                      "type": "string"
+                                    },
+                                    "IDENTITY.md": {
+                                      "maxLength": 16384,
+                                      "pattern": "^[^\\u0000]*$",
+                                      "type": "string"
+                                    },
+                                    "SOUL.md": {
+                                      "maxLength": 16384,
+                                      "pattern": "^[^\\u0000]*$",
+                                      "type": "string"
+                                    },
+                                    "USER.md": {
+                                      "maxLength": 16384,
+                                      "pattern": "^[^\\u0000]*$",
+                                      "type": "string"
+                                    }
+                                  },
+                                  "type": "object"
+                                },
                                 "name": { "$ref": "#/components/schemas/def-0" },
                                 "plugins": { "$ref": "#/components/schemas/def-0" },
                                 "providerId": { "$ref": "#/components/schemas/def-0" }
