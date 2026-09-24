@@ -12,6 +12,12 @@ Deployer A creates and deploys a personal/team Agent. Different authenticated hu
 
 [Lifecycle History](architecture.md#availability-and-delivery) can ship first. One qualified admission/runtime/channel profile and local accounts suffice for this scenario. Full neighboring provider, Harness and retained-workspace deliveries remain separate.
 
+## Current-source amendment — 2026-09-24
+
+[Current main repository credentials](https://github.com/openclaw/openclaw-enterprise/blob/5ebd7305b0876db33276a249934bc82073b63424/docs/reference/repository-credentials.md) now support embedded OpenClaw and dedicated Codex through the selected `RepoDriver`, whose `listOptions`, `resolve`, `open`, `status` and `close` operations own repository admission and sessions. State retains immutable admission context and cleanup obligations after Agent deletion. Current implementation should consume those contracts; the older supplier limitations below remain historical evidence.
+
+This advances the credential/runtime foundation, but does not establish requester B's authentic per-invocation attribution or this RFC's connected A/B/C acceptance. Session closure, provider cleanup, runtime retirement and observed Git results remain separate facts. The proposed stronger identity/egress profile still requires its own receiving and withdrawal evidence.
+
 ## Current boundary and scope
 
 The separate [credential supplier](https://github.com/openclaw/openclaw-enterprise/blob/02f8fe0b1266462a5726c6684344394324a8bdf7/docs/reference/repository-credentials.md) supports Kubernetes embedded OpenClaw, rejects dedicated Harnesses and defaults omitted profiles to `git-write`. It checks open session, exact grant/profile and original finite deadline. Closure/expiry denies new exchanges and aborts owned exchanges while preserving possible dispatch.

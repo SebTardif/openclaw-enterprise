@@ -4,6 +4,14 @@
 
 **Status:** Proposed. Selected scope, implementation and qualification pending.
 
+## Review amendment — 2026-09-24
+
+This remains a proposal. At [current main](https://github.com/openclaw/openclaw-enterprise/blob/5ebd7305b0876db33276a249934bc82073b63424/packages/occ/src/state/platform-state.ts#L483), State still exposes audit append/list; protected History, exact mutation recovery and this retention contract are not serving capabilities.
+
+The [lifecycle-first review suggestion](https://github.com/openclaw/openclaw-enterprise/pull/250#issuecomment-5754821713) would make lifecycle History the complete first release and track repository observation separately. That release-boundary decision remains open. The original selected scope below is preserved pending a decision; none of its access, recovery, retention or restore requirements is waived.
+
+[Platform audit RFC #376](https://github.com/openclaw/openclaw-enterprise/pull/376) separately proposes a bounded view of existing bootstrap, Namespace and Secret facts. It does not replace retained-Agent History, authorize History readers, or qualify this RFC's repository journey. Its narrower Installation query is a proposed exception to deferred broad search, with its own approval and implementation gates.
+
 <a id="decision"></a><a id="problem-and-goal"></a>
 
 ## Problem and proposal
