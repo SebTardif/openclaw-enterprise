@@ -2759,6 +2759,7 @@ for (const collection of ["configurations", "agents"]) {
       "Permission recovery",
     );
     const lost = await dropFirstCommittedReply(page, namespace.id, collection);
+    await openAdvancedSettings(page);
     await page.getByLabel("SOUL.md", { exact: true }).fill("# Retained draft\n");
     await page.getByRole("button", { name: "Create Agent" }).click();
     await waitForCreationRetry(page);
