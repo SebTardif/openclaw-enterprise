@@ -324,7 +324,8 @@ test("Repository options expose only Namespace-approved display choices behind A
     capability: "sandbox",
     implementation: "test-sandbox",
     facets: ["networking", "filesystem", "process"],
-    async cleanup() {},
+    async cleanupRevision() {},
+    async cleanupNamespace() {},
   };
   f.controller.registerDriver(sandbox);
   f.controller.selectDriver("sandbox", sandbox.id);
@@ -650,7 +651,8 @@ test("Dedicated repository admission still rejects a selected Sandbox Driver", a
     capability: "sandbox",
     implementation: "test-sandbox",
     facets: ["networking", "filesystem", "process"],
-    async cleanup() {},
+    async cleanupRevision() {},
+    async cleanupNamespace() {},
   };
   f.controller.registerDriver(sandbox);
   f.controller.selectDriver("sandbox", sandbox.id);
