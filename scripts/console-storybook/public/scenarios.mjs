@@ -19,6 +19,128 @@ const passwordPresetForm = [
   click("Use Preset"),
 ];
 const repositoryForm = [...readyForm, { selector: "#agent-name", value: "Repository assistant" }];
+const pluginCapabilities = {
+  driver: { id: "codex-plugin", implementation: "occ/codex-plugin" },
+  toolDefaults: {
+    enabled: true,
+    approval: ["native", "prompt", "approve"],
+    reviewer: ["human", "auto"],
+  },
+  tools: { enabled: true, approval: ["native", "prompt", "approve"], reviewer: [] },
+  driverPolicySchema: {
+    type: "object",
+    properties: {
+      destructiveEnabled: { type: "boolean", title: "Destructive tools" },
+    },
+    additionalProperties: false,
+  },
+};
+const pluginCatalog = {
+  status: "ready",
+  entries: [
+    {
+      id: "codex-plugin:calendar@openai-curated-remote",
+      remoteId: "plugin_demo_calendar",
+      name: "Calendar",
+      logoUrl: "/storybook-fixtures/plugin-logos/calendar.svg",
+      description: "Find events and manage a team calendar.",
+      available: true,
+      tools: [
+        {
+          id: "app_calendar/list_events",
+          name: "List events",
+          ownerId: "app_calendar",
+          description: "Find events in a calendar and date range.",
+        },
+        {
+          id: "app_calendar/create_event",
+          name: "Create event",
+          ownerId: "app_calendar",
+          description: "Create a calendar event with a title, time, and attendees.",
+        },
+        {
+          id: "app_calendar/delete_event",
+          name: "Delete event",
+          ownerId: "app_calendar",
+          description: "Remove an existing calendar event.",
+        },
+      ],
+    },
+    {
+      id: "codex-plugin:documents@openai-curated-remote",
+      remoteId: "plugin_demo_documents",
+      name: "Documents",
+      logoUrl: "/storybook-fixtures/plugin-logos/documents.svg",
+      available: true,
+      tools: [
+        {
+          id: "app_documents/search_documents",
+          name: "Search documents",
+          ownerId: "app_documents",
+        },
+        {
+          id: "app_documents/update_document",
+          name: "Update document",
+          ownerId: "app_documents",
+        },
+      ],
+    },
+    {
+      id: "codex-plugin:project-tracker@openai-curated-remote",
+      remoteId: "plugin_demo_project_tracker",
+      name: "Project tracker",
+      logoUrl: "/storybook-fixtures/plugin-logos/missing.svg",
+      tools: null,
+    },
+  ],
+};
+const pluginSelections = JSON.stringify(
+  {
+    "codex-plugin:calendar@openai-curated-remote": {
+      enabled: true,
+      toolDefaults: { approval: "native", reviewer: "auto" },
+      tools: {
+        "app_calendar/create_event": { approval: "prompt" },
+        "app_calendar/delete_event": { enabled: false },
+      },
+    },
+  },
+  null,
+  2,
+);
+const pluginPreviewGap =
+  "Catalog entries, local placeholder logos, and Driver capabilities are passed directly to the production component as Storybook fixtures. These previews do not verify PAT access, plugin availability, or runtime policy enforcement.";
+const pluginDiscovery = {
+  pages: {
+    initial: {
+      plugins: [
+        {
+          id: "codex-plugin:archive@openai-curated-remote",
+          remoteId: "plugin_demo_archive",
+          name: "Archive",
+          available: false,
+          unavailableReason: "This plugin requires an unsupported local runtime.",
+          tools: null,
+        },
+        { ...pluginCatalog.entries[0], tools: null },
+      ],
+      nextCursor: "demo-page-2",
+    },
+    "demo-page-2": {
+      plugins: pluginCatalog.entries.slice(1).map((entry) => ({ ...entry, tools: null })),
+      nextCursor: null,
+    },
+  },
+  details: Object.fromEntries(pluginCatalog.entries.map((entry) => [entry.remoteId, entry])),
+};
+const pluginDiscoveryForm = [
+  ...form,
+  { selector: "#agent-auth-method", value: "codex_pat" },
+  { selector: "#provider-api-key", value: "at-storybook-pat" },
+  click("Configure plugins"),
+];
+const pluginDiscoveryGap =
+  "The real Create Agent controls call simulated OCC discovery routes with a dummy token. Catalog pages and policy capabilities are fixtures. This verifies UI discovery and draft JSON editing, not live plugin-service access or runtime enforcement.";
 const repositoryOptionsPath =
   "/namespaces/ns_00000000-0000-4000-8000-000000000001/agents/repository-options";
 const account = [{ selector: ".account-toggle", click: true }];
@@ -55,7 +177,7 @@ const createProvisioningSecrets = [
   click("Apply channel settings"),
 ];
 
-// API failures are injected at the HTTP boundary. The console owns their presentation.
+// Page failures use the HTTP boundary; isolated component previews receive their input state.
 export const scenarios = {
   overview: {
     group: "Overview",
@@ -236,6 +358,369 @@ export const scenarios = {
       "Change the model, then replace the dummy credential. Confirm the selected model remains. Confirm all three edited appServer settings remain in Configuration JSON.",
       "Choose Reset template and confirm to restore the standard runtime settings for the selected model.",
     ],
+  },
+  createPluginsUnavailable: {
+    group: "Pages/Create Agent",
+    name: "Plugin discovery needs an entered token",
+    path: create,
+    pluginCapabilities,
+    actions: [...form, click("Configure plugins")],
+    description:
+      "Plugin discovery requires a newly entered service account token with the Codex harness. Existing plugin IDs and policies stay in Plugin selections JSON.",
+    steps: [
+      "Click Done, open Plugin selections JSON, and enter a known plugin ID and policy.",
+      "Open Configure plugins and choose the configured plugin. Change a policy, click Done, and inspect the JSON.",
+    ],
+    gap: "API keys and saved Preset credentials do not enable this discovery flow. Enter only dummy credentials in Storybook.",
+  },
+  createPluginsDiscovered: {
+    group: "Pages/Create Agent",
+    name: "Discover plugins with a service account token",
+    path: create,
+    pluginDiscovery,
+    pluginCapabilities,
+    actions: pluginDiscoveryForm,
+    description:
+      "The actual form lists the first catalog page, places enableable plugins first, and retains unavailable entries with their reason. Selecting a plugin loads its tools before Add becomes available.",
+    steps: [
+      "Review the ChatGPT workspace access guidance. Available and Configured share a compact sidebar; page controls stay below the scrolling list. Next page and Previous page navigate server pages.",
+      "Choose Calendar to load its tools, then Add Calendar. Configure its plugin defaults and expand a tool to override them.",
+      "Filter this page matches plugins on the current page; Filter tools matches the selected plugin’s tools.",
+      "Click Done and expand Plugin selections JSON: one heading labels a bounded monospace editor. Replacing the dummy token or authentication method clears discovery results and preserves selections.",
+    ],
+    gap: pluginDiscoveryGap,
+  },
+  createPluginsTools: {
+    group: "Pages/Create Agent",
+    name: "Load plugin tools",
+    path: create,
+    pluginDiscovery,
+    pluginCapabilities,
+    actions: [...pluginDiscoveryForm, { selector: 'button[aria-label="Calendar"]', click: true }],
+    description:
+      "A details request uses the selected catalog entry's remote ID. Tool visibility is displayed separately from policy editing and invocation readiness.",
+    gap: pluginDiscoveryGap,
+  },
+  createPluginsPolicies: {
+    group: "Pages/Create Agent",
+    name: "Configure discovered plugin policies",
+    path: create,
+    pluginDiscovery,
+    pluginCapabilities,
+    actions: [
+      ...pluginDiscoveryForm,
+      { selector: 'button[aria-label="Calendar"]', click: true },
+      click("Add Calendar"),
+      { selector: 'select[aria-label="Calendar default reviewer"]', value: "auto" },
+      {
+        selector: 'details.plugin-tool-row[data-tool="app_calendar/create_event"] > summary',
+        click: true,
+      },
+      { selector: 'select[aria-label="Create event approval"]', value: "prompt" },
+    ],
+    description:
+      "Add writes an enabled selection to the draft JSON. Plugin defaults and expanded tool overrides update the same JSON, and Done keeps those changes for Agent creation.",
+    steps: [
+      "Review the plugin default reviewer and Create event approval override.",
+      "Collapse Create event and filter tools for Delete event. Its toggle starts with a dash for inheritance; switch it on and off without opening the row. Choose Tool policy to restore inheritance or set approval overrides.",
+      "Click Done, open Plugin selections JSON, and inspect the policies. Reopen Configure plugins to continue editing.",
+    ],
+    gap: pluginDiscoveryGap,
+  },
+  createPluginsSecondPage: {
+    group: "Pages/Create Agent",
+    name: "Browse the next plugin page",
+    path: create,
+    pluginDiscovery,
+    pluginCapabilities,
+    actions: [...pluginDiscoveryForm, click("Next page")],
+    description:
+      "Catalog pages use upstream cursors. The fixture has two entries per page; actual pages contain up to 20 plugins. Filtering applies to the current page, and Previous page restores the prior catalog page.",
+    gap: pluginDiscoveryGap,
+  },
+  createPluginsEmpty: {
+    group: "Pages/Create Agent",
+    name: "No plugins returned",
+    path: create,
+    pluginDiscovery: { pages: { initial: { plugins: [], nextCursor: null } }, details: {} },
+    actions: pluginDiscoveryForm,
+    description: "A successful empty discovery response is distinct from a failed request.",
+    gap: pluginDiscoveryGap,
+  },
+  createPluginsLoading: {
+    group: "Pages/Create Agent",
+    name: "Plugin discovery loading",
+    path: create,
+    pluginDiscovery,
+    pluginCapabilities,
+    actions: pluginDiscoveryForm,
+    rules: [{ suffix: "/agents/plugins", method: "POST", hold: true }],
+    description:
+      "A pending discovery request disables duplicate loading. Editing the token clears the pending catalog and fences its eventual response.",
+    gap: pluginDiscoveryGap,
+  },
+  createPluginsRejected: {
+    group: "Pages/Create Agent",
+    name: "Plugin discovery token rejected",
+    path: create,
+    actions: pluginDiscoveryForm,
+    rules: [
+      {
+        suffix: "/agents/plugins",
+        method: "POST",
+        status: 403,
+        code: "PLUGIN_DISCOVERY_CREDENTIALS_REJECTED",
+      },
+    ],
+    description:
+      "A plugin-service credential rejection asks the operator to check the token and its permissions without treating it as an expired OCE session.",
+    gap: pluginDiscoveryGap,
+  },
+  createPluginsError: {
+    group: "Pages/Create Agent",
+    name: "Plugin discovery unavailable",
+    path: create,
+    actions: pluginDiscoveryForm,
+    rules: [
+      {
+        suffix: "/agents/plugins",
+        method: "POST",
+        status: 503,
+        code: "PLUGIN_DISCOVERY_UNAVAILABLE",
+      },
+    ],
+    description: "A failed catalog read gives a safe error and lets the operator retry.",
+    gap: pluginDiscoveryGap,
+  },
+  createPluginsDetailsError: {
+    group: "Pages/Create Agent",
+    name: "Plugin tool discovery failed",
+    path: create,
+    pluginDiscovery,
+    pluginCapabilities,
+    actions: [...pluginDiscoveryForm, { selector: 'button[aria-label="Calendar"]', click: true }],
+    rules: [
+      {
+        suffix: "/agents/plugins/details",
+        method: "POST",
+        status: 429,
+        code: "PLUGIN_DISCOVERY_RATE_LIMITED",
+      },
+    ],
+    description:
+      "A tool-details error stays with its plugin and preserves the rest of the catalog. The operator can retry that plugin's tool lookup.",
+    gap: pluginDiscoveryGap,
+  },
+  createPluginsConfigured: {
+    group: "Pages/Create Agent",
+    name: "Edit existing plugin policies",
+    path: create,
+    pluginCapabilities,
+    actions: [
+      ...form,
+      { selector: ".plugin-json > summary", click: true },
+      { selector: "#agent-plugins", value: pluginSelections },
+      click("Configure plugins"),
+      { selector: 'button[aria-label="codex-plugin:calendar@openai-curated-remote"]', click: true },
+    ],
+    description:
+      "Plugin IDs and tool overrides entered in the existing JSON field appear in the real create-form controls without requiring catalog discovery.",
+    steps: [
+      "Review the configured plugin, then expand one of its saved tool overrides.",
+      "Change a policy or disable a tool, click Done, and inspect Plugin selections JSON for the same change.",
+      "Edit the JSON and reopen Configure plugins to confirm the controls update without losing unrelated fields.",
+    ],
+  },
+  pluginsAvailable: {
+    group: "Components/Plugins",
+    name: "Available catalog",
+    component: "plugins",
+    actions: [click("Configure plugins")],
+    pluginCatalog,
+    pluginCapabilities,
+    description:
+      "Browse a fixture catalog in the production plugin modal. Selecting a plugin opens its policies and a collapsed list of tools.",
+    steps: [
+      "Review the simulated Calendar and Documents logos. Project tracker’s intentionally missing image falls back to its initial. Choose each plugin to check the same logo or fallback in its detail heading.",
+      "Filter this page for Documents, then clear the filter and choose Calendar.",
+      "Click Add Calendar. Its tool defaults remain omitted until you change them.",
+      "Choose the default tool availability, approval behavior, and reviewer, or keep the runtime defaults.",
+      "Review the Driver-specific policy fields supplied by the capability descriptor.",
+      "Expand Create event, change a tool setting, then click Done and inspect Plugin selections JSON.",
+    ],
+    gap: pluginPreviewGap,
+  },
+  pluginsSelected: {
+    group: "Components/Plugins",
+    name: "Selected plugin and tool overrides",
+    component: "plugins",
+    pluginCatalog,
+    pluginCapabilities,
+    pluginSelections,
+    actions: [
+      click("Configure plugins"),
+      { selector: 'button[aria-label="Calendar"]', click: true },
+    ],
+    description:
+      "Calendar uses native approval and automatic review as its tool defaults, with explicit overrides for creating and deleting events. Tool reviewers inherit because this Driver advertises reviewer selection only at the default scope.",
+    steps: [
+      "Change Calendar's default reviewer to Human, click Done, and inspect toolDefaults.reviewer in Plugin selections JSON.",
+      "Choose inheritance to omit the reviewer field without changing default approval or tool overrides.",
+      "Use a tool toggle to set enabled or disabled explicitly; Tool policy opens overrides and lets you restore inheritance. Tool reviewer selection is unavailable for this Driver.",
+    ],
+    gap: pluginPreviewGap,
+  },
+  pluginsUnsupportedToolReviewer: {
+    group: "Components/Plugins",
+    name: "Unsupported saved tool reviewer",
+    component: "plugins",
+    pluginCatalog,
+    pluginCapabilities,
+    pluginSelections: JSON.stringify(
+      {
+        "codex-plugin:calendar@openai-curated-remote": {
+          enabled: true,
+          toolDefaults: { approval: "native", reviewer: "auto" },
+          tools: { "app_calendar/create_event": { approval: "prompt", reviewer: "auto" } },
+        },
+      },
+      null,
+      2,
+    ),
+    actions: [
+      click("Configure plugins"),
+      { selector: 'button[aria-label="Calendar"]', click: true },
+      {
+        selector: 'details.plugin-tool-row[data-tool="app_calendar/create_event"] > summary',
+        click: true,
+      },
+    ],
+    description:
+      "An explicit saved tool reviewer is unsupported when the Driver advertises no per-tool reviewer values, even when it equals the default reviewer. The editor preserves the value without treating it as inherited or enabling new unsupported choices.",
+    gap: pluginPreviewGap,
+  },
+  pluginsUnknownTools: {
+    group: "Components/Plugins",
+    name: "Tool catalog unavailable",
+    component: "plugins",
+    pluginCapabilities,
+    pluginCatalog: { status: "ready", entries: [pluginCatalog.entries[2]] },
+    actions: [
+      click("Configure plugins"),
+      { selector: 'button[aria-label="Project tracker"]', click: true },
+    ],
+    description:
+      "Project tracker’s intentionally missing logo falls back to its initial in the list and detail. Its unavailable tool metadata remains distinct from a verified empty tool list.",
+    gap: pluginPreviewGap,
+  },
+  pluginsEmpty: {
+    group: "Components/Plugins",
+    name: "Empty catalog",
+    component: "plugins",
+    actions: [click("Configure plugins")],
+    pluginCapabilities,
+    pluginCatalog: { status: "ready", entries: [] },
+    description:
+      "An empty catalog has an explicit empty state and keeps the JSON editor available.",
+    gap: pluginPreviewGap,
+  },
+  pluginsLoading: {
+    group: "Components/Plugins",
+    name: "Catalog loading",
+    component: "plugins",
+    actions: [click("Configure plugins")],
+    pluginCapabilities,
+    pluginCatalog: { status: "loading" },
+    description: "A pending catalog is distinct from a successful empty catalog.",
+    gap: pluginPreviewGap,
+  },
+  pluginsDenied: {
+    group: "Components/Plugins",
+    name: "Catalog access denied",
+    component: "plugins",
+    actions: [
+      click("Configure plugins"),
+      { selector: 'button[aria-label="Available plugins"]', click: true },
+    ],
+    pluginCapabilities,
+    pluginCatalog: {
+      status: "error",
+      message: "This credential does not have access to the plugin catalog.",
+    },
+    description:
+      "A simulated catalog permission error stays visible while existing configuration remains editable.",
+    pluginSelections,
+    gap: pluginPreviewGap,
+  },
+  pluginsError: {
+    group: "Components/Plugins",
+    name: "Catalog unavailable",
+    component: "plugins",
+    actions: [click("Configure plugins")],
+    pluginCapabilities,
+    pluginCatalog: {
+      status: "error",
+      message: "The plugin catalog could not be loaded. Try again after restoring connectivity.",
+    },
+    description: "A simulated catalog failure is shown as an error, not a successful empty result.",
+    gap: pluginPreviewGap,
+  },
+  pluginsUnavailable: {
+    group: "Components/Plugins",
+    name: "Discovery credential required",
+    component: "plugins",
+    actions: [click("Configure plugins")],
+    pluginCapabilities,
+    description:
+      "The component explains that discovery requires an entered service account token with the Codex harness.",
+  },
+  pluginsCapabilitiesUnavailable: {
+    group: "Components/Plugins",
+    name: "Policy capabilities unavailable",
+    component: "plugins",
+    pluginCatalog,
+    pluginSelections,
+    actions: [
+      click("Configure plugins"),
+      { selector: 'button[aria-label="Calendar"]', click: true },
+    ],
+    description:
+      "Without a Driver capability descriptor, saved policies remain visible and policy controls stay disabled. The component does not assume policy support from the catalog.",
+    gap: pluginPreviewGap,
+  },
+  pluginsNativeLimited: {
+    group: "Components/Plugins",
+    name: "Native Driver with unsupported saved policy",
+    component: "plugins",
+    pluginCatalog: {
+      status: "ready",
+      entries: [{ id: "occ-plugin:diffs", name: "Diffs", tools: null }],
+    },
+    pluginCapabilities: {
+      driver: { id: "occ-plugin", implementation: "occ/openclaw-plugin" },
+      toolDefaults: { enabled: true, approval: ["native", "approve"], reviewer: [] },
+      tools: { enabled: true, approval: ["native", "approve"], reviewer: [] },
+      driverPolicySchema: { type: "object", properties: {}, additionalProperties: false },
+    },
+    pluginSelections: JSON.stringify(
+      {
+        "occ-plugin:diffs": {
+          enabled: true,
+          toolDefaults: { approval: "prompt" },
+        },
+      },
+      null,
+      2,
+    ),
+    actions: [click("Configure plugins"), { selector: 'button[aria-label="Diffs"]', click: true }],
+    description:
+      "The simulated native Driver advertises native and approve. An existing prompt default remains visible as unsupported, while new choices use only advertised values.",
+    steps: [
+      "Inspect the saved prompt default and the visible unsupported-policy notice.",
+      "Open the default approval control: new policies can use only the advertised choices.",
+      "Change the unsupported default to Native behavior or inherit, then inspect the updated JSON.",
+    ],
+    gap: pluginPreviewGap,
   },
   createProvisioningSecrets: {
     group: "Pages/Create Agent",

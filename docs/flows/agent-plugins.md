@@ -1,7 +1,7 @@
 ---
 created: 2026-09-08
 updated: 2026-09-24
-last_updated_session: codex/01a0b17c-68b6-7e11-bedc-f74de7d606ed
+last_updated_session: 01a0d1dd-aa36-7622-9f43-8376f6ff935e
 ---
 
 # Agent Plugin Deployment Flow
@@ -51,6 +51,21 @@ graph TD
 ```
 
 ## Execution Trace
+
+### Credential-scoped discovery
+
+Create Agent posts PATs to `POST /namespaces/:namespaceId/agents/plugins`
+and remote IDs to `/agents/plugins/details`. OCC checks Namespace Agent-create authority,
+then calls the Driver without writes.
+
+`drivers/plugin/hosted-catalog.ts` resolves account identity through the PAT issuer
+and requests 20 GLOBAL entries. The modal uses cursors, filters locally
+(search rejects PATs), and loads details. Unknown tools: `tools:null`.
+
+Bounded, redirect-free reads return `no-store` metadata without credentials, artifact
+URLs, or upstream errors. Public HTTPS logos render without referrers; failures
+show initials. Logos never enter selections. See [Console discovery](../reference/console/create-and-deploy.md)
+and the [Driver contract](../reference/drivers/plugin.md).
 
 ### 1. Validate desired state under exact-Agent authority
 
@@ -278,6 +293,7 @@ completed deployment attempt rather than ongoing runtime health.
 
 ## Changelog
 
+- 2026-09-24 08:00: Added transient PAT discovery through the selected PluginDriver before Agent creation. (01a0d1dd-aa36-7622-9f43-8376f6ff935e - f62e17c)
 - 2026-09-24 07:50: Verify nested tool and account/link policy before readiness; retain session and live-enforcement gates (codex/01a0b17c-68b6-7e11-bedc-f74de7d606ed - 073bb5c1)
 
 - 2026-09-24 07:02: Aligned the common reviewer contract and scoped capabilities with the accepted specification; runtime reviewer/session checks remain draft gates (codex/01a0b17c-68b6-7e11-bedc-f74de7d606ed - 3606f2e9)

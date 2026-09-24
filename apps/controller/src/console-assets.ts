@@ -46,6 +46,10 @@ const CONSOLE_ASSETS = new Map(
       path: new URL("agents/create.mjs", CONSOLE_ROOT),
       contentType: "text/javascript; charset=utf-8",
     },
+    "/console/agents/plugin-fields.mjs": {
+      path: new URL("agents/plugin-fields.mjs", CONSOLE_ROOT),
+      contentType: "text/javascript; charset=utf-8",
+    },
     "/console/agents/repositories.mjs": {
       path: new URL("agents/repositories.mjs", CONSOLE_ROOT),
       contentType: "text/javascript; charset=utf-8",
@@ -140,7 +144,8 @@ export const CONSOLE_CONTENT_SECURITY_POLICY = [
   "connect-src 'self'",
   "form-action 'self'",
   "frame-ancestors 'none'",
-  "img-src 'self'",
+  // Catalog Drivers can supply public HTTPS images from plugin publishers.
+  "img-src 'self' https:",
   "object-src 'none'",
   "script-src 'self'",
   "style-src 'self'",

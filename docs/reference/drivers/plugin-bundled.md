@@ -39,9 +39,14 @@ authentication. The optional timeout defaults to 10,000 milliseconds and accepts
 startup may update that profile's own cache. Use a separate profile from the
 operator's ordinary Codex workspace.
 
-An empty Codex Driver configuration permits Agent writes and deployment without
-controller-side catalog discovery. The catalog reader has no HTTP endpoint.
-Agent startup uses its projected credentials to resolve selections independently of this
+An empty Codex Driver configuration supports transient PAT discovery from Create
+Agent. The Driver hydrates account identity through the token issuer, reads one
+GLOBAL plugin-service catalog page, and fetches app/tool details on demand. Each
+request has a 15-second deadline and a 4 MiB response limit. It does not read the
+operator's Codex home, install plugins, or return download URLs. Discovery supports
+entered PATs; saved Secret and managed ServiceAccount references are not accepted.
+
+Agent startup uses its own projected credentials to resolve selections independently of this
 reader. Unknown options, arbitrary package selectors, and external PluginDriver
 packages are rejected. Existing required Driver selections remain necessary.
 

@@ -292,6 +292,9 @@ export interface PluginToolCatalogEntry {
   readonly id: string;
   readonly ownerId: string;
   readonly name: string;
+  readonly description?: string;
+  readonly available?: boolean;
+  readonly unavailableReason?: string;
   readonly destructive?: boolean;
   readonly writes?: boolean;
 }
@@ -313,7 +316,18 @@ export interface PluginPolicyCapabilities {
 export interface PluginCatalogEntry {
   readonly id: string;
   readonly name: string;
+  readonly remoteId?: string;
+  readonly description?: string;
+  /** Public HTTPS presentation image; may expire and is never selection state. */
+  readonly logoUrl?: string;
+  readonly available?: boolean;
+  readonly unavailableReason?: string;
   readonly tools: readonly PluginToolCatalogEntry[] | null;
+}
+
+export interface PluginCatalogPage {
+  readonly plugins: readonly PluginCatalogEntry[];
+  readonly nextCursor: string | null;
 }
 
 export interface PluginRevisionState {
@@ -823,6 +837,15 @@ export interface PluginDriver extends Driver {
   /** Checks policy support without installing plugins or performing authenticated discovery. */
   validatePolicies(selections: PluginDesiredState): void;
   listCatalog(context: PluginDriverContext): Promise<readonly PluginCatalogEntry[]>;
+  /** Pre-Agent discovery uses a transient credential; neither it nor results are persisted. */
+  discoverCatalog?(
+    input: { readonly accessToken: string; readonly cursor?: string },
+    signal?: AbortSignal,
+  ): Promise<PluginCatalogPage>;
+  getCatalogPlugin?(
+    input: { readonly accessToken: string; readonly pluginId: string },
+    signal?: AbortSignal,
+  ): Promise<PluginCatalogEntry>;
 }
 
 export type NamespaceLifecycleFailure = "retryable" | "permanent";
