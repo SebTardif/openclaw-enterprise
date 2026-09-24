@@ -1313,3 +1313,71 @@ test("aggregate fails when a supplied non-lane need failed even if lane artifact
   );
   assert.equal(summary.issues[0].need, "audit");
 });
+
+test("CI reporter preserves closed revocation effects and rejects arbitrary diagnostic values", async () => {
+  const { default: reporter } = await import("../../scripts/ci/reporter.mjs");
+  const secret = "diagnostic-must-not-disclose";
+  const observe = async (diagnostic) => {
+    const events = [
+      {
+        type: "test:fail",
+        data: {
+          name: "revocation",
+          details: {
+            error: {
+              code: "ERR_TEST_FAILURE",
+              cause: {
+                code: "ERR_ASSERTION",
+                name: "AssertionError",
+                message: secret,
+                actual: secret,
+                openclawCiDiagnostic: diagnostic,
+              },
+            },
+          },
+        },
+      },
+    ];
+    const lines = [];
+    for await (const line of reporter(events)) {
+      assert.equal(line.includes(secret), false);
+      lines.push(JSON.parse(line));
+    }
+    return lines[0].data.error.diagnostic;
+  };
+  const kind = "service-account-revocation-effects";
+  const effects = [
+    { kind: "bind", subject: "other", identity: secret },
+    { kind: "bind", subject: "valid", identity: secret },
+    { kind: "prepare", subject: "revoked", identity: secret },
+  ];
+  assert.deepEqual(await observe({ kind, total: 3, effects, message: secret }), {
+    kind,
+    total: 3,
+    truncated: false,
+    effects: [
+      { kind: "bind", subject: "other" },
+      { kind: "bind", subject: "valid" },
+      { kind: "prepare", subject: "revoked" },
+    ],
+  });
+  for (const diagnostic of [
+    { kind, total: -1, effects: [] },
+    { kind, total: 1.5, effects: [] },
+    { kind, total: 2 ** 31, effects: [] },
+    { kind, total: 1, effects: [{ kind: secret, subject: "valid" }] },
+    { kind, total: 1, effects: [{ kind: "bind", subject: secret }] },
+    { kind, total: 1, effects: new Array(1) },
+    { kind, total: 1, effects: [] },
+    { kind, total: 65, effects: Array.from({ length: 65 }, () => effects[0]) },
+  ]) {
+    assert.equal(await observe(diagnostic), undefined);
+  }
+  const bounded = Array.from({ length: 64 }, () => ({ kind: "bind", subject: "other" }));
+  assert.deepEqual(await observe({ kind, total: 65, effects: bounded }), {
+    kind,
+    total: 65,
+    truncated: true,
+    effects: bounded,
+  });
+});

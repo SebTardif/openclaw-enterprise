@@ -268,6 +268,30 @@ function failureDiagnostic(error) {
   if (!isRecord(diagnostic)) {
     return undefined;
   }
+  if (diagnostic.kind === "service-account-revocation-effects") {
+    const { effects, total } = diagnostic;
+    if (
+      !Number.isSafeInteger(total) ||
+      total < 0 ||
+      total > 2 ** 31 - 1 ||
+      !Array.isArray(effects) ||
+      effects.length !== Math.min(total, 64) ||
+      !Array.from(effects).every(
+        (effect) =>
+          isRecord(effect) &&
+          ["bind", "prepare"].includes(effect.kind) &&
+          ["valid", "revoked", "other"].includes(effect.subject),
+      )
+    ) {
+      return undefined;
+    }
+    return {
+      kind: "service-account-revocation-effects",
+      total,
+      truncated: total > effects.length,
+      effects: effects.map(({ kind, subject }) => ({ kind, subject })),
+    };
+  }
   if (diagnostic.kind === "network-policy") {
     return [
       "Agent outbound platform traffic",

@@ -3717,10 +3717,34 @@ test(
         fixture.work(candidate, index === 0 ? "succeeded" : "failed_permanent"),
       ),
     );
-    assert.deepEqual(effects, [
-      { action: "bind", agentId: owners[0].id },
-      { action: "prepare", revisionId: candidates[0].id },
-    ]);
+    try {
+      assert.deepEqual(effects, [
+        { action: "bind", agentId: owners[0].id },
+        { action: "prepare", revisionId: candidates[0].id },
+      ]);
+    } catch (error) {
+      // Preserve the security assertion while exposing only closed test-subject
+      // categories; raw Agent/revision identities must never enter CI artifacts.
+      error.openclawCiDiagnostic = {
+        kind: "service-account-revocation-effects",
+        total: effects.length,
+        effects: effects.slice(0, 64).map((effect) => {
+          const subjects =
+            effect.action === "bind"
+              ? owners.map((owner) => owner.id)
+              : candidates.map((candidate) => candidate.id);
+          const identity = effect.action === "bind" ? effect.agentId : effect.revisionId;
+          let subject = "other";
+          if (identity === subjects[0]) {
+            subject = "valid";
+          } else if (identity === subjects[1]) {
+            subject = "revoked";
+          }
+          return { kind: effect.action, subject };
+        }),
+      };
+      throw error;
+    }
     const current = await fixture.state.read((view) =>
       view.agents.findAgent(fixture.namespace.id, owners[1].id),
     );
