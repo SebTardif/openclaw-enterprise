@@ -38,10 +38,10 @@ Presets and edited Configuration JSON retain their settings.
    Service Accounts, open [OpenAI admin](https://admin.openai.com/), choose your
    workspace, open **Service accounts**, and create a token with Codex scope.
    The fields show `sk-…` and `at-…` hints; prefixes do not select the method.
-   Enter the credential to show model controls. **Load models** queries the
-   selected provider and lets you choose the gateway's default model; no model
-   is preselected. Choose a text-generation model compatible with your runtime.
-   If the list is empty or unavailable, retry or select **Enter model ID manually**.
+   Choose a model from the starter list or select **Enter model ID manually**.
+   The list appears before credential entry, with no preselected model.
+   It is intentionally hardcoded pending a future discovery iteration; confirm
+   your credential and runtime support your choice.
    The form writes the corresponding native model configuration. Credentials
    remain separate from Configuration JSON.
 4. Review Configuration JSON. Selection changes update model/runtime entries,
@@ -102,23 +102,23 @@ fix the provider, including JSON edits; saved service account tokens also fix Co
 Operator-managed credentials fix OpenClaw across provider changes. Start without a
 Preset to change these choices, or edit authentication later in **Credentials**.
 
-Model discovery requires Namespace Agent `create` permission and sends the credential
-to the selected method's official API without saving it. **Service Accounts**
-(`codex_pat`) lists Codex models through OpenAI. The method determines routing.
 Provider changes reset Harness, credential, and model; authentication-method changes
 reset credential/model. Switching an unsaved PAT to OpenClaw selects API-key auth
-and clears token/model. API-key Harness changes preserve both; credential edits
-clear the model. Select or enter a model before saving. Discovery does not prove
-runtime compatibility or provider acceptance.
+and clears token/model. API-key Harness changes preserve both. Credential edits
+preserve model selection. Select or enter a model before saving; the starter list
+does not prove runtime compatibility or provider acceptance.
 
-The OCC API process needs destination-scoped HTTPS egress to `api.openai.com:443`
+The model-discovery API remains available independently of Console model selection.
+It requires Namespace Agent `create`, sends credentials to the selected method's
+official API without saving them, and lists Codex models for `codex_pat`.
+For this API, OCC needs destination-scoped HTTPS egress to `api.openai.com:443`
 for OpenAI API keys, `api.anthropic.com:443` for Anthropic, or both
 `auth.openai.com:443` and `chatgpt.com:443` for service account tokens. Helm's
 default-deny policy does not grant these destinations. Operators must maintain
 provider IP CIDRs or use their cluster's FQDN policy support; standard NetworkPolicy
-does not accept DNS names. Manual model entry remains available without discovery.
+does not accept DNS names. Console model selection does not require this discovery.
 
-Failures distinguish rejected credentials/model-list permissions, rate limits,
+API failures distinguish rejected credentials/model-list permissions, rate limits,
 connectivity, and unsupported responses. Recovery guidance includes the request ID,
 never the raw provider response. A listing denial does not prove model execution
 is denied; manual entry remains available.

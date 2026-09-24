@@ -158,7 +158,7 @@ Codex; operator-managed credentials fix OpenClaw. Installation Provider
 discovery is hidden. The [creation reference](../reference/console/create-and-deploy.md)
 owns permissions and recovery.
 
-Initial inputs are native JSON and optional plugins, without a model.
+Native JSON and optional plugins start without a model.
 `agents/plugin-fields.mjs:createPluginFields` edits the Agent-owned `plugins` map
 through `#agent-plugins`, separately from Configuration. It preserves invalid JSON,
 unedited fields, and undiscovered selections; clearing a tool override restores
@@ -175,15 +175,13 @@ missing capabilities disable controls without changing JSON.
 Credential, provider, and Harness changes clear the catalog and invalidate pending
 responses. The Plugin Driver owns upstream access; Storybook uses fixtures.
 
-`POST /namespaces/:namespaceId/agents/models` reaches
-`OpenClawController.discoverAgentModels`: authorize Namespace Agent creation, then
-call Compute outside a transaction. `compute/model-discovery.ts` returns IDs/labels
-using fixed URLs and bounded pagination/responses. `authMethod` selects API-key or
-service-account discovery; OpenAI API-key results exclude valid `shutdown_date`
-values through today (UTC). Discovery writes nothing; empty/error results permit
-manual entry. Credential/provider/method changes invalidate pending results.
-Model/key edits preserve transport and Codex plugin settings; Provider/Harness
-changes regenerate them, preserving unrelated JSON. Reset restores the starter.
+`create.mjs:MODEL_CHOICES` supplies static provider lists before credentials,
+without discovery requests or account verification. Manual entry remains available;
+Presets retain model/authentication.
+Credential edits preserve selection; Provider/authentication-method changes reset it.
+Model edits preserve transport and Codex plugin settings. Provider/Harness changes
+regenerate them, retaining unrelated JSON; reset restores the starter.
+TODO: revisit catalog refresh and credential-aware discovery.
 
 `configurationTemplate` enables Control UI with loopback origins on port 18789.
 Compute supplies gateway authentication from Installation trust; Presets replace
@@ -324,6 +322,8 @@ uncertain response disables replay until refresh and inspection.
 [keep this for the user to add notes. do not change between edits]
 
 ## Changelog
+
+- 2026-09-24 06:19: Replace Console model discovery with an intentional static starter list and preserve manual entry. (01a0d20c-dc1b-7d22-a965-60b9c244b29d - 24ecb94b)
 
 - 2026-09-24 05:40: Added Create Agent plugin JSON controls and transient PAT catalog discovery; policy integration remains pending. (01a0d1dd-aa36-7622-9f43-8376f6ff935e - f62e17c)
 
