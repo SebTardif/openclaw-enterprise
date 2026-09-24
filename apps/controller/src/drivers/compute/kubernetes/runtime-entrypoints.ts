@@ -392,7 +392,7 @@ function assertNoOpenClawPluginConfigConflict(base, overlay, options = {}) {
 function mergeOpenClawPluginConfiguration(base, overlay, options = {}) {
   assertNoOpenClawPluginConfigConflict(base, overlay, options);
   const next = mergeConfig(base, overlay);
-  for (const key of ["allow", "alsoAllow"]) {
+  for (const key of ["allow", "alsoAllow", "deny"]) {
     const baseAllow = Array.isArray(base?.tools?.[key]) ? base.tools[key] : [];
     const overlayAllow = Array.isArray(overlay?.tools?.[key]) ? overlay.tools[key] : [];
     if (overlayAllow.length === 0) continue;
@@ -525,7 +525,7 @@ function assertConfigContainsOverlay(base, overlay, path) {
     }
     return;
   }
-  if (["tools.allow", "tools.alsoAllow"].includes(path) && Array.isArray(base) && Array.isArray(overlay)) {
+  if (["tools.allow", "tools.alsoAllow", "tools.deny"].includes(path) && Array.isArray(base) && Array.isArray(overlay)) {
     for (const tool of overlay) {
       if (!base.includes(tool)) {
         throw new Error("OpenClaw plugin effective config does not match admitted configuration.");
@@ -909,6 +909,34 @@ function enabledCodexSelectionIds(selections) {
   );
 }
 
+async function readCodexToolStatuses() {
+  const statuses = [];
+  const cursors = new Set();
+  let cursor;
+  // Bound startup discovery even if a server keeps returning fresh cursors.
+  for (let page = 0; page < 100; page += 1) {
+    const response = await codexAppServerRequest("mcpServerStatus/list", {
+      detail: "toolsAndAuthOnly",
+      ...(cursor === undefined ? {} : { cursor }),
+    });
+    if (
+      !isPlainObject(response) || !Array.isArray(response.data) ||
+      (response.nextCursor !== null &&
+        (typeof response.nextCursor !== "string" || response.nextCursor.trim().length === 0))
+    ) {
+      throw new Error("Codex tool discovery returned invalid pagination data.");
+    }
+    statuses.push(...response.data);
+    if (response.nextCursor === null) return statuses;
+    if (cursors.has(response.nextCursor)) {
+      throw new Error("Codex tool discovery returned a repeated cursor.");
+    }
+    cursors.add(response.nextCursor);
+    cursor = response.nextCursor;
+  }
+  throw new Error("Codex tool discovery exceeded its page limit.");
+}
+
 async function installCodexSelectionSet(selections, failures = []) {
   if (Object.keys(selections).length === 0) return { successfulPluginIds: [], failures: [] };
   const enabledPluginIds = enabledCodexSelectionIds(selections);
@@ -922,9 +950,9 @@ async function installCodexSelectionSet(selections, failures = []) {
   const failed = [...failures];
   const failedIds = pluginFailureIds(failed);
   const successfulPluginIds = [];
-  const resolvedArtifact = pluginRuntimeTranslator.codexRuntimeArtifact(selections, resolvedDetails, failed);
+  const installs = pluginRuntimeTranslator.codexInstallPlan(selections, resolvedDetails);
   for (const readParams of readParamsList) {
-    const selectedPlugin = resolvedArtifact.installs.find(
+    const selectedPlugin = installs.find(
       (candidate) => candidate.remotePluginId === readParams.pluginName,
     );
     if (selectedPlugin !== undefined && !enabledPluginIds.has(selectedPlugin.pluginId)) continue;
@@ -981,11 +1009,17 @@ async function installCodexSelectionSet(selections, failures = []) {
     }
     if (selectedPlugin !== undefined) successfulPluginIds.push(selectedPlugin.pluginId);
   }
-  const effectiveResolvedArtifact = pluginRuntimeTranslator.codexRuntimeArtifact(selections, resolvedDetails, failed);
+  const enabledSelections = Object.fromEntries(
+    Object.entries(selections).filter(([pluginId]) => enabledPluginIds.has(pluginId) && !failedIds.has(pluginId)),
+  );
+  const toolStatuses = pluginRuntimeTranslator.codexNeedsToolInventory(enabledSelections)
+    ? await readCodexToolStatuses()
+    : [];
+  const effectiveResolvedArtifact = pluginRuntimeTranslator.codexRuntimeArtifact(selections, resolvedDetails, failed, toolStatuses);
   await writeCodexAppConfiguration(effectiveResolvedArtifact.configuration);
   const installedDetails = [];
   for (const readParams of readParamsList) {
-    const selectedPlugin = resolvedArtifact.installs.find(
+    const selectedPlugin = installs.find(
       (candidate) => candidate.remotePluginId === readParams.pluginName,
     );
     if (
@@ -997,7 +1031,7 @@ async function installCodexSelectionSet(selections, failures = []) {
       installedDetails.push(await codexAppServerRequest("plugin/read", readParams));
     }
   }
-  const installedArtifact = pluginRuntimeTranslator.codexRuntimeArtifact(selections, installedDetails, failed);
+  const installedArtifact = pluginRuntimeTranslator.codexRuntimeArtifact(selections, installedDetails, failed, toolStatuses);
   if (JSON.stringify(installedArtifact.installs) !== JSON.stringify(effectiveResolvedArtifact.installs)) {
     throw new Error("Codex plugin installed release metadata does not match startup resolution.");
   }
@@ -1013,6 +1047,8 @@ async function installCodexSelectionSet(selections, failures = []) {
     const detail = installedDetails[readParamsList.indexOf(readParams)];
     verifyCodexPluginDetail(plugin, readParams, detail);
   }
+  // TODO: verify the complete managed app policy before nested policies ship;
+  // extra effective tool/link overrides can outrank the requested app defaults.
   assertConfigContainsOverlay(await readCodexAppConfiguration(), effectiveResolvedArtifact.configuration);
   return { successfulPluginIds, failures: failed };
 }

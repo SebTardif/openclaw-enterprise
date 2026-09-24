@@ -695,7 +695,7 @@ ${codexLocalAppServerTokenScript}
   for (const entry of pluginRuntimeTranslator.codexCatalogEntries(listed)) {
     if (!requestedIds.has(entry.id)) continue;
     const [params] = pluginRuntimeTranslator.codexReadParamsForSelections({
-      [entry.id]: { enabled: true, approvalMode: "auto", approvalsReviewer: "auto_review" },
+      [entry.id]: { enabled: true, toolDefaults: { approval: "native" }, driverPolicy: { approvalsReviewer: "auto_review" } },
     }, listed);
     try {
       const detail = await codexAppServerRequest("plugin/read", params);

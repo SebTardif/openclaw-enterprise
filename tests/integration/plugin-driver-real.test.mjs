@@ -80,9 +80,9 @@ test(
     const desired = await fixture.selectPlugin(primary.id, {
       pluginId,
       enabled: true,
-      approvalMode: "always",
+      toolDefaults: { approval: "approve" },
     });
-    assert.equal(desired.approvalMode, "always");
+    assert.equal(desired.toolDefaults.approval, "approve");
     const selectedAgent = await fixture.getAgent(primary.id);
     assert.equal(selectedAgent.plugins[pluginId].enabled, true);
 
@@ -200,7 +200,11 @@ test(
 
     // A later contradictory selection must fail in the replacement's startup,
     // rather than allowing installation to erase the reusable Configuration deny.
-    await fixture.selectPlugin(primary.id, { pluginId, enabled: true, approvalMode: "always" });
+    await fixture.selectPlugin(primary.id, {
+      pluginId,
+      enabled: true,
+      toolDefaults: { approval: "approve" },
+    });
     const conflicting = await fixture.request(
       "POST",
       `/namespaces/${fixture.namespaceId}/agents/${primary.id}/deploy`,
@@ -314,11 +318,11 @@ test(
     const desired = await fixture.selectPlugin(agent.id, {
       pluginId,
       enabled: true,
-      approvalMode: "auto",
-      approvalsReviewer: "auto_review",
+      toolDefaults: { approval: "native" },
+      driverPolicy: { approvalsReviewer: "auto_review" },
     });
-    assert.equal(desired.approvalMode, "auto");
-    assert.equal(desired.approvalsReviewer, "auto_review");
+    assert.equal(desired.toolDefaults.approval, "native");
+    assert.equal(desired.driverPolicy.approvalsReviewer, "auto_review");
 
     const deployed = await fixture.deployAndWait(agent);
     assert.equal(deployed.revision.plugins?.driver.id, "codex-plugin");
@@ -422,8 +426,8 @@ test(
     const selectedSuccess = await fixture.selectPlugin(primary.id, {
       pluginId: successPluginId,
       enabled: true,
-      approvalMode: "auto",
-      approvalsReviewer: "auto_review",
+      toolDefaults: { approval: "native" },
+      driverPolicy: { approvalsReviewer: "auto_review" },
     });
     assert.equal(selectedSuccess.enabled, true);
     const deployedPrimary = await fixture.deployAndWait(primary);
@@ -497,8 +501,8 @@ test(
     const selectedFailure = await fixture.selectPlugin(primary.id, {
       pluginId: failurePluginId,
       enabled: true,
-      approvalMode: "auto",
-      approvalsReviewer: "auto_review",
+      toolDefaults: { approval: "native" },
+      driverPolicy: { approvalsReviewer: "auto_review" },
     });
     assert.equal(selectedFailure.enabled, true);
     const deployedWithWarning = await fixture.deployAndWait(primary);

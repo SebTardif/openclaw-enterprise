@@ -113,3 +113,10 @@ export class NotImplementedError extends Error {
     this.operation = operation;
   }
 }
+
+export class PluginPolicyValidationError extends Error {
+  constructor() {
+    super("The supplied plugin policies are invalid.");
+    this.name = "PluginPolicyValidationError";
+  }
+}

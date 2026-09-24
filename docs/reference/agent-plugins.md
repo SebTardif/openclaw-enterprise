@@ -8,28 +8,32 @@ Agent or an active revision. New Agents start without user-selected plugins.
 Use [Configure Agent plugins](../guides/topics/plugins-configure.md) to select,
 deploy, and check a plugin. To deploy plugins, the Installation must explicitly
 select a bundled [Plugin Driver](drivers/plugin.md); none is selected by
-default. OpenClaw Control Plane (OCC) can save a valid request even when the
-selected Driver or runtime cannot support it; startup verifies the catalog and
-approval policy.
+default. OpenClaw Control Plane (OCC) validates the policy shape and the selected
+Driver's supported controls before saving nonempty selections. Startup still
+checks catalog membership, tool ownership, authentication, and effective native
+configuration.
 
 ## Current support
 
-Embedded OpenClaw supports the bundled Diffs plugin, enabling or disabling it,
-and the `always` and `never` approval policies. Its curated entries currently
-return `tools: null`. A saved tool or category policy therefore prevents the
-new deployment from becoming ready.
+Embedded OpenClaw supports the bundled Diffs plugin, including its `diffs` tool,
+plugin/tool enablement, and `native` or `approve` approval. Both approval choices
+use the existing native execution path; neither adds a review step. `prompt` is
+unsupported and rejected before save.
 
-Dedicated Codex Agents can enable selected apps from the
-`openai-curated-remote` catalog when the Codex runtime can apply the requested
-policy. Nothing is enabled by default. `approvalMode: "auto"` uses native Codex
-approval behavior; `approvalMode: "never"` or `enabled: false` blocks the app.
-`always` accepts supported requests without prompting and maps to native
-`allow_destructive_actions: true`. Combining `always` with
-`approvalsReviewer: "auto_review"` fails startup: native AutoReview can run
-before the bridge receives the request. `prompt`, category overrides, and tool
-overrides also fail startup when the runtime cannot apply them exactly.
-`approvalsReviewer` maps to the native Codex app reviewer. Linear and Google
-Calendar are test fixtures, not a production allowlist.
+Dedicated Codex supports selected concrete apps from the
+`openai-curated-remote` catalog. Its translator accepts `native`, `prompt`, and
+`approve`, independent per-tool overrides, and the Codex fields in `driverPolicy`.
+Nothing is selected by default. Scoped tool IDs must match the app's native
+runtime inventory before startup can complete. The internal Codex catalog reader
+currently returns `tools: null`. This policy interface does not provide an HTTP
+catalog discovery endpoint.
+
+These are contract and translation capabilities. Effective enforcement requires
+compatible OpenClaw and Codex runtime versions and session settings that preserve
+requested review. App-level `prompt` alone does not establish every-call review.
+The new policy paths still need
+[real Agent verification](../testing/plugins.md#current-proof-notes). There is
+no bundled Claude PluginDriver.
 
 ## Lifecycle
 
@@ -106,39 +110,35 @@ checks apply.
 ### Request fields
 
 Use a Driver-qualified curated plugin ID that matches the identifier grammar.
-Catalog membership is resolved at Agent startup. Plugin and tool IDs are 1-253
-characters matching `^[A-Za-z0-9._~:@-]+$`. Callers cannot submit a native
-identity, Driver identity, source, version, or arbitrary settings. Request
+Plugin IDs are 1–253 characters matching `^[A-Za-z0-9._~:@-]+$`. Tool IDs are
+opaque Driver identifiers, 1–1024 characters without spaces or control characters.
+Keep them unchanged; a tool's display name is not its policy ID. Callers cannot
+submit a native source, release version, or owning Driver identity. Request
 objects reject unknown fields. `plugins:null` is invalid.
 
-On Agent create, an absent `plugins` field and `{}` both mean no desired user
-plugins. On Agent update, omitting `plugins` preserves the existing map, `{}` clears
-all desired plugins, and any nonempty object replaces the whole map. The update
-does not merge plugin entries or nested tool policies.
+On Agent create, an absent `plugins` field and `{}` mean no desired user plugins.
+On update, omitting `plugins` preserves the existing map, `{}` clears it, and a
+nonempty object replaces the whole map, including nested policies.
 
-In the tables below, **mode** means `always`, `never`, `prompt`, or `auto`.
-Structural validity does not imply native support; startup validates the
-complete requested selection against the selected Driver and native runtime.
+| Plugin map value field    | Type                                      | Behavior                                                           |
+| ------------------------- | ----------------------------------------- | ------------------------------------------------------------------ |
+| `enabled`                 | Boolean                                   | Required plugin gate; `false` wins over every tool override.       |
+| `toolDefaults.enabled`    | Optional Boolean                          | Default tool enablement, unless overridden for an individual tool. |
+| `toolDefaults.approval`   | Optional `native`, `prompt`, or `approve` | Default review behavior.                                           |
+| `tools.<toolId>.enabled`  | Optional Boolean                          | Override the tool enablement default.                              |
+| `tools.<toolId>.approval` | Optional approval mode                    | Override the approval default independently.                       |
+| `driverPolicy`            | Optional object                           | Fields owned and validated by the selected Driver.                 |
 
-| Plugin map value field        | Type                             | Behavior                                                                   |
-| ----------------------------- | -------------------------------- | -------------------------------------------------------------------------- |
-| `enabled`                     | Boolean                          | Required plugin enablement intent.                                         |
-| `approvalMode`                | Mode                             | Required plugin default.                                                   |
-| `approvalsReviewer`           | Optional `user` or `auto_review` | Omission inherits native review settings.                                  |
-| `destructiveActions`          | Optional mode                    | Category override applied at startup when native metadata supports it.     |
-| `writes`                      | Optional mode                    | Category override applied at startup when native metadata supports it.     |
-| `tools`                       | Optional object keyed by tool ID | Tool overrides applied at startup when authoritative metadata supports it. |
-| `tools.<toolId>.enabled`      | Optional Boolean                 | Explicit tool enablement override.                                         |
-| `tools.<toolId>.approvalMode` | Optional mode                    | Explicit tool approval override.                                           |
+Each supplied `toolDefaults` or tool override contains `enabled`, `approval`, or
+both. Omission inherits that field's default. The Driver validates unsupported
+fields and combinations even when the plugin or tool is disabled. Replace an
+entry without an
+optional field to remove its override. No `always`, `never`, `auto`, top-level
+`approvalMode`, or category approval fields are accepted.
 
-Each supplied tool override must contain `enabled`, `approvalMode`, or both.
-Omitted optional fields inherit the plugin/category/native policy. To remove an
-optional override, replace the plugin entry without that field. To remove one
-tool override, replace the `tools` map without that tool ID. To remove all
-plugin selections, update the Agent with `"plugins": {}`.
-
-For example, update an Agent with the available OpenClaw entry, using the
-Agent's current Configuration ID, then explicitly deploy the Agent:
+This example enables Diffs with its tools disabled by default, then enables its
+known `diffs` tool. Use the Agent's current Configuration ID and deploy after
+saving:
 
 ```json
 {
@@ -146,46 +146,29 @@ Agent's current Configuration ID, then explicitly deploy the Agent:
   "plugins": {
     "occ-plugin:diffs": {
       "enabled": true,
-      "approvalMode": "always"
+      "toolDefaults": { "enabled": false, "approval": "native" },
+      "tools": { "diffs": { "enabled": true } }
     }
   }
 }
 ```
 
-A later Agent update can disable that selection without deleting it:
+Setting that plugin's `enabled` to `false` blocks it, including the enabled tool
+exception. Approval cannot re-enable a disabled tool.
 
-```json
-{
-  "configurationId": "cfg_123e4567-e89b-42d3-a456-426614174000",
-  "plugins": {
-    "occ-plugin:diffs": {
-      "enabled": false,
-      "approvalMode": "always"
-    }
-  }
-}
-```
+### Discover policy controls
 
-The following illustrates the nested request shape only. The current Diffs
-catalog lacks tool metadata, so the API can save this request, but the
-deployment will not become ready:
+Authorized `GET /installation` responses expose the selected Driver's controls
+at `data.capabilities.pluginPolicies`. The field is absent when no PluginDriver
+is selected. It contains:
 
-```json
-{
-  "configurationId": "cfg_123e4567-e89b-42d3-a456-426614174000",
-  "plugins": {
-    "occ-plugin:diffs": {
-      "enabled": true,
-      "approvalMode": "always",
-      "destructiveActions": "never",
-      "writes": "prompt",
-      "tools": {
-        "example_tool": { "enabled": true, "approvalMode": "always" }
-      }
-    }
-  }
-}
-```
+- `driver`: the selected `id` and `implementation`.
+- `toolDefaults` and `tools`: each has an `enabled` support Boolean and an
+  `approval` array of supported modes.
+- `driverPolicySchema`: the JSON Schema for Driver-specific fields.
+
+This is capability discovery, not plugin or tool discovery. It does not prove
+that a particular plugin is available to the Agent's credentials.
 
 ### Response fields
 
@@ -215,14 +198,10 @@ body. It freezes requested state, not resolved native release metadata.
 | `driver`                 | Driver identity object    | Required `id` and `implementation` strings.            |
 | `plugins`                | Object keyed by plugin ID | Frozen requested selections, matching `Agent.plugins`. |
 
-At startup, Codex translation uses native Codex app settings and, when a
-supported curated Codex app is selected, OpenClaw Codex bridge configuration.
-The active native configuration sets the selected app entry to `enabled:true`
-and optional native `approvals_reviewer`, translated from Enterprise
-`approvalsReviewer`. The bridge configuration sets
-`plugins.entries.codex.config.codexPlugins.enabled` to true, keeps
-`allow_all_plugins:false`, and includes one entry per selected plugin. Empty
-desired state keeps apps/plugins disabled.
+At startup, Codex translation writes native app defaults and explicit tool
+settings, then configures selected-only OpenClaw bridge entries. The bridge keeps
+`allow_all_plugins:false`; empty desired state keeps apps/plugins disabled.
+See [native mappings](drivers/plugin-bundled.md#native-mappings-and-limits).
 
 ### Verification boundary
 
@@ -240,33 +219,59 @@ executable definitions.
 
 ## Approval policy
 
-| `approvalMode` | Requested behavior                                                                        |
-| -------------- | ----------------------------------------------------------------------------------------- |
-| `always`       | No plugin approval step; authorization and other restrictions still apply.                |
-| `never`        | Block tool execution.                                                                     |
-| `prompt`       | Request review for each call through the effective reviewer.                              |
-| `auto`         | Use native Codex annotation and remembered-approval behavior to decide whether to review. |
+| `approval` | Requested behavior                                                                     |
+| ---------- | -------------------------------------------------------------------------------------- |
+| `native`   | Let the Harness decide when review is needed. It does not imply an automatic reviewer. |
+| `prompt`   | Request review for every call through the effective reviewer.                          |
+| `approve`  | Do not add a plugin approval step; authorization and other restrictions still apply.   |
 
-`approvalsReviewer` independently selects `user` or `auto_review`. It does not
-force review: `auto` can skip review, while `prompt` requests review for every
-call. An absent reviewer inherits the native setting.
+Resolve enablement and approval independently: an explicit tool field overrides
+its matching `toolDefaults` field. If enablement is omitted at both levels,
+native defaults apply. If approval is omitted at both levels, use `native`.
+An explicit tool `approval:"native"` replaces an inherited approval mode. Disabling the plugin is terminal. Native/operator denies, managed
+requirements, and workload controls still apply; an OCE override cannot bypass
+them. There is no configurable precedence switch or category-to-tool expansion.
 
-For enabled tools, requested precedence is explicit tool mode, then the
-stricter applicable category override, then the plugin default. Category
-strictness is `never > prompt > auto > always`. Disabled plugins/tools cannot be
-re-enabled by a mode override. Destructive means native `destructiveHint=true`;
-missing destructive metadata is conservative. Writes means native
-`readOnlyHint` is not true. Classification never uses a tool's name.
+### Codex-specific policy
 
-The API saves structurally valid policy without proving that the selected
-Driver can represent it exactly. Startup performs that validation. See
-[native mappings and current limits](drivers/plugin.md#native-mappings-and-limits).
-Unknown tool metadata produces `tools:null`; tool/category selections then fail
-the deployment/startup candidate when the selected Driver cannot represent them.
+Codex accepts these flat `driverPolicy` fields:
+
+| Field                | Meaning                                                                                           |
+| -------------------- | ------------------------------------------------------------------------------------------------- |
+| `destructiveEnabled` | Native app default for tools classified as destructive; explicit tool enablement can override it. |
+| `approvalsReviewer`  | `user` or `auto_review`, applied to the app; omission inherits native reviewer selection.         |
+
+Do not combine `destructiveEnabled` with an explicit `toolDefaults.enabled`.
+Codex's native default tool enablement bypasses category filtering, so the Driver
+rejects this combination rather than silently ignoring the destructive default.
+A tool with only an approval override still inherits enablement. Codex treats
+unknown destructive annotations as destructive; OCE does not reclassify them.
+
+For example, the selection fragment below requests review on every enabled app
+tool, with the native automatic reviewer, and disables destructive tools by
+default. It is not a complete Agent update:
+
+```json
+{
+  "enabled": true,
+  "toolDefaults": { "approval": "prompt" },
+  "driverPolicy": {
+    "destructiveEnabled": false,
+    "approvalsReviewer": "auto_review"
+  }
+}
+```
+
+Codex tool IDs encode both app ownership and the exact native tool name; two apps
+can expose the same name without sharing a policy. Runtime discovery verifies
+that each requested tool belongs to the selected plugin. Unknown metadata is
+`tools:null`; `tools:[]` means the observed inventory was empty for that read,
+not that the remote tool set can never change. Destructive/write annotations
+are optional and are not required to express an explicit tool override.
 
 ## Failures and boundaries
 
-- `400`: invalid body or identity/source fields.
+- `400`: invalid body or policy unsupported by the selected Driver.
 - `403`: denied exact-Agent permission.
 - `404`: missing or foreign Agent or Configuration.
 - `409`: ordinary Agent conflict, such as duplicate name.
@@ -275,12 +280,12 @@ the deployment/startup candidate when the selected Driver cannot represent them.
 Errors use `{error,meta:{requestId}}`, with no top-level `data` field. The
 [generated API reference](api.md) owns the full error envelope shape.
 
-Structurally invalid Agent writes fail atomically before save. Catalog
-membership, native metadata, and policy representability are startup concerns:
-unsupported behavior is reported through the existing failed or unready
-candidate path and does not change the earlier Agent write or deployment
-response into HTTP 501. Authentication, installation, and transport failures
-remain failures of those operations.
+Invalid policy writes fail atomically before save. Nonempty selections require
+a selected PluginDriver; a missing Driver produces `501 NOT_IMPLEMENTED`. OCC
+revalidates policy at deployment admission. Catalog membership, native tool
+ownership, authentication, runtime compatibility, and conflicting raw native
+Configuration remain startup checks. Their failures leave the candidate failed
+or unready; they do not retroactively change the earlier Agent write.
 
 Namespace plugin configuration, arbitrary catalogs, importing an owner's Codex
 configuration, plugin-specific settings/credential APIs, Code Mode, and new

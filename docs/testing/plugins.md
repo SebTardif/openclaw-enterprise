@@ -123,10 +123,23 @@ identifiers.
 
 ## Current proof notes
 
-The policy-composition and installation changes have not been verified in a real
-Kubernetes Agent deployment. The extended scenario requires the prerequisite
-OpenClaw release plus the cluster, database, image, and credentials above. The
-proofs below predate these changes and do not cover them.
+The nested policy contract and translation changes have not been verified in a
+real Kubernetes Agent deployment. This includes default/tool overrides, Codex
+per-call review and reviewer selection, and destructive defaults with explicit
+tool exceptions. Contract/API/startup-fixture checks prove their own boundaries;
+older model-turn results below do not prove these new policies.
+
+Native proof needs a runtime containing OpenClaw
+[#151260](https://github.com/openclaw/openclaw/pull/151260) and
+[#152085](https://github.com/openclaw/openclaw/pull/152085), support for
+`plugins install --no-enable`, plus the cluster, database, image, and credentials
+above. Verify effective native app/tool configuration, session approval and
+permission profile, and a real normal Agent turn before claiming approval
+enforcement. A session using `never` with permissive permissions can bypass MCP
+review unless strict review applies; app-level `prompt` alone is not proof. Confirm a disabled plugin remains
+blocked despite an enabled tool override, and a tool exception preserves native
+operator restrictions. The installation-composition changes also remain unproven
+on a real deployment.
 
 Best-effort installation verification for
 [PR #228](https://github.com/openclaw/openclaw-enterprise/pull/228) uses an isolated

@@ -73,6 +73,7 @@ import {
   NamespaceNotEmptyError,
   NamespaceNotReadyError,
   NotImplementedError,
+  PluginPolicyValidationError,
   RepositoryOptionsUnavailableError,
   ResourceConflictError,
   ScopeViolationError,
@@ -725,19 +726,19 @@ function clientInstallation(
   computeDriver: Readonly<ComputeDriver> | undefined,
 ): Record<string, unknown> {
   const agentProvisioning = computeDriver?.agentProvisioning;
+  const capabilities = {
+    ...installation.capabilities,
+    ...(agentProvisioning === undefined
+      ? {}
+      : {
+          agentProvisioning: { executionModes: [...agentProvisioning.executionModes] },
+        }),
+  };
   return {
     id: installation.id,
     name: installation.name,
     createdAt: installation.createdAt,
-    ...(agentProvisioning === undefined
-      ? {}
-      : {
-          capabilities: {
-            agentProvisioning: {
-              executionModes: [...agentProvisioning.executionModes],
-            },
-          },
-        }),
+    ...(Object.keys(capabilities).length === 0 ? {} : { capabilities }),
   };
 }
 
@@ -943,6 +944,9 @@ function requestFailure(error: unknown): RequestFailure {
           "The provider model service is unavailable. Retry or enter a model ID manually.",
         );
     }
+  }
+  if (error instanceof PluginPolicyValidationError) {
+    return failure(400, "INVALID_REQUEST", "The supplied plugin policies are invalid.");
   }
   if (error instanceof PresetValidationError) {
     return failure(400, "INVALID_REQUEST", "The supplied Preset template is invalid.");
