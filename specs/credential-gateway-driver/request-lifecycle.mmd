@@ -1,0 +1,46 @@
+---
+config:
+  theme: neutral
+  sequence:
+    mirrorActors: true
+    useMaxWidth: false
+---
+sequenceDiagram
+  actor U as Authorized caller
+  participant W as OCE API / worker<br/>IAM, State, Work, Compute
+  participant I as Native Gateway ingress
+  participant O as OpenShell runtime
+  participant C as Original credential owners<br/>Repository service / model adapter
+  Note over U,C: Proposed lifecycle — starts at admitted Agent deployment
+  Note over U,W: 1. Admit and prepare
+  U->>W: Save Agent and request exact-Agent deploy
+  W-->>U: 202 admission, revision-read status
+  Note over W,C: Protected acquisition waits for genuine requester, execution and receiving evidence
+  W->>C: Original owner prepares session once
+  C-->>W: Private binding and retained attempt
+  W->>O: Compute prepares mediation for bound revision
+  O-->>W: Safe lease and mediation status
+  Note over U,C: 2. Authenticate and dispatch
+  U->>I: Authorized native Gateway request
+  I->>O: Bound operation and current owner evidence
+  alt Wrong scope, destination or missing protected evidence
+    O-->>I: Not dispatched, safe refusal
+    I-->>U: Refusal without credentials
+  else Admitted exact operation
+    O->>C: Git to OCE HTTPS service or Responses to model adapter
+    C->>C: Validate plan, privately attach authentication
+    C-->>O: Bounded response or uncertain original attempt
+    O-->>I: Bound exchange result, safe audit correlation
+    I-->>U: Operation result, separate provider readback
+  end
+  Note over W,C: 3. Withdraw admission and active traffic
+  W->>O: Authority withdrawal or renewal loss
+  O->>C: Stop new dispatch and close active Git/model traffic
+  C-->>W: Closure observation or pending original attempt
+  Note over W,C: Protected total at most 30 seconds including detection, with selected stricter bounds
+  Note over W,C: 4. Dispose through original owners
+  W->>O: Dispose exact owned attachments
+  O->>C: Original-owner cleanup and settlement
+  C-->>W: Disposed or cleanup pending, never reopen admission
+  Note over W,C: Lost inventory remains unknown, uncertain dispatch never automatically replays
+  Note over U,C: End at confirmed closure and truthful owned-cleanup disposition
