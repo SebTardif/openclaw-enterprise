@@ -286,7 +286,9 @@ export async function installObservabilityDemo(t) {
                       attributes: Object.entries(attributes).map(([key, value]) => ({
                         key,
                         value:
-                          typeof value === "number" ? { doubleValue: value } : { stringValue: value },
+                          typeof value === "number"
+                            ? { doubleValue: value }
+                            : { stringValue: value },
                       })),
                     },
                   ],

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 import { installObservabilityDemo } from "../helpers/observability-demo-k3d.mjs";
@@ -115,6 +116,24 @@ test(
     assert.equal(JSON.parse(health.text).version, "13.2.2");
     const { page, url } = await demo.openBrowser();
     const queries = [];
+    const responses = [];
+    page.on("response", (response) => {
+      if (new URL(response.url()).pathname === "/api/ds/query" && responses.length < 16) {
+        responses.push(
+          response.json().then(
+            (body) => ({
+              status: response.status(),
+              errors: Object.values(body.results ?? {})
+                .map((result) => result.error)
+                .filter((error) => typeof error === "string")
+                .slice(0, 2)
+                .map((error) => error.slice(0, 2_000)),
+            }),
+            () => ({ status: response.status() }),
+          ),
+        );
+      }
+    });
     page.on("request", (request) => {
       if (request.method() === "POST" && new URL(request.url()).pathname === "/api/ds/query") {
         for (const query of request.postDataJSON()?.queries ?? []) {
@@ -124,79 +143,115 @@ test(
         }
       }
     });
-    await page.goto(`${url}/d/occ-logs?from=now-5m&to=now&refresh=1h`, {
-      waitUntil: "domcontentloaded",
-    });
-    const allPanel = page.getByLabel("All events panel", { exact: true });
-    const attentionPanel = page.getByLabel("Needs attention panel", { exact: true });
-    await allPanel.getByText(records[0].line, { exact: true }).waitFor();
-    await attentionPanel.getByText(records[2].line, { exact: true }).waitFor();
+    try {
+      await page.goto(`${url}/d/occ-logs?from=now-5m&to=now&refresh=1h`, {
+        waitUntil: "domcontentloaded",
+      });
+      const allPanel = page.getByLabel("All events panel", { exact: true });
+      const attentionPanel = page.getByLabel("Needs attention panel", { exact: true });
+      await allPanel.getByText(records[0].line, { exact: true }).waitFor();
+      await attentionPanel.getByText(records[2].line, { exact: true }).waitFor();
 
-    // Capture Grafana's actual interpolated panel expressions. Re-query them
-    // through its datasource: no test-owned copy of LogQL or variable escaping.
-    const assertQueries = async (expected) => {
-      await demo.waitFor("both rendered panel queries", () => new Set(queries).size === 2);
-      for (const expression of new Set(queries)) {
-        const attention = expression.includes("severity_text");
-        const lines = expected
-          .filter((record) => !attention || record.attention)
-          .map(({ line }) => line)
-          .sort();
-        await demo.waitFor("exact dashboard query results", async () => {
-          const rows = await demo.query(
-            "loki",
-            `/loki/api/v1/query_range?query=${encodeURIComponent(expression)}&since=5m`,
+      // Capture Grafana's actual interpolated panel expressions. Re-query them
+      // through its datasource: no test-owned copy of LogQL or variable escaping.
+      const assertQueries = async (expected) => {
+        await demo.waitFor("both rendered panel queries", () => new Set(queries).size === 2);
+        for (const expression of new Set(queries)) {
+          const attention = expression.includes("severity_text");
+          const lines = expected
+            .filter((record) => !attention || record.attention)
+            .map(({ line }) => line)
+            .sort();
+          await demo.waitFor("exact dashboard query results", async () => {
+            const rows = await demo.query(
+              "loki",
+              `/loki/api/v1/query_range?query=${encodeURIComponent(expression)}&since=5m`,
+            );
+            const actual = rows.flatMap(({ values }) => values.map(([, line]) => line)).sort();
+            return JSON.stringify(actual) === JSON.stringify(lines);
+          });
+        }
+      };
+      await assertQueries(records);
+      await page.screenshot({ path: join(demo.artifacts, "logs-all-events.png"), fullPage: true });
+
+      // Formatting changes only the query result. The original event and request
+      // correlation remain available for native metadata filtering/drill-down.
+      const correlated = await demo.query(
+        "loki",
+        `/loki/api/v1/query_range?query=${encodeURIComponent(`{service_name="occ-api"} | request_id="${requestId}"`)}&since=5m`,
+      );
+      assert.deepEqual(
+        correlated.flatMap(({ values }) => values.map(([, line]) => line)),
+        ["http.completed"],
+      );
+      await allPanel.getByText(records[0].line, { exact: true }).click();
+      await allPanel.getByText(requestId, { exact: true }).waitFor();
+      await page.screenshot({ path: join(demo.artifacts, "logs-details.png"), fullPage: true });
+
+      queries.length = 0;
+      await page
+        .getByTestId(
+          "data-testid Dashboard template variables Variable Value DropDown value link text All",
+        )
+        .first()
+        .click();
+      await page
+        .getByTestId(
+          "data-testid Dashboard template variables Variable Value DropDown option text occ-worker",
+        )
+        .click();
+      await allPanel.getByText(records[0].line, { exact: true }).waitFor({ state: "hidden" });
+      await assertQueries(records.filter(({ service }) => service === "occ-worker"));
+
+      queries.length = 0;
+      await page
+        .getByTestId(
+          "data-testid Dashboard template variables Variable Value DropDown value link text All",
+        )
+        .click();
+      await page
+        .getByTestId(
+          "data-testid Dashboard template variables Variable Value DropDown option text worker.completed",
+        )
+        .click();
+      await assertQueries(records.filter(({ event }) => event === "worker.completed"));
+      await attentionPanel.getByText(records[6].line, { exact: true }).waitFor();
+      await page.screenshot({
+        path: join(demo.artifacts, "logs-worker-filter.png"),
+        fullPage: true,
+      });
+    } catch (error) {
+      // Only this disposable dashboard and synthetic datasource evidence are
+      // retained; never capture request headers, cookies or browser storage.
+      try {
+        const screenshot = await page
+          .screenshot({ path: join(demo.artifacts, "logs-failure.png"), fullPage: true })
+          .then(
+            () => true,
+            () => false,
           );
-          const actual = rows.flatMap(({ values }) => values.map(([, line]) => line)).sort();
-          return JSON.stringify(actual) === JSON.stringify(lines);
-        });
+        const panels = await page
+          .locator('[aria-label$=" panel"]')
+          .allTextContents()
+          .catch(() => []);
+        const settled = await Promise.allSettled(responses);
+        await writeFile(
+          join(demo.artifacts, "logs-failure.json"),
+          JSON.stringify({
+            path: new URL(page.url()).pathname,
+            screenshot,
+            panels: panels.slice(0, 2).map((text) => text.slice(0, 6_000)),
+            queries: [...new Set(queries)].slice(0, 6).map((query) => query.slice(0, 2_000)),
+            responses: settled
+              .filter((result) => result.status === "fulfilled")
+              .map((result) => result.value),
+          }),
+        );
+      } catch (_captureError) {
+        // Diagnostic failures must not replace the assertion being diagnosed.
       }
-    };
-    await assertQueries(records);
-    await page.screenshot({ path: join(demo.artifacts, "logs-all-events.png"), fullPage: true });
-
-    // Formatting changes only the query result. The original event and request
-    // correlation remain available for native metadata filtering/drill-down.
-    const correlated = await demo.query(
-      "loki",
-      `/loki/api/v1/query_range?query=${encodeURIComponent(`{service_name="occ-api"} | request_id="${requestId}"`)}&since=5m`,
-    );
-    assert.deepEqual(
-      correlated.flatMap(({ values }) => values.map(([, line]) => line)),
-      ["http.completed"],
-    );
-    await allPanel.getByText(records[0].line, { exact: true }).click();
-    await allPanel.getByText(requestId, { exact: true }).waitFor();
-    await page.screenshot({ path: join(demo.artifacts, "logs-details.png"), fullPage: true });
-
-    queries.length = 0;
-    await page
-      .getByTestId(
-        "data-testid Dashboard template variables Variable Value DropDown value link text All",
-      )
-      .first()
-      .click();
-    await page
-      .getByTestId(
-        "data-testid Dashboard template variables Variable Value DropDown option text occ-worker",
-      )
-      .click();
-    await allPanel.getByText(records[0].line, { exact: true }).waitFor({ state: "hidden" });
-    await assertQueries(records.filter(({ service }) => service === "occ-worker"));
-
-    queries.length = 0;
-    await page
-      .getByTestId(
-        "data-testid Dashboard template variables Variable Value DropDown value link text All",
-      )
-      .click();
-    await page
-      .getByTestId(
-        "data-testid Dashboard template variables Variable Value DropDown option text worker.completed",
-      )
-      .click();
-    await assertQueries(records.filter(({ event }) => event === "worker.completed"));
-    await attentionPanel.getByText(records[6].line, { exact: true }).waitFor();
-    await page.screenshot({ path: join(demo.artifacts, "logs-worker-filter.png"), fullPage: true });
+      throw error;
+    }
   },
 );
