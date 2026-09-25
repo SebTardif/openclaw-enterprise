@@ -1,32 +1,31 @@
-# OpenShell credential integration
+# RFC: Credential Gateway for OpenShell
 
-<a id="problem-and-decision"></a>
+**Status:** Proposed; the protected integration is not yet qualified.
 
-## Goal and review request
+<a id="openshell-credential-integration"></a>
+<a id="goal-and-review-request"></a>
 
-OpenClaw Enterprise (OCE) needs straightforward recovery when an Agent fails or
-is compromised:
+## Problem and decision
 
-- **Disposable Agents:** withdraw one Agent's access without disrupting others
-  or rotating every shared provider credential.
-- **No long-lived credentials in the Agent container:** keep provider credentials
-  outside the Agent on the protected path. Copied Agent material must not grant
-  access from outside the cluster, directly or through a reachable gateway.
-- **Auditable use:** identify the Agent, approved operation and outcome without
-  recording credentials or sensitive request contents.
+An OpenClaw Enterprise (OCE) Agent needs to use GitHub and an AI model to do its work. It must use those services without carrying their long-lived credentials. We must be able to stop one Agent's access without disrupting other Agents.
 
-**Mrunal: help us refine the design and define the interface: function names,
-inputs, results and failure behavior.** Please map the provider lifecycle below
-to supported OpenShell APIs and versions, and identify the smallest gaps for a
-first integration. This is a proposal, not a qualified integration.
+OCE will use a Credential Gateway to make approved services available while trusted components retain the provider credentials. OpenShell provides the Agent's contained environment. The OpenClaw Control Plane (OCC) decides what the Agent may use. OCE's existing GitHub service retains its credentials and authenticates GitHub requests.
 
-## One integration, two capabilities
+OCE selects the Sandbox and Credential Gateway capabilities independently. OpenShell is the proposed implementation for both; an Agent can use the Sandbox without the gateway.
 
-OCE selects **Sandbox** to contain execution and **Credential Gateway** to make
-approved services available. One OpenShell implementation can supply both,
-composing with existing Secret and credential owners. OpenClaw Control Plane
-(OCC) retains authorization and assignment; Compute owns Sandbox lifecycle;
-workers prepare credential sessions once.
+## Scope
+
+The first combined integration targets an API-created dedicated Codex Agent. It must complete an approved Git or `gh` operation and an OpenAI Responses request over HTTPS, including supported streaming. Dedicated OpenClaw requires separate qualification.
+
+The protected path must prevent Agent material copied outside the cluster from granting access, directly or through a reachable gateway. It must not fall back silently to weaker authentication. Existing direct model-key delivery and compatibility bearer sessions remain separate, weaker paths; neither establishes this protected guarantee.
+
+## Contract
+
+<a id="one-integration-two-capabilities"></a>
+
+### Ownership and request paths
+
+Compute owns Sandbox lifecycle; workers create, repair and retire credential sessions. Credential owners retain sources and renewal. Shared provider configuration grants no Agent authority; each attachment requires OCC authorization.
 
 ```mermaid
 ---
@@ -35,119 +34,93 @@ config:
   htmlLabels: true
   themeVariables:
     fontSize: 14px
+    primaryTextColor: "#344054"
+    lineColor: "#8B949E"
+    edgeLabelBackground: "#FFFFFF"
   flowchart:
-    rankSpacing: 20
+    curve: linear
     nodeSpacing: 18
-    padding: 10
+    rankSpacing: 18
+    padding: 8
     subGraphTitleMargin:
       top: 6
       bottom: 10
 ---
 flowchart LR
-  C["<b>OCC</b><br/>Authorize and assign"]
-  subgraph O["OpenShell containment"]
-    A["<b>Agent / Harness</b><br/>Bound session"]
+  subgraph S["OpenShell Sandbox"]
+    A["<b>Agent</b><br/>Git and model requests"]
   end
-  subgraph P["Private credentials"]
-    G["<b>OCE HTTPS service</b><br/>GitHub authentication"]
-    M["<b>Model adapter</b><br/>Provider authentication"]
+  subgraph T["Trusted credential paths"]
+    G["<b>OCE GitHub service</b><br/>Private credentials"]
+    M["<b>Model adapter</b><br/>Private model authentication"]
   end
-  C -.-> A
+  H["<b>GitHub</b><br/>Repositories"]
+  P["<b>Model provider</b><br/>Responses API"]
   A -.->|Git / gh| G
   A -.->|Responses| M
-  classDef control fill:#edf3fa,stroke:#839ab5,color:#24374d
-  classDef owner fill:#eaf3ef,stroke:#809f91,color:#263f34
-  class C control
-  class A,G,M owner
-  style O fill:#fafbfc,stroke:#d8dee6
-  style P fill:#fafbfc,stroke:#d8dee6
+  G -.->|authenticate| H
+  M -.->|authenticate| P
+  classDef control fill:#EDF2F7,stroke:#879AB0,color:#25364A,stroke-width:1px
+  classDef operation fill:#EBF3F0,stroke:#7F9D93,color:#2B4038,stroke-width:1px
+  classDef external fill:#F1EEF5,stroke:#A091AD,color:#3A3243,stroke-width:1px
+  classDef pending fill:#F3F4F6,stroke:#98A2AE,color:#44505F,stroke-width:1px,stroke-dasharray:4 4
+  class A,G operation
+  class H,P external
+  class M pending
+  style S fill:#FAFBFC,stroke:#D8DEE6,stroke-width:1px
+  style T fill:#FAFBFC,stroke:#D8DEE6,stroke-width:1px
+  linkStyle default stroke:#8B949E,stroke-width:1px
 ```
 
-Dashed connections show the proposed protected path. OCE retains its GitHub App
-key, installation-token issuer and existing HTTPS mediation. Model authentication
-is private and grants no GitHub authority. Arbitrary proxying and direct GitHub
-bypass are forbidden.
+Dashed lines show proposed, unqualified paths. Git/`gh` uses the existing OCE HTTPS service and GitHub App credentials, with no second issuer or direct GitHub bypass. Model authentication remains private. **TODO:** Select its adapter and credential owner.
 
-Credential Gateway is implementation-neutral. A CI `.env` reader or local script
-are possible simpler implementations, not delivered features. CI may use fake
-credentials and mocked models without strong isolation. Real local credentials
-need a separate isolation decision; environment labels cannot weaken a protected profile.
+<a id="first-integration-and-incident-response"></a>
 
-<a id="contract"></a>
+### Agent access
 
-## Provider interface to review
+1. **Prepare.** Bind the worker-prepared session and admitted Agent revision to an opaque lease without creating or renewing credentials. Keep the Agent nonserving until the required session, authorization and connection evidence is available.
+2. **Use.** Check current authorization and the bound session before dispatch through the approved Git/model path. Reject a read-only push before dispatch. The gateway is not an arbitrary proxy.
+3. **Observe.** Distinguish connection, attachment, traffic closure and cleanup. OpenShell attachment readiness proves neither backend access nor active-stream closure. Unavailable status remains unknown.
+4. **Withdraw and clean up.** Stop the Agent's new and active traffic; release only its session's resources. Detachment neither deletes shared configuration nor proves upstream revocation. Cleanup failure must not reopen access or disrupt another Agent.
 
-Connecting a provider and authorizing one Agent to use it are separate concerns.
-These names are **placeholders, not final signatures**. Please help resolve:
+Protected Git and model traffic must close within 30 seconds of withdrawal or loss of renewal, measured through the last active byte. Selected active exchanges recheck closure within five seconds. Where the original profile requires it, the separate five-second finalization observer also remains required. These bounds do not prove upstream credential revocation.
 
-| Starting operation     | Meaning and open choice                                                                                                                                                                                                     |
-| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `AddProvider`          | OpenShell separates `CreateProvider` and `AttachSandboxProvider`. Expose both, or combine them? We favor separation for clear ownership of shared providers.                                                                |
-| `AuthenticateProvider` | No matching RPC exists in the pinned source. Keep this connection/reauthentication name, or `ConnectProvider`? Map grant/refresh handling separately; the implementation authenticates individual requests.                 |
-| `ProviderStatus`       | OpenShell separates `GetProviderRefreshStatus` and `GetSandboxProviderStatus`. A summary is simpler; distinct, current connection/attachment/closure observations clarify recovery. We favor preserving those distinctions. |
-| `RemoveProvider`       | OpenShell has `DetachSandboxProvider` and `DeleteProvider`. Keep scopes distinct? Detachment must close traffic without deleting shared material; neither implies upstream revocation.                                      |
+If a request might have reached the provider, retain its original attempt as uncertain and reconcile it; do not automatically replay it. Audit identifies the Agent, approved operation and outcome without recording credentials or request contents. The [contract companion](credential-gateway-driver/contract.md) defines bounds, failure handling and recovery in detail.
 
-The interface should accommodate **static secrets, OAuth grants and dynamic
-issuance**; OAuth and dynamic issuance can overlap. Static-first keeps the initial
-integration small; exercising refresh early tests more lifecycle behavior. All
-three in MVP would be useful, not required. Please help choose the first slice.
-Source owners retain custody and renewal; static values may remain long-lived
-outside the protected Agent.
+### Gateway interface
 
-The [contract companion](credential-gateway-driver/contract.md) preserves the proposed
-`prepare`, `mediate`, `status`, `withdraw` and `dispose` interface. Those methods
-cover mediation and cleanup; their mapping to provider operations needs review.
+`prepare` binds the original session and revision; `mediate` checks and forwards each operation; `status` reports admission and cleanup; `withdraw` stops use and observes closure; `dispose` releases session-owned attachments while retaining unresolved cleanup. The companion defines the complete proposed interface. **TODO:** Map provider management to these methods.
 
 <a id="implementation-and-open-questions"></a>
+<a id="verification"></a>
 
-## OpenShell integration questions
+## Implementation and verification
 
-The [attachment/status](https://github.com/NVIDIA/OpenShell/blob/f8002d19ad2f948abf48bd2f5ca4f8ebd388e3c8/proto/openshell.proto#L131-L169)
-and [provider/refresh](https://github.com/NVIDIA/OpenShell/blob/f8002d19ad2f948abf48bd2f5ca4f8ebd388e3c8/proto/openshell.proto#L281-L414)
-APIs above exist in pinned OpenShell source. Please review the mapping and resolve:
+- **TODO — session delivery:** Bind the authenticated OpenShell session, readiness and private/workspace mounts to the admitted revision.
+- **TODO — model access:** Supply private Responses authentication, streaming and credential custody through a supported OpenShell API/version.
+- **TODO — closure and recovery:** Observe new/active traffic closure, reconcile uncertain attempts and retain session cleanup across restart.
 
-- **Session delivery:** authenticated original-session access, readiness and
-  private/workspace mounts despite the inspected Authorization and volume limits.
-- **Model access:** private authentication for **OpenAI Responses over HTTPS and
-  supported streaming**. Account/subscription support remains a question.
-- **Withdrawal:** observable closure of new and active Git/model traffic.
-  Attachment readiness neither tests backend access nor proves active-stream closure.
+Verify through the ordinary API and worker: create a dedicated Codex Agent, complete model and authorized Git/`gh` work, reject a read-only push, then withdraw access while another Agent continues working. Measure closure bounds and copied-authority denial. Source and mocks do not prove installed or live-provider behavior.
 
-OCE supplies authorization and execution/connection evidence. Missing protected
-evidence keeps the Agent nonserving. [Remaining owner decisions](credential-gateway-driver/contract.md#supplier-decisions-and-ownership)
-include revision encoding, delivery sequencing and dedicated OpenClaw's protocol.
+<a id="provider-interface-to-review"></a>
+<a id="openshell-integration-questions"></a>
 
-<a id="scope"></a>
+## Open questions
 
-## First integration and incident response
+Provider-management names and signatures remain open. The [pinned OpenShell APIs](https://github.com/NVIDIA/OpenShell/blob/f8002d19ad2f948abf48bd2f5ca4f8ebd388e3c8/proto/openshell.proto) provide these starting points:
 
-Keep Sandbox-only independent. First, create a dedicated Codex Agent through the
-ordinary API, attach approved model/repository access, complete a Responses turn
-and an authorized Git/`gh` operation, then inspect and withdraw access. A read-only
-push must fail; another Agent must keep working. Dedicated OpenClaw needs separate
-qualification for [issue 118](https://github.com/openclaw/openclaw-enterprise/issues/118).
+| Working name           | Decision and existing OpenShell surface                                                                                                                                                                  |
+| ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `AddProvider`          | Expose `CreateProvider` and `AttachSandboxProvider` separately, or combine them? Separate operations make shared ownership clearer.                                                                      |
+| `AuthenticateProvider` | Keep this connection/reauthentication name, or use `ConnectProvider`? No matching RPC exists in the pinned source; grant acquisition and refresh need a mapping. This is not per-request authentication. |
+| `ProviderStatus`       | Combine `GetProviderRefreshStatus` and `GetSandboxProviderStatus`, or preserve separate observations? Neither establishes active-stream closure.                                                         |
+| `RemoveProvider`       | Expose `DetachSandboxProvider` and `DeleteProvider` separately? Removing one Agent's access must preserve other Agents' shared configuration.                                                            |
 
-Withdrawal must close new and active traffic within the protected profile's
-[bounds](credential-gateway-driver/contract.md#bounds-and-source-lifetime).
-Uncertain effects retain their original attempt without replay or reissuance;
-missing inventory remains unknown. Cleanup failures cannot reopen access or
-remove another Agent's attachments.
-
-## Verification
-
-The existing direct-key exception delivers authorized model keys to workloads;
-it does not provide protected mediation or copied-authority guarantees.
-Compatibility retains weaker bearer replay and withdrawal/restart limits without
-mandatory SPIRE. Neither silently replaces a protected profile.
-
-Keep existing guards until real API/worker consumers meet the companion's
-[acceptance obligations](credential-gateway-driver/contract.md#implementation-and-acceptance-detail),
-including provider readback, refusal, confidentiality, audit, rotation, recovery,
-measured closure and sibling-safe cleanup. Source and mock checks do not prove
-installed OpenShell, live-provider or release readiness.
+- Which OpenShell version and mapping should supply this interface?
+- Which static, OAuth or dynamically issued credentials should the first slice exercise? How should connection and reauthentication handle them?
+- Which model adapter and account/subscription modes should authenticate Responses and supported streams?
+- Which runtime mechanisms should establish session identity, mounts, readiness and active-stream closure?
 
 ## References
 
-[Detailed contract and source references](credential-gateway-driver/contract.md#references).
-Full proposed lifecycle: [SVG](credential-gateway-driver/request-lifecycle.svg),
-[editable Mermaid](credential-gateway-driver/request-lifecycle.mmd).
+Full interface, environment limits and acceptance: [contract companion](credential-gateway-driver/contract.md). Proposed lifecycle: [SVG](credential-gateway-driver/request-lifecycle.svg), [editable Mermaid](credential-gateway-driver/request-lifecycle.mmd).
