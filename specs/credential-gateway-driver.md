@@ -1,18 +1,32 @@
-# Credential Gateway Driver
+# OpenShell credential integration
 
-## Problem and Decision
+<a id="problem-and-decision"></a>
 
-Developers need independent containment and credential mediation. **Proposed:** select singular `sandbox` and `credential_gateway` library views sharing OpenShell. Existing authority, custody, services, Pods and issuers remain unchanged. No inheritance/capability-array migration.
+## Goal and review request
 
-## Scope
+OpenClaw Enterprise (OCE) needs straightforward recovery when an Agent fails or
+is compromised:
 
-Sandbox-only stays independent. Combined Codex targets API-created model turns, authorized Git/gh, withdrawal and cleanup. Dedicated OpenClaw remains required for [issue 118](https://github.com/openclaw/openclaw-enterprise/issues/118). Gateway-only OpenShell, external multirole factories and additional protocols remain deferred.
+- **Disposable Agents:** withdraw one Agent's access without disrupting others
+  or rotating every shared provider credential.
+- **No long-lived credentials in the Agent container:** keep provider credentials
+  outside the Agent on the protected path. Copied Agent material must not grant
+  access from outside the cluster, directly or through a reachable gateway.
+- **Auditable use:** identify the Agent, approved operation and outcome without
+  recording credentials or sensitive request contents.
 
-## Contract
+**Mrunal: help us refine the design and define the interface: function names,
+inputs, results and failure behavior.** Please map the provider lifecycle below
+to supported OpenShell APIs and versions, and identify the smallest gaps for a
+first integration. This is a proposal, not a qualified integration.
 
-Configure runtime, workspace, private-session delivery and authorized repository/model bindings. This proposed, unexecuted Installation input references canonical Sandbox configuration: `{"drivers":{"credential_gateway":{"id":"openshell-credentials","configuration":{"sandboxDriverId":"openshell-sandbox"}}}}` Validate role/id, methods/version and configuration before effects, preserving prior selection on invalid/mutated input. Reject external packages/conflicting references. Initialize/close once per API/worker process through one hook-bearing view. Sharing confers neither cross-process serialization nor API-only Provider credentials on workers.
+## One integration, two capabilities
 
-Save an Agent, invoke its authorized [bodyless deploy API](https://github.com/openclaw/openclaw-enterprise/blob/6b5c9093b75044f181db74bc14dffaa3410e617a/docs/reference/agents/deployment.md), then poll with revision-read permission. 202 admits work. Historical activation does not prove live readiness: verify it before exercising authorized native Gateway ingress.
+OCE selects **Sandbox** to contain execution and **Credential Gateway** to make
+approved services available. One OpenShell implementation can supply both,
+composing with existing Secret and credential owners. OpenClaw Control Plane
+(OCC) retains authorization and assignment; Compute owns Sandbox lifecycle;
+workers prepare credential sessions once.
 
 ```mermaid
 ---
@@ -22,51 +36,118 @@ config:
   themeVariables:
     fontSize: 14px
   flowchart:
-    rankSpacing: 22
-    nodeSpacing: 16
-    padding: 9
+    rankSpacing: 20
+    nodeSpacing: 18
+    padding: 10
+    subGraphTitleMargin:
+      top: 6
+      bottom: 10
 ---
 flowchart LR
-  S["<b>Sandbox view</b><br/>Compute lifecycle"] -.-> O["<b>OpenShell</b><br/>Shared implementation"]
-  G["<b>Gateway view</b><br/>Credential mediation"] -.-> O
-  O -.->|Git/gh| R["<b>OCE HTTPS gateway</b><br/>GitHub authentication"]
-  O -.->|Responses| M["<b>Provider adapter</b><br/>Private model authentication"]
-  classDef view fill:#edf3fa,stroke:#839ab5,color:#24374d
+  C["<b>OCC</b><br/>Authorize and assign"]
+  subgraph O["OpenShell containment"]
+    A["<b>Agent / Harness</b><br/>Bound session"]
+  end
+  subgraph P["Private credentials"]
+    G["<b>OCE HTTPS service</b><br/>GitHub authentication"]
+    M["<b>Model adapter</b><br/>Provider authentication"]
+  end
+  C -.-> A
+  A -.->|Git / gh| G
+  A -.->|Responses| M
+  classDef control fill:#edf3fa,stroke:#839ab5,color:#24374d
   classDef owner fill:#eaf3ef,stroke:#809f91,color:#263f34
-  class S,G view
-  class O,R,M owner
+  class C control
+  class A,G,M owner
+  style O fill:#fafbfc,stroke:#d8dee6
+  style P fill:#fafbfc,stroke:#d8dee6
 ```
 
-Dashed joins are proposed. RFC321 separates native Gateway and Codex Pods. The repository service attaches GitHub authentication. Model adapters privately authenticate allowed OpenAI Responses HTTPS/streaming. Arbitrary proxying/direct GitHub bypass are forbidden. Compute retains Sandbox lifecycle. Workers create/repair/retire sessions once. Proposed `prepareGatewayMediation` consumes their prepared context, never environment strings or repeated issuance.
+Dashed connections show the proposed protected path. OCE retains its GitHub App
+key, installation-token issuer and existing HTTPS mediation. Model authentication
+is private and grants no GitHub authority. Arbitrary proxying and direct GitHub
+bypass are forbidden.
 
-Proposed `oce-credential-gateway/v1` consumes internal owner-produced objects, never authority from casts/strings. Every call takes finite receiving-process monotonic deadlines and cancellation signals (`bounds`):
+Credential Gateway is implementation-neutral. A CI `.env` reader or local script
+are possible simpler implementations, not delivered features. CI may use fake
+credentials and mocked models without strong isolation. Real local credentials
+need a separate isolation decision; environment labels cannot weaken a protected profile.
 
-- `prepare`: trusted revision, owner-prepared material binding, original attempt → opaque lease/safe status or `not-dispatched`/`uncertain`. Prepares mediation only.
-- `mediate`: lease, authenticated caller, trusted revision, assurance, credential reference, permitted operation, approved HTTPS destination, original attempt and ingress-bound exchange → completed response status/attempt, `not-dispatched` or `uncertain`. Responses use only the exchange bound to that session/request/parsed plan.
-- `status(lease)` → admission, independent cleanup state and wall deadline, or `unavailable`.
-- `withdraw(lease)` → `withdrawn` or `pending`/original attempt. Requests/observes original-owner new/active traffic closure.
-- `dispose(lease)` → `disposed` or `cleanup-pending`/original attempt. Releases only exact owned attachments through original custody.
+<a id="contract"></a>
 
-The lease pins exact credential, revision, profile and original session generation. Each new request requires fresh authenticated operation/original-attempt binding without widening the lease. `Assurance.kind` must match the revision-selected trust profile or deny. Missing genuine producer ports refuse. Protected acquisition/dispatch requires requester authority, expected execution and actual receiving-connection evidence. Missing evidence keeps staged admission nonserving. Background Work retains admission. Compatibility retains weaker bearer replay/recovery without mandatory SPIRE.
+## Provider interface to review
 
-Freeze roles/config/hooks before dependents. The existing revision transaction persists `driverId`, `implementation`, `contractVersion`, `profileDigest` and `sandboxDriverId`. Identical selection is a no-op. Restart retains bindings/cleanup routes. Changed selection cannot retarget or extend authority/deadlines.
+Connecting a provider and authorizing one Agent to use it are separate concerns.
+These names are **placeholders, not final signatures**. Please help resolve:
 
-Use the closed GitHub parser with `git-read`, `git-write`, `git-full`. Reject mismatched effects, unknown routes, redirects and destination rewrites. Bound responses/time/headers. Mandatory audit records safe correlation/outcomes, never credentials, payloads, raw URLs/headers or provider errors.
+| Starting operation     | Meaning and open choice                                                                                                                                                                                                     |
+| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `AddProvider`          | OpenShell separates `CreateProvider` and `AttachSandboxProvider`. Expose both, or combine them? We favor separation for clear ownership of shared providers.                                                                |
+| `AuthenticateProvider` | No matching RPC exists in the pinned source. Keep this connection/reauthentication name, or `ConnectProvider`? Map grant/refresh handling separately; the implementation authenticates individual requests.                 |
+| `ProviderStatus`       | OpenShell separates `GetProviderRefreshStatus` and `GetSandboxProviderStatus`. A summary is simpler; distinct, current connection/attachment/closure observations clarify recovery. We favor preserving those distinctions. |
+| `RemoveProvider`       | OpenShell has `DetachSandboxProvider` and `DeleteProvider`. Keep scopes distinct? Detachment must close traffic without deleting shared material; neither implies upstream revocation.                                      |
 
-Deadlines cannot extend source validity/authority. Reject remote monotonic timestamps. Restart conservatively converts persisted wall deadlines under the original owner's clock policy. Cancellation/deadline stops submission and bounds waiting. Accepted finalization remains owned after disconnect. `not-dispatched` carries a closed safe reason. Uncertain acquisition/dispatch retains attempts, capacity and late settlement without replay/reissue. Partial setup compensates or retains cleanup before throwing: outer rollback sees only returned adapters. Lost ephemeral inventory/unavailable status proves neither absence nor settlement. State atomicity cannot settle provider effects. Protected recovery requiring durable inventory still requires its supplier.
+The interface should accommodate **static secrets, OAuth grants and dynamic
+issuance**; OAuth and dynamic issuance can overlap. Static-first keeps the initial
+integration small; exercising refresh early tests more lifecycle behavior. All
+three in MVP would be useful, not required. Please help choose the first slice.
+Source owners retain custody and renewal; static values may remain long-lived
+outside the protected Agent.
 
-Ready means mediation-only. Withdrawn never reopens despite cleanup failure. Source owners retain validity, renewal/overlap and retirement. Static disposal neither revokes upstream keys nor deletes shared material. Protected new/active Git/model closure must finish within 30 seconds of withdrawal or renewal loss, including observation/caching/scheduling. The selected five-second finalization-observer profile bound remains stricter. Compatibility retains existing withdrawal/restart limits.
+The [contract companion](credential-gateway-driver/contract.md) preserves the proposed
+`prepare`, `mediate`, `status`, `withdraw` and `dispose` interface. Those methods
+cover mediation and cleanup; their mapping to provider operations needs review.
 
-## Implementation and Open Questions
+<a id="implementation-and-open-questions"></a>
 
-Main supplies session preparation and Sandbox foundations. Repository-with-Sandbox and non-Codex OpenShell guards remain. Registration, profile persistence and receiving joins are proposed. Original owners must reconcile RFC321's compatibility-first sequence with the protected-model-first combined target, preserving both assurances.
+## OpenShell integration questions
 
-Mrunal/OpenShell must identify authenticated original-session transport/readiness despite Authorization stripping, private/workspace mounts despite pre.7 PVC/projected-token limits, Responses attach/status/detach and observable active-stream closure. IAM/State/Work and Compute must supply genuine admission/observation. Profile encoding and dedicated OpenClaw protocol remain open.
+The [attachment/status](https://github.com/NVIDIA/OpenShell/blob/f8002d19ad2f948abf48bd2f5ca4f8ebd388e3c8/proto/openshell.proto#L131-L169)
+and [provider/refresh](https://github.com/NVIDIA/OpenShell/blob/f8002d19ad2f948abf48bd2f5ca4f8ebd388e3c8/proto/openshell.proto#L281-L414)
+APIs above exist in pinned OpenShell source. Please review the mapping and resolve:
+
+- **Session delivery:** authenticated original-session access, readiness and
+  private/workspace mounts despite the inspected Authorization and volume limits.
+- **Model access:** private authentication for **OpenAI Responses over HTTPS and
+  supported streaming**. Account/subscription support remains a question.
+- **Withdrawal:** observable closure of new and active Git/model traffic.
+  Attachment readiness neither tests backend access nor proves active-stream closure.
+
+OCE supplies authorization and execution/connection evidence. Missing protected
+evidence keeps the Agent nonserving. [Remaining owner decisions](credential-gateway-driver/contract.md#supplier-decisions-and-ownership)
+include revision encoding, delivery sequencing and dedicated OpenClaw's protocol.
+
+<a id="scope"></a>
+
+## First integration and incident response
+
+Keep Sandbox-only independent. First, create a dedicated Codex Agent through the
+ordinary API, attach approved model/repository access, complete a Responses turn
+and an authorized Git/`gh` operation, then inspect and withdraw access. A read-only
+push must fail; another Agent must keep working. Dedicated OpenClaw needs separate
+qualification for [issue 118](https://github.com/openclaw/openclaw-enterprise/issues/118).
+
+Withdrawal must close new and active traffic within the protected profile's
+[bounds](credential-gateway-driver/contract.md#bounds-and-source-lifetime).
+Uncertain effects retain their original attempt without replay or reissuance;
+missing inventory remains unknown. Cleanup failures cannot reopen access or
+remove another Agent's attachments.
 
 ## Verification
 
-Keep guards until actual API/worker consumers prove replaceable selection, effect counts, invalid configuration refusal, model/Git provider readback, read-only-write and foreign-scope/destination denial, confidentiality, safe responses/audit, rotation, partial/unknown failures, profile-bound restart and sibling-safe cleanup. Pin image/chart/kernel/CNI/storage/tool/model versions. Measure withdrawal onset, observation, last admission and last active byte separately. Preserve caller DNS pins with hostname/SNI/certificate checks. `tls: skip` routes without OpenShell substitution. Source/conformance, composition, installed, live-provider and release proof remain separate. Embedded GitHub success does not qualify OpenShell.
+The existing direct-key exception delivers authorized model keys to workloads;
+it does not provide protected mediation or copied-authority guarantees.
+Compatibility retains weaker bearer replay and withdrawal/restart limits without
+mandatory SPIRE. Neither silently replaces a protected profile.
+
+Keep existing guards until real API/worker consumers meet the companion's
+[acceptance obligations](credential-gateway-driver/contract.md#implementation-and-acceptance-detail),
+including provider readback, refusal, confidentiality, audit, rotation, recovery,
+measured closure and sibling-safe cleanup. Source and mock checks do not prove
+installed OpenShell, live-provider or release readiness.
 
 ## References
 
-[Main foundations](https://github.com/openclaw/openclaw-enterprise/tree/6b5c9093b75044f181db74bc14dffaa3410e617a), [Driver ownership](https://github.com/openclaw/openclaw-enterprise/blob/6b5c9093b75044f181db74bc14dffaa3410e617a/specs/17-provider-driver-abstraction.md), [binding authority](https://github.com/openclaw/openclaw-enterprise/blob/6b5c9093b75044f181db74bc14dffaa3410e617a/specs/30-harness-auth-binding.md), [deployment](https://github.com/openclaw/openclaw-enterprise/blob/6b5c9093b75044f181db74bc14dffaa3410e617a/docs/reference/agents/deployment.md). [RFC321](https://github.com/openclaw/openclaw-enterprise/blob/388864ebec1474ee1d10ce0001c256bf5063b5de/specs/37-openshell-runtime.md) is a separate unmerged proposal. [OpenShell pre.7](https://github.com/NVIDIA/OpenShell/tree/f8002d19ad2f948abf48bd2f5ca4f8ebd388e3c8) is source, not installed proof. Proposed lifecycle: [SVG](credential-gateway-driver/request-lifecycle.svg), [editable Mermaid](credential-gateway-driver/request-lifecycle.mmd).
+[Detailed contract and source references](credential-gateway-driver/contract.md#references).
+Full proposed lifecycle: [SVG](credential-gateway-driver/request-lifecycle.svg),
+[editable Mermaid](credential-gateway-driver/request-lifecycle.mmd).
