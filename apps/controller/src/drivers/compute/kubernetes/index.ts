@@ -680,6 +680,11 @@ function channelProxy(value: unknown): { address: string; port: number } {
 
 export function kubernetesNamespaceName(namespaceId: string): string {
   const id = required(namespaceId, "Platform Namespace ID");
+  return `oce-${sha256Hex(id, 15)}`;
+}
+
+function previousKubernetesNamespaceName(namespaceId: string): string {
+  const id = required(namespaceId, "Platform Namespace ID");
   const slug =
     id
       .toLowerCase()
@@ -688,6 +693,13 @@ export function kubernetesNamespaceName(namespaceId: string): string {
       .slice(0, 46)
       .replace(/-+$/g, "") || "ns";
   return `oce-${slug}-${sha256Hex(id, 12)}`;
+}
+
+function isManagedKubernetesNamespaceName(name: string, namespaceId: string): boolean {
+  return (
+    name === kubernetesNamespaceName(namespaceId) ||
+    name === previousKubernetesNamespaceName(namespaceId)
+  );
 }
 
 export function kubernetesGatewayNamespaceName(namespaceId: string): string {
@@ -737,7 +749,7 @@ function verifiedKubernetesNamespace(
   const external = annotations["openclaw.dev/namespace-lifecycle"] === "external";
   if (!external) {
     if (
-      name !== kubernetesNamespaceName(namespaceId) ||
+      !isManagedKubernetesNamespaceName(name, namespaceId) ||
       labels["app.kubernetes.io/managed-by"] !== MANAGER
     ) {
       throw new OwnershipFailure(
