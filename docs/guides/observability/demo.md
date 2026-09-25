@@ -146,6 +146,28 @@ one healthy target per API/worker Pod. Query Loki with
 `{service_name=~"occ-api|occ-worker"}`. Check current timestamps and both service
 identities. A ready Grafana Pod alone does not prove either data source works.
 
+## Read and narrow operational logs
+
+The logs dashboard opens with **Service** and **Event** set to **All**. **All
+events** shows each retained record with its service and event, plus available
+HTTP method/status/duration or worker operation/outcome/attempt/code. Missing
+fields stay absent. **Needs attention** selects warnings/errors, HTTP 4xx/5xx,
+and `retry`, `permanent`, or `failure` work outcomes. HTTP and worker failures can
+be INFO records, so filtering only by severity misses them.
+
+Select a service or event to narrow both panels. Expand a row for its structured
+request, work, and workload identity. From the panel menu, open **Explore** and
+filter that metadata to follow related records, for example:
+
+```logql
+{service_name="occ-api"} | request_id="<request-id-from-log-details>"
+```
+
+The summaries format existing metadata at query time. Stored bodies remain event
+names; no raw messages, prompts, URIs, or new identity labels are exported.
+Successful GETs cannot be identified as health probes from these fields. These
+filters are operator conveniences, not tenant authorization or Agent session views.
+
 Loki accepts the filtered logs through its native OTLP endpoint with structured
 metadata enabled. It is configured for 24-hour retention on a 1 GiB
 disposable volume; deletion runs asynchronously. Prometheus retains up to 24 hours / 256 MB, also

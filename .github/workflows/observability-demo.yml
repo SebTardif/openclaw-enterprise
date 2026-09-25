@@ -51,3 +51,11 @@ jobs:
           profile: k3d
           node-version: "24.16.0"
           artifact-prefix: demo-results
+      - name: Upload rendered log dashboard
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: demo-log-dashboard
+          path: ${{ runner.temp }}/observability-demo/*.png
+          if-no-files-found: error
+          retention-days: 7

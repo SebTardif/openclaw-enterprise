@@ -1,7 +1,7 @@
 ---
 created: 2026-09-02
-updated: 2026-09-23
-last_updated_session: authoring-run/8fb2b0ce-9ad1-401c-a9b9-4e3919b5f573
+updated: 2026-09-25
+last_updated_session: 01a0d57b-51eb-7551-874e-38c5b633af76
 ---
 
 # Common Operational Logging Flow
@@ -15,8 +15,8 @@ Codex runtime logging from the saved revision. The admitted native Configuration
 keeps JSON console levels and native OTLP logs disabled while the runtime owns
 console and tool redaction without a `logging.redactSensitive` configuration key.
 Optional Docker Compose or Helm Collector configuration exports only reviewed
-operational records. This flow ends at the Collector exporter; PostgreSQL audit
-remains separate durable evidence.
+operational records. The optional demo dashboard presents their safe metadata
+from Loki; PostgreSQL audit remains separate durable evidence.
 
 ## Entry Points
 
@@ -56,6 +56,8 @@ graph TD
     M --> N["Promote safe event classes and drop content-bearing records"]
     N --> O["Bounded queue and OTLP HTTP exporter"]
   end
+  O --> P["Optional demo Loki stores event body and structured metadata"]
+  P --> Q["Grafana filters and formats safe metadata at query time"]
 ```
 
 ## Execution Trace
@@ -168,6 +170,18 @@ Collector-only configuration. Finite queues and retry limits make operational
 logs best-effort, but outage or overflow cannot block API service, worker
 reconciliation, or PostgreSQL audit persistence.
 
+### 8. The demo dashboard presents existing metadata
+
+`deploy/helm/openclaw-observability-demo/templates/grafana.yaml:logs.json`
+
+The chart provisions `files/logs-dashboard.json`. Loki's native OTLP ingestion
+keeps the event body and normalizes attribute names for structured metadata.
+Grafana applies fixed service/event selections and native LogQL `line_format`
+to show HTTP and worker fields without changing stored records. The all-events
+panel retains routine records; the attention panel also includes INFO HTTP
+4xx/5xx and retry/permanent/failure work outcomes. Opaque correlation fields stay
+in log details for operator drill-down. Neither panel is an authorization boundary.
+
 ## Debugging and Verification
 
 - Check the startup snapshot first when API, worker, bootstrap, or migration
@@ -198,6 +212,8 @@ reconciliation, or PostgreSQL audit persistence.
 [keep this for the user to add notes. do not change between edits]
 
 ## Changelog
+
+- 2026-09-25 11:31: Documented query-time operational summaries and filtering in the accompanying demo dashboard change. (01a0d57b-51eb-7551-874e-38c5b633af76 - 1a458b227585c572ec0ac70fd10efc3834165075)
 
 - 2026-09-23 17:40: Documented private Collector scraping and selected in-cluster export in the accompanying observability change. (authoring-run/8fb2b0ce-9ad1-401c-a9b9-4e3919b5f573 - faf0b0ae467a3bebfd5b5ed0a92f259248e5da74)
 

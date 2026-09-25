@@ -181,7 +181,15 @@ and credential exclusion. No Prometheus, Grafana, or Loki is installed.
 Run `pnpm test:observability --demo` for the separate demo smoke test. It installs
 only Prometheus, Grafana, and Loki. Small protocol fixtures publish a known metric
 and OTLP record; queries through Grafana verify discovery, scraping, ingestion,
-and both data-source connections. The test also checks dashboard provisioning.
+and both data-source connections. The test opens the provisioned logs dashboard
+in the pinned Playwright Chromium browser, checks readable rows and metadata
+details, and changes its Service/Event controls. It executes Grafana's actual
+interpolated panel queries against Loki, including INFO HTTP failures and worker
+retry/permanent/failure outcomes in the attention panel. The original event body
+and request correlation must remain queryable. Install the browser with
+`pnpm exec playwright install --with-deps chromium` before a local demo run.
+The hosted lane uploads only synthetic dashboard PNGs as `demo-log-dashboard`
+for seven days; it does not upload login state, browser traces, or credentials.
 It does not build or install OCC, PostgreSQL, or a Collector. It runs in the
 [Observability Demo workflow](../../.github/workflows/observability-demo.yml) for
 relevant demo-chart and test-infrastructure changes, on merge groups,
