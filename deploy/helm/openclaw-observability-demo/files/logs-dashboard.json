@@ -187,7 +187,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "{service_name=~`${service:regex}`} | event_name=~`${event:regex}` | line_format `{{.service_name}} | {{.event_name}}{{if .http_request_method}} {{.http_request_method}}{{end}}{{if .http_response_status_code}} status={{.http_response_status_code}}{{end}}{{if .duration_ms}} duration={{.duration_ms}}ms{{end}}{{if .work_operation}} operation={{.work_operation}}{{end}}{{if .work_outcome}} outcome={{.work_outcome}}{{end}}{{if .work_attempt}} attempt={{.work_attempt}}{{end}}{{if .occ_code}} code={{.occ_code}}{{end}}`",
+          "expr": "{service_name=~`${service:regex}`} | event_name=~`${event:regex}` | line_format `{{.service_name}} | {{.event_name}}{{if .http_request_method}} {{.http_request_method}}{{end}}{{if .http_response_status_code}} status={{.http_response_status_code}}{{end}}{{if .duration_ms}} duration={{.duration_ms}}ms{{end}}{{if .work_outcome}} outcome={{.work_outcome}}{{end}}{{if .occ_code}} code={{.occ_code}}{{end}}{{if .work_operation}} op={{.work_operation}}{{end}}{{if .work_attempt}} attempt={{.work_attempt}}{{end}}`",
           "queryType": "range"
         }
       ]
@@ -220,7 +220,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "{service_name=~`${service:regex}`} | event_name=~`${event:regex}` | severity_text=~\"WARN|ERROR|FATAL\" or http_response_status_code=~\"[45][0-9]{2}\" or work_outcome=~\"retry|permanent|failure\" | line_format `{{.service_name}} | {{.event_name}}{{if .http_request_method}} {{.http_request_method}}{{end}}{{if .http_response_status_code}} status={{.http_response_status_code}}{{end}}{{if .duration_ms}} duration={{.duration_ms}}ms{{end}}{{if .work_operation}} operation={{.work_operation}}{{end}}{{if .work_outcome}} outcome={{.work_outcome}}{{end}}{{if .work_attempt}} attempt={{.work_attempt}}{{end}}{{if .occ_code}} code={{.occ_code}}{{end}}`",
+          "expr": "{service_name=~`${service:regex}`} | event_name=~`${event:regex}` | severity_text=~\"WARN|ERROR|FATAL\" or http_response_status_code=~\"[45][0-9]{2}\" or work_outcome=~\"retry|permanent|failure\" | line_format `{{.service_name}} | {{.event_name}}{{if .http_request_method}} {{.http_request_method}}{{end}}{{if .http_response_status_code}} status={{.http_response_status_code}}{{end}}{{if .duration_ms}} duration={{.duration_ms}}ms{{end}}{{if .work_outcome}} outcome={{.work_outcome}}{{end}}{{if .occ_code}} code={{.occ_code}}{{end}}{{if .work_operation}} op={{.work_operation}}{{end}}{{if .work_attempt}} attempt={{.work_attempt}}{{end}}`",
           "queryType": "range"
         }
       ]

@@ -188,8 +188,10 @@ interpolated panel queries against Loki, including INFO HTTP failures and worker
 retry/permanent/failure outcomes in the attention panel. The original event body
 and request correlation must remain queryable. Install the browser with
 `pnpm exec playwright install --with-deps chromium` before a local demo run.
-The hosted lane uploads only synthetic dashboard PNGs as `demo-log-dashboard`
-for seven days; it does not upload login state, browser traces, or credentials.
+The hosted lane uploads synthetic dashboard PNGs as `demo-log-dashboard` for
+seven days. A failed browser check also saves bounded panel text, query expressions,
+and datasource response status/error diagnostics. It does not upload login state,
+request headers, full responses, browser traces, or credentials.
 It does not build or install OCC, PostgreSQL, or a Collector. It runs in the
 [Observability Demo workflow](../../.github/workflows/observability-demo.yml) for
 relevant demo-chart and test-infrastructure changes, on merge groups,

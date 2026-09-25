@@ -86,7 +86,7 @@ test(
           "work.attempt": 1,
           "occ.code": code,
         },
-        line: `occ-worker | worker.completed operation=namespace.ensure outcome=${outcome} attempt=1 code=${code}`,
+        line: `occ-worker | worker.completed outcome=${outcome} code=${code} op=namespace.ensure attempt=1`,
         attention: ["retry", "permanent", "failure"].includes(outcome),
       })),
       { event: "worker.health", service: "occ-worker", line: "occ-worker | worker.health" },
@@ -143,12 +143,13 @@ test(
         }
       }
     });
+    // Grafana PanelChrome names its section from the title heading.
+    const allPanel = page.getByRole("region", { name: "All events", exact: true });
+    const attentionPanel = page.getByRole("region", { name: "Needs attention", exact: true });
     try {
       await page.goto(`${url}/d/occ-logs?from=now-5m&to=now&refresh=1h`, {
         waitUntil: "domcontentloaded",
       });
-      const allPanel = page.getByLabel("All events panel", { exact: true });
-      const attentionPanel = page.getByLabel("Needs attention panel", { exact: true });
       await allPanel.getByText(records[0].line, { exact: true }).waitFor();
       await attentionPanel.getByText(records[2].line, { exact: true }).waitFor();
 
@@ -231,17 +232,16 @@ test(
             () => true,
             () => false,
           );
-        const panels = await page
-          .locator('[aria-label$=" panel"]')
-          .allTextContents()
-          .catch(() => []);
+        const panels = await Promise.all(
+          [allPanel, attentionPanel].map((panel) => panel.allTextContents().catch(() => [])),
+        );
         const settled = await Promise.allSettled(responses);
         await writeFile(
           join(demo.artifacts, "logs-failure.json"),
           JSON.stringify({
             path: new URL(page.url()).pathname,
             screenshot,
-            panels: panels.slice(0, 2).map((text) => text.slice(0, 6_000)),
+            panels: panels.flat().slice(0, 2).map((text) => text.slice(0, 6_000)),
             queries: [...new Set(queries)].slice(0, 6).map((query) => query.slice(0, 2_000)),
             responses: settled
               .filter((result) => result.status === "fulfilled")
