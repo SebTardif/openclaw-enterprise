@@ -72,7 +72,7 @@ flowchart LR
   linkStyle default stroke:#8B949E,stroke-width:1px
 ```
 
-Dashed lines show proposed, unqualified paths. Git/`gh` uses the existing OCE HTTPS service and GitHub App credentials, with no second issuer or direct GitHub bypass. Model authentication remains private. **TODO:** Select its adapter and credential owner.
+Dashed lines show proposed, unqualified paths. Git/`gh` uses the existing OCE HTTPS service and GitHub App credentials, with no second issuer or direct GitHub bypass. Model authentication remains private.
 
 <a id="first-integration-and-incident-response"></a>
 
@@ -107,7 +107,7 @@ Verify through the ordinary API and worker: create a dedicated Codex Agent, comp
 
 ## Open questions
 
-Provider-management names and signatures remain open. The [pinned OpenShell APIs](https://github.com/NVIDIA/OpenShell/blob/f8002d19ad2f948abf48bd2f5ca4f8ebd388e3c8/proto/openshell.proto) provide these starting points:
+The OpenShell version, provider-management names and signatures remain open. The [pinned OpenShell APIs](https://github.com/NVIDIA/OpenShell/blob/f8002d19ad2f948abf48bd2f5ca4f8ebd388e3c8/proto/openshell.proto) provide these starting points:
 
 | Working name           | Decision and existing OpenShell surface                                                                                                                                                                  |
 | ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -116,11 +116,10 @@ Provider-management names and signatures remain open. The [pinned OpenShell APIs
 | `ProviderStatus`       | Combine `GetProviderRefreshStatus` and `GetSandboxProviderStatus`, or preserve separate observations? Neither establishes active-stream closure.                                                         |
 | `RemoveProvider`       | Expose `DetachSandboxProvider` and `DeleteProvider` separately? Removing one Agent's access must preserve other Agents' shared configuration.                                                            |
 
-- Which OpenShell version and mapping should supply this interface?
 - Which static, OAuth or dynamically issued credentials should the first slice exercise? How should connection and reauthentication handle them?
 - Which model adapter and account/subscription modes should authenticate Responses and supported streams?
 - Which runtime mechanisms should establish session identity, mounts, readiness and active-stream closure?
 
-## References
+<a id="references"></a>
 
 Full interface, environment limits and acceptance: [contract companion](credential-gateway-driver/contract.md). Proposed lifecycle: [SVG](credential-gateway-driver/request-lifecycle.svg), [editable Mermaid](credential-gateway-driver/request-lifecycle.mmd).
