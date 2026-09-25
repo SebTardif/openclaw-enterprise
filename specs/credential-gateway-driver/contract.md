@@ -262,7 +262,7 @@ Finite receiving-process monotonic deadlines reject remote monotonic timestamps.
 
 Source owners retain validity, renewal, overlap policy and retirement. Static values bind an exact source version and acquire no invented expiry. Issued credentials retain the issuer's scope, expiry, minimum validity and replacement policy. Unsupported or uncertain revocation remains cleanup-pending.
 
-Protected new and active Git and model traffic must close within **30 seconds from withdrawal or renewal-loss onset to the last active byte**, including observation, caching and scheduling. Selected active exchanges recheck closure within **five seconds** and stop on observation expiry or database loss. This bound is neither a universal cleanup deadline nor an upstream-finalization deadline. Measure actual onset, observation, last admission, last byte and disposal separately.
+Protected new and active Git and model traffic must close within **30 seconds from withdrawal or renewal-loss onset to the last active byte**, including observation, caching and scheduling. Selected active exchanges recheck closure within **five seconds** and stop on observation expiry or database loss. This bound is neither a universal cleanup deadline nor an upstream-finalization deadline. Where selected, the separate five-second finalization observer remains required under its original profile; neither the active-traffic recheck nor the 30-second target replaces it. Measure actual onset, observation, last admission, last byte and disposal separately.
 
 ## Failure, withdrawal and cleanup
 
