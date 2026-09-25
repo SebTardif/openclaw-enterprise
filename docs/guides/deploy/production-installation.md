@@ -182,10 +182,10 @@ Edit the protected YAML copies before provisioning anything:
   If enabling Agent plugins, set one compatible bundled `drivers.plugin` selector
   and any required Codex catalog-reader configuration. See the
   [PluginDriver reference](../../reference/drivers/plugin.md#selection-and-catalogs).
-  For dedicated Codex command execution on nodes whose default syscall policy
-  blocks user namespaces, install a reviewed compatibility profile on every
-  eligible node and set `runtime.codexSeccompProfile` to its relative kubelet
-  profile path. See the [Kubernetes runtime requirements](../../reference/drivers/kubernetes-compute.md#requirements).
+  If the default syscall policy blocks Codex user namespaces, follow
+  [Codex sandbox setup](codex-sandbox.md): install a reviewed profile on every
+  eligible node, set `runtime.codexSeccompProfile` to its relative kubelet path,
+  and verify sandbox enforcement.
   Set `presets.includeDefaults: false` to disable the example's
   [bundled Presets](../../reference/presets.md#installation-defaults).
 - `$OCC_INPUT_DIRECTORY/bootstrap-pvc.yaml`: set the bootstrap PVC name,
@@ -305,7 +305,7 @@ read-only into migration, bootstrap, API, and worker containers at
 
 Enable repository credentials only after preparing the
 [repository service inputs](../repository-credentials/installation.md) and the matching
-[GitHub Provider selection](../../reference/providers.md#github-repository-credentials).
+[GitHub Backend selection](../../reference/backends.md#github-repository-credentials).
 The feature defaults disabled. It requires a separately built, immutable service
 image, an immutable registry ConfigMap, private service configuration, App key,
 TLS certificate/key for the exact internal Service hostname, and a separate

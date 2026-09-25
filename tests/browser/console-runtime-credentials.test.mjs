@@ -66,7 +66,7 @@ async function login(page, fixture, path) {
   await page.getByLabel("Username").fill(fixture.credentials.email);
   await page.getByLabel("Password").fill(fixture.credentials.password);
   await page.getByRole("button", { name: "Login" }).click();
-  await page.waitForURL(/\/console\/(agents|providers|namespaces|settings)/);
+  await page.waitForURL(/\/console\/(agents|backends|namespaces|settings)/);
 }
 
 function detailUrl(fixture, namespaceId, agentId, tab = "credentials") {
@@ -360,6 +360,27 @@ test("draft Agent deploy waits for generated runtime credentials", async (t) => 
     )
     .waitFor();
   assert.equal(await page.getByRole("button", { name: "Deploy new revision" }).isDisabled(), false);
+
+  // Real admission must reject missing Agent Secret access even when runtime metadata is present.
+  const originalBindings = [...fixture.policy.bindings];
+  fixture.policy.bindings.splice(
+    0,
+    fixture.policy.bindings.length,
+    ...originalBindings.filter((binding) => binding.subjectId !== agent.servicePrincipalId),
+  );
+  const deniedDeployment = page.waitForResponse(
+    (response) =>
+      response.url().endsWith(`/agents/${agent.id}/deploy`) &&
+      response.request().method() === "POST",
+  );
+  await page.getByRole("button", { name: "Deploy new revision" }).click();
+  assert.equal((await deniedDeployment).status(), 403);
+  await page
+    .getByRole("alert")
+    .filter({ hasText: /Deployment denied.*Agent.*credential Secret/ })
+    .waitFor();
+  assert.equal(await page.getByRole("button", { name: "Deploy new revision" }).isDisabled(), false);
+  fixture.policy.bindings.splice(0, fixture.policy.bindings.length, ...originalBindings);
 
   const deployResponse = page.waitForResponse(
     (response) =>
