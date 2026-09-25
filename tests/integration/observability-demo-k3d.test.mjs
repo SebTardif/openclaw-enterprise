@@ -188,34 +188,18 @@ test(
       );
       await allPanel.getByText(records[0].line, { exact: true }).click();
       await allPanel.getByText(requestId, { exact: true }).waitFor();
+      await allPanel.getByText(requestId, { exact: true }).scrollIntoViewIfNeeded();
       await page.screenshot({ path: join(demo.artifacts, "logs-details.png"), fullPage: true });
 
       queries.length = 0;
-      await page
-        .getByTestId(
-          "data-testid Dashboard template variables Variable Value DropDown value link text All",
-        )
-        .first()
-        .click();
-      await page
-        .getByTestId(
-          "data-testid Dashboard template variables Variable Value DropDown option text occ-worker",
-        )
-        .click();
+      await page.getByRole("combobox", { name: "Service", exact: true }).click();
+      await page.getByRole("option", { name: "occ-worker", exact: true }).click();
       await allPanel.getByText(records[0].line, { exact: true }).waitFor({ state: "hidden" });
       await assertQueries(records.filter(({ service }) => service === "occ-worker"));
 
       queries.length = 0;
-      await page
-        .getByTestId(
-          "data-testid Dashboard template variables Variable Value DropDown value link text All",
-        )
-        .click();
-      await page
-        .getByTestId(
-          "data-testid Dashboard template variables Variable Value DropDown option text worker.completed",
-        )
-        .click();
+      await page.getByRole("combobox", { name: "Event", exact: true }).click();
+      await page.getByRole("option", { name: "worker.completed", exact: true }).click();
       await assertQueries(records.filter(({ event }) => event === "worker.completed"));
       await attentionPanel.getByText(records[6].line, { exact: true }).waitFor();
       await page.screenshot({
@@ -241,7 +225,10 @@ test(
           JSON.stringify({
             path: new URL(page.url()).pathname,
             screenshot,
-            panels: panels.flat().slice(0, 2).map((text) => text.slice(0, 6_000)),
+            panels: panels
+              .flat()
+              .slice(0, 2)
+              .map((text) => text.slice(0, 6_000)),
             queries: [...new Set(queries)].slice(0, 6).map((query) => query.slice(0, 2_000)),
             responses: settled
               .filter((result) => result.status === "fulfilled")
