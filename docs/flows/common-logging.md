@@ -44,15 +44,15 @@ graph TD
     K -->|"no"| L["Local container logs only"]
   end
 
-  subgraph Collector["Collector boundary"]
+  subgraph Collector["Bundled Collector boundary"]
     D --> K{"Collector enabled?"}
     J --> K
     K -->|"yes"| M["Collector reads container output and protected metadata"]
-    M --> N["Promote safe event classes and drop content-bearing records"]
+    M --> N["Classify records and strip unapproved content"]
     N --> O["Bounded queue and OTLP HTTP exporter"]
   end
   O --> P["Optional demo Loki stores event body and structured metadata"]
-  P --> Q["Grafana filters and formats safe metadata at query time"]
+  P --> Q["Grafana filters and formats retained metadata"]
 ```
 
 ## Execution Trace
@@ -133,28 +133,31 @@ later records in the batch.
 The chart validates one exporter destination: an IPv4 `/32` or paired namespace/Pod
 selectors, with a bounded TCP port. It renders exporter egress alongside DNS/API
 access. Empty Collector metrics selectors grant no ingress; paired selectors admit
-port 8888. Policies are additive. The independent demo exports privately to Loki
-through the same filter.
+port 8888. Policies are additive. The demo can export privately to Loki using
+the bundled Collector or an external Collector with its own filtering policy.
+Driver-owned pipelines also have separate guarantees.
 
 ### 7. Collector exports only operational classes
 
 `deploy/logging/collector.yaml:transform/operational`
 
-The Collector keeps transport-derived identity before parsing untrusted JSON. It
-promotes fixed OCC event names, `gateway` subsystem records, and Codex stderr
-records from `codex_app_server`. It drops malformed, oversized, unclassified,
-content-bearing, and protocol stdout records before export. Collector-only
-configuration holds exporter credentials and TLS settings. Finite queues and
-retries make logs best-effort; outage or overflow cannot block API service, worker
-reconciliation, or PostgreSQL audit persistence.
+The bundled Collector keeps transport-derived identity before parsing untrusted
+JSON. It classifies fixed OCC event names, `gateway` subsystem records, and Codex
+stderr records from `codex_app_server`. For retained records it keeps allowlisted
+attributes and replaces the body with the event name, stripping arbitrary content.
+It drops malformed, oversized, unclassified, unspecified-severity, and Codex protocol
+stdout records. Collector-only configuration holds exporter credentials and TLS
+settings. Finite queues and retries make logs best-effort; outage or overflow
+cannot block API service, worker reconciliation, or PostgreSQL audit persistence.
 
 ### 8. The demo dashboard presents existing metadata
 
 `deploy/helm/openclaw-observability-demo/templates/grafana.yaml:logs.json`
 
-Loki retains event bodies and normalizes attributes as structured metadata.
-Grafana formats metadata at query time without changing records. See the
-[demo guide](../guides/observability/demo.md#read-and-narrow-operational-logs)
+For the bundled Collector path, Loki retains event names and normalizes attributes
+as structured metadata. Grafana formats metadata at query time without changing
+records. External and Driver-owned pipelines require separate operator review.
+See the [demo guide](../guides/observability/demo.md#read-and-narrow-operational-logs)
 for panels, correlation, and authorization limits.
 
 ## Debugging and Verification

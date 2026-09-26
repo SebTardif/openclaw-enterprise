@@ -1,8 +1,8 @@
 # Try the observability demonstration stack
 
 Install disposable Prometheus, Grafana and Loki alongside OCE. **Not for
-production:** storage is bounded, there is no high availability or durable
-backup, and Pod replacement can lose telemetry. See
+production:** storage is bounded, high availability and durable backups are
+absent, and Pod replacement can lose telemetry. See
 [metrics discovery](metrics.md) and [log collection](../observability.md).
 
 **Required:** A qualified operator must dedicate the cluster to the selected OCC
@@ -13,22 +13,22 @@ Collector owners must establish equivalent scope. Stop and reconcile uncertain o
 changed scope or ownership. A namespace, kubeconfig or disposable name does not
 prove dedication; demo NetworkPolicy selects Collectors, not records.
 
-From the repository root, use Helm 3, `kubectl`, `yq` v4, Python 3, an explicit
-kubeconfig/context and enforcing NetworkPolicy. Obtain read access to Helm release
-Secrets, ConfigMaps and the `kube-system` UID; permission to create the demo
-namespace and OCC Pod-discovery Role/RoleBinding; and
+From the repository root, use Helm 3, `kubectl`, `yq` v4, Python 3, `openssl`,
+`sha256sum`, `cmp`, an explicit kubeconfig/context and enforcing NetworkPolicy.
+Obtain read access to Helm release Secrets, ConfigMaps and the `kube-system` UID;
+permission to create the demo namespace and OCC Pod-discovery Role/RoleBinding; and
 [Collector permissions](../observability.md#kubernetes-and-helm).
 
 ## Install private backends
 
 Use OCC release `oce` in `openclaw-system` and demo release `demo` in a new
-`oce-observability-demo` namespace. Replace names consistently. Choose `managed`
-or `external` Collector mode. Run blocks in order in one Bash session, stop on
-failure, and retain `OBS_FILES` and Helm history through cleanup. Exclude other
-writers of releases, hooks and affected resources. Checks are not locks: stop
-without exclusive control or complete live inspection. Confirm Secret storage and
-no other Helm backend. Verify installed chart source independently; matching names,
-versions or renders do not prove chart and hook identity.
+`oce-observability-demo` namespace; replace names consistently. Choose `managed`
+or `external` Collector mode. Run blocks in order in one Bash session; stop on
+failure. Retain `OBS_FILES` and Helm history through cleanup. Exclude other writers
+of releases, hooks and affected resources. Checks are not locks: stop without
+exclusive control or complete live inspection. Confirm Secret storage and no other
+Helm backend. Verify installed chart source independently; matching names, versions
+or renders do not prove chart and hook identity.
 
 ```bash
 export KUBECONFIG=/absolute/path/to/disposable-kubeconfig
@@ -158,8 +158,8 @@ grafana:
 A failed or interrupted install can reserve the name and create resources without
 a marker; follow [recovery](#recover-an-incomplete-setup).
 
-Services use `ClusterIP`. Prometheus can read Pod metadata, not Secrets.
-Grafana bundles plugins and disables startup downloads.
+Services use `ClusterIP`. Prometheus reads Pod metadata, not Secrets. Grafana
+bundles plugins; startup downloads are disabled.
 
 ## Connect OCC telemetry
 
@@ -213,8 +213,8 @@ match demo `occ.metricsPort` to `metrics.port`.
 )
 ```
 
-For a managed Collector, replace its scraper and exporter selectors. For an
-external Collector, skip this block and configure egress to Loki.
+For a managed Collector, replace scraper and exporter selectors. For an external
+Collector, skip this block and configure egress to Loki.
 
 ```bash
 (
@@ -333,26 +333,25 @@ credentials; metrics and OCC logs do not.
 
 In Grafana Explore, query Prometheus `up{job=~"occ-api|occ-worker"}` for one
 healthy target per API/worker Pod, and Loki
-`{service_name=~"occ-api|occ-worker"}` for current records from both services.
+`{service_name=~"occ-api|occ-worker"}` for records from both services.
 
 ## Read and narrow operational logs
 
-**Service** and **Event** default to **All** and filter both panels. Services are
+**Service** and **Event** default to **All** and filter both panels. Services:
 `occ-api`, `occ-worker`, `openclaw-gateway`, and `codex-app-server`. **All events**
 shows matching retained records in the time range with available HTTP and worker
 fields. **Needs attention** includes warnings/errors, HTTP 4xx/5xx, and `retry`,
 `permanent`, or `failure` work outcomes, including INFO.
 
-Expand a row for request, work, and workload identity. In **Explore**, correlate
-records by metadata:
+Expand a row for request, work, and workload identity. In **Explore**, query:
 
 ```logql
 {service_name="occ-api"} | request_id="<request-id-from-log-details>"
 ```
 
 The reviewed platform-owned Collector filters records and replaces retained bodies
-with event names before export. Grafana formats metadata at query time without
-adding identity labels or enforcing export. Operators must verify destinations,
+with event names before export. Grafana formats metadata without adding identity
+labels or enforcing export. Operators must verify destinations,
 redaction, credential isolation and access controls for external or Driver-owned
 pipelines; see the [collection boundary](../../reference/security.md#operational-log-collection-boundary).
 Successful GETs cannot be distinguished from health probes. Filters provide
@@ -365,7 +364,7 @@ Neither backend contains the PostgreSQL audit ledger.
 
 For missing data, check Pod readiness, data-source health, discovery RBAC,
 NetworkPolicies and Collector metrics for refusals, export failures and queue
-growth. The log endpoint requires `/otlp/v1/logs`, not `/v1/logs`.
+growth. The log endpoint is `/otlp/v1/logs`, not `/v1/logs`.
 
 ## Recover an incomplete setup
 
@@ -381,22 +380,23 @@ in both namespaces, including the OCC discovery Role and RoleBinding, Grafana
 Secret and both Collector Secrets. Record UIDs and establish creation and ownership
 from independent records, not names or labels. Check workloads, Pods and external
 Collectors for references. Retain and escalate on failed reads or ambiguity.
-Account separately for objects without a release record or outside the latest manifest.
+Account for objects without a release record or outside the latest manifest.
 
-Once OCC and external exporters no longer depend on the demo, a qualified
-operator must establish release ownership and revision. Inspect the latest manifest,
-pre/post-delete hooks, policies and effects, and every live object Helm can delete.
-Confirm unchanged release and object UIDs and exclude other writers. Run
-`helm uninstall demo -n oce-observability-demo --wait --timeout 5m` once, or skip
-it if the release is confirmed absent. Reconcile failure or interruption without
-retrying; verify the release and resources are gone.
+Once OCC and external exporters no longer depend on the demo, if the release
+exists, a qualified operator must establish ownership and revision. Inspect the
+latest manifest, pre/post-delete hooks, policies and effects, and every live
+object Helm can delete. Confirm unchanged release and object UIDs and exclude
+other writers. Run `helm uninstall demo -n oce-observability-demo --wait --timeout 5m`
+once, or skip it if the release is confirmed absent. Reconcile failure or
+interruption without retrying; verify the release and resources are gone.
 
 Delete separately created or leftover resources through the Kubernetes API with
 UID preconditions, only after proving creation, current UID and no references.
 Check namespace UID, contents, finalizers and dependencies before deleting it;
-retain anything unproved. After verified cleanup, start again only with an owned,
-clean namespace and unreserved release name. If either cannot be reconciled, use
-fresh names. Keep the backup until cleanup is verified.
+retain anything unproved. Restart only with an owned, clean namespace and
+unreserved release name. If either cannot be reconciled, use fresh names and
+retain the backup. Otherwise, after verified cleanup, confirm `$OBS_FILES` names
+the setup directory, delete it, and unset it.
 
 ## Remove only the demo
 
