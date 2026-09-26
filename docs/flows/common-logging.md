@@ -62,9 +62,8 @@ graph TD
 `apps/controller/src/composition/installation-config.ts:loadStartupConfigurationSnapshot`
 
 API and worker parse trusted YAML once and pass `startupConfiguration.logging`
-into driver composition. Invalid logging configuration fails startup before
-requests or work. The [settings reference](../reference/settings.md) owns the YAML
-shape and values.
+to driver composition. Invalid settings fail startup before requests or work.
+See the [settings reference](../reference/settings.md) for YAML shape and values.
 
 ### 2. Processes log fixed sanitized events
 
@@ -73,11 +72,11 @@ shape and values.
 Worker (`apps/controller/src/worker.mjs`), bootstrap
 (`scripts/bootstrap-installation.mjs`), and migration (`scripts/migrate-production.mjs`)
 also create Pino loggers at the selected level. The API disables Fastify request
-logging; bootstrap and migration separate success protocol output from structured
+logging. Bootstrap and migration separate success protocol output from structured
 failure diagnostics. Before Pino writes, `apps/controller/src/logging.ts:emitOccLogEvent`
-retains reviewed scalar fields and drops unapproved fields, credentials, provider
-payloads, request/reply objects, and unsafe strings. This source boundary is distinct
-from the Collector filter in step 7.
+keeps reviewed scalar fields and drops unapproved fields, credentials, provider
+payloads, request/reply objects, and unsafe strings. This source boundary precedes
+the separate Collector filter in step 7.
 
 ### 3. Admission freezes runtime logging
 
@@ -88,68 +87,65 @@ validates and freezes the native document without rewriting logging fields. The
 [Compute contract](../reference/drivers/compute.md#runtime-logging-ownership)
 owns that pipeline; OCC logging and audit remain unchanged.
 
-Otherwise, deployment lets the SandboxDriver transform a frozen copy of the
-Namespace-owned Configuration, then stamps native logging fields before validation.
-The admitted document has matching `logging.level` and `logging.consoleLevel`,
-JSON console style, and `diagnostics.otel.logs=false`; it drops the retired
-`logging.redactSensitive` key. Runtime code owns console and tool redaction.
-The source Configuration is unchanged; the immutable AgentRevision preserves its
-admitted policy across restarts and later Configuration edits.
+Otherwise, the SandboxDriver may transform a frozen copy of the Namespace-owned
+Configuration. Deployment stamps native fields before validation: matching
+`logging.level` and `logging.consoleLevel`, JSON console style, and
+`diagnostics.otel.logs=false`. It drops the retired `logging.redactSensitive` key.
+Runtime code owns console and tool redaction. The source Configuration is unchanged;
+the immutable AgentRevision retains the admitted policy across restarts and later edits.
 
 ### 4. Compute renders settings from the revision
 
 `apps/controller/src/drivers/compute/docker/index.ts:DockerComputeDriver.prepareRevision`
 
-Kubernetes rendering follows
+Kubernetes uses
 `apps/controller/src/drivers/compute/kubernetes/index.ts:KubernetesComputeDriver.deployment`.
 Both Drivers require consistent admitted logging fields. Kubernetes mounts the
-document read-only at `/etc/openclaw/openclaw.json` as immutable startup input.
-Gateway uses JSON console logging; dedicated Codex app-servers use JSON stderr
-and host-owned arguments disabling OTLP export and prompt logging. Lifecycle
-hooks and SecretBindings cannot override those reserved destinations.
+document read-only at `/etc/openclaw/openclaw.json`. Gateway logs JSON to console;
+dedicated Codex app-servers use JSON stderr and host-owned arguments that disable
+OTLP export and prompt logging. Lifecycle hooks and SecretBindings cannot override
+those destinations.
 
 ### 5. Docker collection is an explicit development override
 
 `apps/controller/src/drivers/compute/docker/index.ts:DockerComputeDriver.prepareRevision`
 
-The optional `compose.logging.yaml` starts a pinned Collector and routes OCC,
-gateway, and Codex containers through Docker's nonblocking `fluentd` driver.
-Docker Compute sets runtime `LogConfig` from `OCC_DOCKER_LOGGING_ADDRESS`, which
-must be reachable from the Engine. See the
-[Docker procedure](../guides/observability.md#docker-compose).
+The optional `compose.logging.yaml` routes OCC, gateway, and Codex containers
+through Docker's nonblocking `fluentd` driver to a pinned Collector. Docker
+Compute sets runtime `LogConfig` from `OCC_DOCKER_LOGGING_ADDRESS`, which must be
+reachable from the Engine. See the [Docker procedure](../guides/observability.md#docker-compose).
 
 ### 6. Kubernetes collection is bundled or equivalent
 
 `deploy/helm/openclaw-enterprise/templates/collector.yaml:logging.collector.enabled`
 
-Helm renders a Collector DaemonSet that reads node CRI files and uses Pod metadata
-to associate records with managed workloads. The
+The Helm Collector DaemonSet reads node CRI files and uses Pod metadata to
+associate records with managed workloads. See the
 [Kubernetes observability procedure](../guides/observability.md#kubernetes-and-helm)
-owns enablement and existing-Collector reuse; the
+for enablement and existing-Collector reuse, and the
 [security reference](../reference/security.md#operational-log-collection-boundary)
-owns deployment isolation limits.
+for isolation limits.
 
 `k8sattributes` maps identity before `transform/kubernetes-resource` removes
 internal Pod labels; removing shared labels per record would lose identity for
 later records in the batch.
 
-The chart validates one exporter destination: an IPv4 `/32` or paired
-namespace/Pod selectors, with a bounded TCP port. It renders exporter egress
-alongside DNS/API access. Empty Collector metrics selectors grant no ingress;
-paired selectors admit port 8888. Policies are additive. The independent demo
-provides private Loki OTLP export through the same filter.
+The chart validates one exporter destination: an IPv4 `/32` or paired namespace/Pod
+selectors, with a bounded TCP port. It renders exporter egress alongside DNS/API
+access. Empty Collector metrics selectors grant no ingress; paired selectors admit
+port 8888. Policies are additive. The independent demo exports privately to Loki
+through the same filter.
 
 ### 7. Collector exports only operational classes
 
 `deploy/logging/collector.yaml:transform/operational`
 
-The shared Collector policy keeps transport-derived identity before parsing
-untrusted JSON. It promotes fixed OCC event names, gateway records from the
-`gateway` subsystem, and Codex stderr records from `codex_app_server`; malformed,
-oversized, unclassified, content-bearing, and protocol stdout records are
-dropped before remote export. Exporter credentials and TLS settings live in
-Collector-only configuration. Finite queues and retry limits make operational
-logs best-effort, but outage or overflow cannot block API service, worker
+The Collector keeps transport-derived identity before parsing untrusted JSON. It
+promotes fixed OCC event names, `gateway` subsystem records, and Codex stderr
+records from `codex_app_server`. It drops malformed, oversized, unclassified,
+content-bearing, and protocol stdout records before export. Collector-only
+configuration holds exporter credentials and TLS settings. Finite queues and
+retries make logs best-effort; outage or overflow cannot block API service, worker
 reconciliation, or PostgreSQL audit persistence.
 
 ### 8. The demo dashboard presents existing metadata

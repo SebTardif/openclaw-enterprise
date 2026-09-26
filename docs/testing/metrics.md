@@ -19,16 +19,15 @@ docker compose -f compose.yaml -f compose.metrics.yaml up -d --build
 ```
 
 Sign in at `http://127.0.0.1:3001` as `admin` and open **OCC → OCC development**.
-The datasource and dashboard are provisioned from `deploy/metrics/development/`;
-the shared dashboard is in `deploy/helm/openclaw-observability-demo/files/`. Prometheus is at
+Provisioning is in `deploy/metrics/development/`; the shared dashboard is in
+`deploy/helm/openclaw-observability-demo/files/`. Prometheus is at
 `http://127.0.0.1:9090`. Override occupied ports with `OCC_GRAFANA_PORT` or
 `OCC_PROMETHEUS_PORT`.
 
-Each OCC listener stays on container loopback. Two Prometheus agent-mode
-collectors share the API/worker network namespaces, scrape every five seconds
-and remote-write to the
+Each OCC listener stays on container loopback. Two Prometheus agent-mode collectors share the
+API/worker network namespaces, scrape every five seconds and remote-write to the
 local server queried by Grafana. This single-deployment example does not change
-production scraping and is not a multi-replica Compose topology. Recreate agents
+production scraping or support a multi-replica Compose topology. Recreate agents
 when replacing their owner containers.
 
 The server accepts unauthenticated remote writes on the development network;
@@ -40,8 +39,8 @@ changes you need to keep.
 
 For Podman, include `compose.podman.yaml` with the socket from `podman info`;
 the [quickstart helper](../guides/quickstart.md) prepares it. Namespace sharing
-and remote write were verified on Podman. The Grafana 13.2.2 image index selects
-native amd64 or arm64 on Docker and Podman without a local override.
+and remote write were verified on Podman. The pinned Grafana image supports
+amd64 and arm64 without a local override.
 
 ## Generate traffic and check results
 
@@ -49,15 +48,15 @@ Wait about 15 seconds, then evaluate `up{job=~"occ-api|occ-worker"}` in
 Prometheus: expect two series equal to 1. The receiving server's Targets page
 does not list remote-write targets; query `up` instead.
 
-Use the console to create an Agent draft and refresh its list. The lifecycle
-panel should gain one draft. Deploy it through the regular Agent workflow:
-expect `deploying`, then `running` after finalization. Redeploying counts that
-Agent once, with `deploying` replacing `running` until completion. Stop it:
-expect `stopping`, then `stopped`, with no return to `draft`. These are persisted
-lifecycle states, not continuous runtime-health measurements.
+Create an Agent draft in the console and refresh the list: the lifecycle panel
+should gain one draft. Deploy it through the regular workflow: expect `deploying`,
+then `running` after finalization. Redeploying counts the Agent once, replacing
+`running` with `deploying` until completion. On stop, expect `stopping`, then
+`stopped`, with no return to `draft`. These are persisted lifecycle states, not
+continuous runtime-health measurements.
 
-Agent operation p95 includes queue wait and retries for completed deploy/stop
-requests in its five-minute window; failed or unfinished operations yield no
+Agent operation p95 includes queue wait and retries for deploy/stop requests
+completed in its five-minute window. Failed or unfinished operations yield no
 duration samples. Compare reconciliation-pass p95 and oldest pending work age
 to distinguish slow passes from waiting. Age is zero for an empty queue and
 includes delayed retries and scheduled maintenance. Retry/failure rates and API
@@ -71,10 +70,10 @@ for attempt in 1 2 3 4 5; do
 done
 ```
 
-Expect 4xx activity. Allow at least two scrapes for rate panels; new counters
-can initially show no data. Request latency, reconciliation passes, queue depth,
-memory, CPU, and event-loop panels become useful as traffic/work occurs. A quiet
-worker may have no attempt series yet.
+Expect 4xx activity. Rate panels need at least two scrapes; new counters can
+initially show no data. Request latency, reconciliation, queue depth, memory,
+CPU, and event-loop panels become useful with traffic or work. A quiet worker may
+have no attempt series yet.
 
 Scrape directly without publishing a new host port:
 
@@ -127,10 +126,9 @@ OCC_TEST_DATABASE_URL=postgresql://occ_app:occ-app-local@127.0.0.1:55432/opencla
   node --test tests/integration/occ-metrics.test.mjs
 ```
 
-The optional `OCC_METRICS_TEST_MIGRATION_DATABASE_URL` must target the same
-disposable database and supplies table-owner permission solely for the lock
-scenario. Omitting it skips that subtest; application reads still use the
-limited application role.
+Optional `OCC_METRICS_TEST_MIGRATION_DATABASE_URL` must target the same disposable
+database; it supplies table-owner permission solely for the lock scenario. Omit it
+and that subtest is skipped. Application reads still use the limited role.
 
 `docker-compute-real.test.mjs` scrapes both processes after Agent deployment;
 the Podman path also stops the Agent and checks lifecycle and completion metrics.
@@ -149,9 +147,9 @@ monitoring containers, uses host networking and loopback listeners to reach a re
 test API, and validates dashboard queries against Prometheus. It proves collection
 and provisioning, not Compose namespace sharing or live Agent behavior.
 
-The test disables plugin installation and mounts Grafana's data tmpfs `noexec`
-on Docker and Podman. A background plugin update can otherwise make the
-Prometheus datasource fail while Grafana itself remains healthy.
+The test disables plugin installation and mounts Grafana's data tmpfs `noexec`.
+A plugin update can otherwise break the Prometheus datasource while Grafana
+remains healthy.
 
 ## Kubernetes observability acceptance
 
@@ -169,27 +167,25 @@ env -u OPENAI_API_KEY node scripts/ci/prepare.mjs --lane "$OBS_LANE" --state "$O
   env -u OPENAI_API_KEY node scripts/ci/run-tests.mjs run "$OBS_LANE" --state "$OBS_RUN_DIR/state.json" --results "$OBS_RUN_DIR/results.json"
 ```
 
-Run the test command only if preparation succeeds. Inspect its exit status and
+Run tests only after successful preparation. Inspect the exit status and
 `results.json` for case counts, failures, skips, and TODOs. After preparation or
-testing finishes, including on failure, clean up the recorded resources:
+testing, including on failure, clean up recorded resources:
 
 ```sh
 node scripts/ci/cleanup.mjs --state "$OBS_RUN_DIR/state.json"
 ```
 
-Check cleanup's exit status and retain failed state for recovery. If a command
-is interrupted, verify that its owned test and subprocesses have stopped before
-cleanup; an exited parent alone does not establish that detached commands have
-stopped. Do not remove unrelated resources. The
-[CI testing guide](ci.md) describes state, diagnostics, and cleanup.
+Check cleanup's exit status and retain failed state for recovery. After an
+interruption, verify owned tests and subprocesses have stopped before cleanup;
+an exited parent does not prove detached commands have stopped. Do not remove
+unrelated resources. See the [CI testing guide](ci.md) for state and diagnostics.
 
-This lane removes `OPENAI_API_KEY`, needs no model credential and makes no model
-calls. It installs the Helm API/worker and PostgreSQL with migrator/application
-roles on one node. Raw HTTP requests verify metrics, a request counter,
-default-deny access and paired scraper selectors. The chart Collector exports
-actual API/worker logs to a minimal OTLP receiver; decoded records are checked
-for attribution and credential exclusion. It installs no Prometheus, Grafana or
-Loki.
+This lane removes `OPENAI_API_KEY` and makes no model calls. It installs the Helm
+API/worker and PostgreSQL with migrator/application roles on one node. HTTP
+requests verify metrics, a request counter, default-deny access and paired scraper
+selectors. The chart Collector exports actual API/worker logs to a minimal OTLP
+receiver; decoded records are checked for attribution and credential exclusion.
+It installs no Prometheus, Grafana or Loki.
 
 For the demo smoke test, set `OBS_LANE=k3d-observability-demo` above and use a
 fresh private directory. Before a local run, install the pinned browser with
@@ -207,11 +203,10 @@ manual dispatch. It retains synthetic PNGs and bounded failure diagnostics as
 responses, browser traces, and credentials. This uses fixtures and installs no OCC,
 PostgreSQL, or Collector. The production smoke checks real OCC telemetry.
 
-These installation smoke tests omit Agent lifecycle, Pod replacement, Collector
-ownership handoff, metrics opt-out upgrades, and exporter outage/retry exhaustion.
-Focused integration tests cover metrics semantics and Collector resilience; Helm
-rendering covers selector and opt-out configurations, not the omitted live
-Kubernetes upgrade or failure scenarios.
+The smoke tests omit Agent lifecycle, Pod replacement, Collector ownership
+handoff, metrics opt-out upgrades, and exporter outage/retry exhaustion. Focused
+integration tests cover metrics semantics and Collector resilience; Helm rendering
+covers selector and opt-out configurations, not those live upgrade or failure cases.
 
 For the protected `k3d-otel` lane, select `OCC_TEST_OPENAI_MODEL` and a
 digest-pinned `NODE_BASE_IMAGE`, and provide an existing authorized

@@ -172,7 +172,8 @@ test(
               (record) => service.test(record.service) && event.test(record.event),
             );
             return (
-              selected.length === expected.length && selected.every((record, i) => record === expected[i])
+              selected.length === expected.length &&
+              selected.every((record, i) => record === expected[i])
             );
           } catch {
             return false;
@@ -183,8 +184,9 @@ test(
             (expression) =>
               expression.includes("severity_text") === attention && matchesFilter(expression),
           );
-        await demo.waitFor("both rendered panel queries for the selected filters", () =>
-          panelQuery(false) && panelQuery(true),
+        await demo.waitFor(
+          "both rendered panel queries for the selected filters",
+          () => panelQuery(false) && panelQuery(true),
         );
         for (const attention of [false, true]) {
           const expression = panelQuery(attention);
