@@ -48,6 +48,9 @@ from [AGENTS.md](../AGENTS.md#running-integration-tests) instead.
 
 ## Active specifications
 
+[Kubernetes runtime activation](39-kubernetes-runtime-activation.md) — Proposed;
+coordinates cross-resource cutover with enforcement decisions still open.
+
 [Dedicated Harness RWO workspace](38-harness-rwo-workspace-plan.md) — Implementing;
 exclusive revision preparation, durable RWO workspaces, and retained existing claims.
 
