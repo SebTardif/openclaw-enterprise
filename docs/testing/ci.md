@@ -48,7 +48,7 @@ runtime image. Its proof covers HTTP, PostgreSQL, Unix control and credential
 material inside Kubernetes; NetworkPolicy enforcement is proved separately by
 the Kubernetes fixture lanes on the compatible GitHub runner kernel.
 
-The PR workflow runs eleven lanes on ephemeral runners: checks/baseline/browser, PostgreSQL migrations, PostgreSQL application, image/packaging, Kubernetes Compute/Configuration, Kubernetes state/lifecycle, Kubernetes plugin status, logging collector, `repository-credentials-container`, and `repository-credentials-platform`. The container lane builds separate emitted service/client images and a combined qualification image, then selects controlled provider and separate-container cases; it does not contact a live GitHub installation. The platform lane exercises ordinary Agent repository bindings through HTTP, PostgreSQL, Unix control and Kubernetes using a fixture Harness and controlled repositories; it does not use a model or live GitHub. Full Integration runs through manual dispatch using the immutable event commit. All lanes require `main` except `k3d-model`, which also accepts a branch explicitly allowed by the `integration-model` environment. Environment gates apply only to lanes that declare an environment; `helper-timeout` and standalone `logging-collector` declare none. The ChatGPT `provider-account` lane keeps its main-only credential environment without per-run approval. Other model, routing, Slack, OpenShell, and additional OpenTelemetry lanes require separately approved environments. A missing environment or selected prerequisite fails the run. A PR aggregate is not full credentialed coverage; targeted protected runs also report only their selected lanes.
+Full Integration runs through manual dispatch using the immutable event commit. All lanes require `main` except `k3d-model`, which also accepts a branch explicitly allowed by the `integration-model` environment. Environment gates apply only to lanes that declare an environment; `helper-timeout` and standalone `logging-collector` declare none. The ChatGPT `provider-account` lane keeps its main-only credential environment without per-run approval. Other model, routing, Slack, OpenShell, and additional OpenTelemetry lanes require separately approved environments. A missing environment or selected prerequisite fails the run. A PR aggregate is not full credentialed coverage; targeted protected runs also report only their selected lanes.
 
 The `postgres` lane owns migration compatibility tests; `postgres-application`
 owns the remaining PostgreSQL files. Each has its own disposable PostgreSQL
@@ -83,13 +83,26 @@ the worker Pod network. It supplies that address to the
 [plugin status tests](plugins.md#local-and-integration-suites), which exercise
 the private status endpoint across nodes with NetworkPolicy enforcement.
 
+Kubernetes fixture startup logs phase status and elapsed milliseconds, plus host
+CPU/load, memory, disk and pressure snapshots. If cluster creation or its initial
+readiness checks fail, preparation collects bounded node conditions, system Pod
+status and events, and owned node container states and redacted log tails before
+cleanup. Fixture creation disables k3d rollback to retain node logs until
+collection finishes. The workflow then cleans up; local callers must run
+`node scripts/ci/cleanup.mjs --state <state-file>`. Inspect the separate
+`diagnostics-<artifact-prefix>-<lane>` artifact; local runs write
+`<state-file>.diagnostics.json`. Failed diagnostic commands are marked unavailable
+or timed out, and collection does not replace the original failure. Raw kubeconfig,
+environment values and Pod specifications are excluded. These diagnostics explain
+setup failures; they do not establish test coverage.
+
 The `k3d-model`, `gateway-routing`, `slack`, and `k3d-otel` lanes prepare the controller image and workspace routing for dedicated Harness node enrollment. Supply an immutable `NODE_BASE_IMAGE` for the controller build. Preparation supplies the imported controller digest and private routing CA paths; the Slack lane still requires approved runtime images and credentials.
 
 Implementation status: routing, OpenShell, and logging now have concrete CI preparation contracts. Routing installs pinned Gateway API, cert-manager v1.18.4, and Envoy Gateway v1.6.7 controller manifests and generates a private test CA. OpenShell creates an owned K3s v1.36.4 cluster, installs a matched kubectl, configures the selected RuntimeClass with the cluster's `runc` handler, verifies handler availability with a smoke Pod, installs OpenShell CLI/chart assets, imports gateway and supervisor images, and installs Agent Sandbox resources. Only the disposable CI OpenShell cluster exempts its selected RuntimeClass from Pod Security Admission. Preparation proves that a violating ordinary Pod is rejected in a restricted namespace and that the same Pod is admitted with the selected class. The full OpenShell suite proves provider-owned supervisor enforcement for filesystem, endpoint/L7 network, and process boundaries while preserving the current binary-unaware sidecar policy. Logging preparation owns a real OpenTelemetry Collector backend with JSONL evidence, and `OCC_TEST_OTEL_LOGS_URL` is no longer a required external input. The Collector and Docker-model jobs use the shared [setup-test-docker action](../../.github/actions/setup-test-docker/action.yml) to pin Docker 29.4.0, which supports the production `fluentd-write-timeout` logging option. The action stops the preinstalled daemon on the ephemeral runner, installs Docker 29.4.0 through the SHA-pinned official Docker setup action, and points `/var/run/docker.sock` at the action socket so the CLI, production Compose, and Driver use one daemon. Other jobs keep the runner Docker daemon. Full-suite acceptance remains incomplete until main-only protected hosted execution records every selected lane. See the [delivery status](../../specs/19-github-actions-test-coverage/delivery-status.md#delivery-status) for current proof boundaries and live gaps.
 
 Each lane runs whole test files. The runner validates actual Node case results and required names; any skip or TODO fails a selected lane. Missing results, zero cases, failures and cleanup errors also fail. The aggregate checks required job and lane results at the same source commit without repeating case validation. Ordinary `pull_request` jobs may save pnpm-store caches within the PR merge-ref scope; protected jobs use the approved event commit and do not promote PR build artifacts.
 
-Prepare infrastructure only on a disposable host or through the reviewed CI helpers. Each run owns its Compose project, file-specific databases, cluster and temporary files. CI writes private cleanup state under `RUNNER_TEMP` and uploads only sanitized result JSON, so hosted-runner cleanup state is unavailable after the job ends. Results include the source commit, case outcomes, cleanup status, and available image digests by role; private registry names and prepared environment values are excluded. Local failures can retain cleanup state while the host and state path still exist. On local Docker Desktop or equivalent VM-backed Docker hosts, run one Kubernetes lane at a time when disk or network pressure has caused measured instability. The GitHub matrix remains parallel; this local guidance is for reproducible operator runs. Model/service tests require the approved credentials and spend policy described in the [implementation specification](../../specs/19-github-actions-test-coverage.md); configuring workflow files does not prove those tests have passed.
+Prepare infrastructure only on a disposable host or through the reviewed CI helpers. Each run owns its Compose project, file-specific databases, cluster and temporary files. CI writes private cleanup state under `RUNNER_TEMP` and uploads sanitized results and separate JSON diagnostics for bootstrap failures, so hosted-runner cleanup state is unavailable after the job ends. Results include the source commit, case outcomes, cleanup status, and available image digests by role; private registry names and prepared environment values are excluded. Local failures can retain cleanup state while the host and state path still exist. On local Docker Desktop or equivalent VM-backed Docker hosts, run one Kubernetes lane at a time when disk or network pressure has caused measured instability. The GitHub matrix remains parallel; this local guidance is for reproducible operator runs. Model/service tests require the approved credentials and spend policy described in the [implementation specification](../../specs/19-github-actions-test-coverage.md); configuring workflow files does not prove those tests have passed.
 
 See the [execution flow](../flows/github-actions-testing.md) for entrypoints, result accounting, cleanup and failure interpretation. Use the [suite-specific guides](README.md#integration-tests) to reproduce a run locally.
 
@@ -238,16 +251,11 @@ suite-map groups and workflow entrypoints.
 
 ## Production observability lane
 
-`k3d-observability` runs in ordinary PR/main CI on Ubuntu 22.04. It checks raw
-metrics and OTLP exports without the demo stack. Run it locally with
-`pnpm test:observability`.
+`k3d-observability` checks raw metrics and OTLP exports in ordinary PR/main CI
+on Ubuntu 22.04. The separate [Observability Demo workflow](../../.github/workflows/observability-demo.yml)
+runs `k3d-observability-demo` for relevant changes, merge groups, and manual dispatch;
+Full Integration includes it with `all`. Both retain strict case counts, image
+digests, and cleanup.
 
-The separate [Observability Demo workflow](../../.github/workflows/observability-demo.yml)
-runs `k3d-observability-demo` for relevant changes, merge groups, and manual dispatch.
-Full Integration also includes it when `all` is selected.
-Run `pnpm test:observability --demo` locally. Both lanes retain strict case counts,
-image digests, and cleanup; see [scope and prerequisites](metrics.md#kubernetes-observability-acceptance).
-
-Gateway/Codex model-log proof remains in protected `k3d-otel`, selected by
-`pnpm test:observability:models` or `integration-otel` dispatch. Ordinary CI does
-not establish that credentialed proof.
+Gateway/Codex model-log proof remains in protected `k3d-otel`; ordinary CI does
+not establish it. See [local commands, scope, and prerequisites](metrics.md#kubernetes-observability-acceptance).

@@ -11,7 +11,6 @@ on:
       - "tests/helpers/kubernetes-real.mjs"
       - "tests/fixtures/repository-credentials/process.mjs"
       - "scripts/ci/**"
-      - "scripts/test-observability.mjs"
       - "pnpm-lock.yaml"
   push:
     branches: [main]
@@ -24,7 +23,6 @@ on:
       - "tests/helpers/kubernetes-real.mjs"
       - "tests/fixtures/repository-credentials/process.mjs"
       - "scripts/ci/**"
-      - "scripts/test-observability.mjs"
       - "pnpm-lock.yaml"
   merge_group:
   workflow_dispatch:
@@ -59,5 +57,7 @@ jobs:
           path: |
             ${{ runner.temp }}/observability-demo/*.png
             ${{ runner.temp }}/observability-demo/logs-failure.json
-          if-no-files-found: error
+          # Missing dashboard artifacts fail a successful lane, but do not add a
+          # secondary upload error when setup or the browser run already failed.
+          if-no-files-found: ${{ job.status == 'success' && 'error' || 'ignore' }}
           retention-days: 7

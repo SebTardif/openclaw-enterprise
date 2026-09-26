@@ -41,7 +41,7 @@ For changes to startup `logging.level`, follow the
 [log-level procedure](../../guides/observability.md#1-choose-the-log-level).
 
 The API and worker load the same trusted startup YAML; only the API initializes
-the optional [Provider client](../providers.md). Both validate Provider membership
+the optional [Backend client](../backends.md). Both validate Backend membership
 and stored ownership before accepting work. When the bundled Kubernetes Compute
 Driver is selected, its `drivers.compute.configuration` section contains the
 `KubernetesComputeDriverOptions` shape described in the
@@ -146,8 +146,9 @@ and delivery checks, use
 
 When enabled, the chart requires a digest-pinned image, an exact exporter
 destination (IPv4 `/32` or paired namespace/Pod selectors), a TCP port, and
-nonempty dedicated configuration and environment Secret names. Neither Secret may reuse the Installation, database, auth, or ChatGPT
-Provider Secret. The named Secrets must be in the control-plane namespace:
+nonempty dedicated configuration and environment Secret names. Neither Secret
+may reuse the Installation, database, auth, or ChatGPT Backend Secret. The named
+Secrets must be in the control-plane namespace:
 
 - `configSecretName` supplies `collector.yaml`, `kubernetes.yaml`, and
   `exporter.yaml` keys.

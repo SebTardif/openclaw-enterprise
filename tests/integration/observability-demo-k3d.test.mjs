@@ -11,7 +11,7 @@ test(
     skip:
       process.env.OCC_TEST_OBSERVABILITY_DEMO === "1"
         ? false
-        : "Run pnpm test:observability --demo.",
+        : "Select k3d-observability-demo with the CI runner; see docs/testing/metrics.md.",
     timeout: 600_000,
   },
   async (t) => {
@@ -156,9 +156,38 @@ test(
       // Capture Grafana's actual interpolated panel expressions. Re-query them
       // through its datasource: no test-owned copy of LogQL or variable escaping.
       const assertQueries = async (expected) => {
-        await demo.waitFor("both rendered panel queries", () => new Set(queries).size === 2);
-        for (const expression of new Set(queries)) {
-          const attention = expression.includes("severity_text");
+        // Ignore delayed requests for prior selections, while checking the actual
+        // interpolated selectors against every synthetic service and event.
+        const matchesFilter = (expression) => {
+          const selectors = expression.match(
+            /^\{service_name=~`([^`]*)`\} \| event_name=~`([^`]*)`/u,
+          );
+          if (!selectors) {
+            return false;
+          }
+          try {
+            const service = new RegExp(`^(?:${selectors[1]})$`, "u");
+            const event = new RegExp(`^(?:${selectors[2]})$`, "u");
+            const selected = records.filter(
+              (record) => service.test(record.service) && event.test(record.event),
+            );
+            return (
+              selected.length === expected.length && selected.every((record, i) => record === expected[i])
+            );
+          } catch {
+            return false;
+          }
+        };
+        const panelQuery = (attention) =>
+          queries.findLast(
+            (expression) =>
+              expression.includes("severity_text") === attention && matchesFilter(expression),
+          );
+        await demo.waitFor("both rendered panel queries for the selected filters", () =>
+          panelQuery(false) && panelQuery(true),
+        );
+        for (const attention of [false, true]) {
+          const expression = panelQuery(attention);
           const lines = expected
             .filter((record) => !attention || record.attention)
             .map(({ line }) => line)
