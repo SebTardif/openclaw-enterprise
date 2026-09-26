@@ -1,5 +1,10 @@
 # Implementation specifications
 
+[Default production observability](36-production-observability.md) — Implemented locally;
+production telemetry defaults, separate demo stack, and local k3d/CI acceptance.
+See the [implementation plan](36-production-observability-plan.md) and
+[qualification report](reports/36-production-observability-implementation.md).
+
 [First Enterprise container release](32-first-container-release.md) — Implementing;
 protected marker bootstrap and first private SHA-addressed controller/runtime publication.
 
@@ -51,6 +56,10 @@ revises the earlier plugin policy proposals with nested defaults and tool overri
 Driver extensions, and admission-to-runtime enforcement. Draft implementation
 exists; enforcement delivery awaits alignment. Catalog discovery proceeds in the
 separate Create Agent workstream.
+
+[Independent production image upgrades](36-coordinated-image-upgrade.md) — Proposed;
+release the controller without replacing Agents, or update the runtime image and
+redeploy the running fleet concurrently through OCC.
 
 [Native OpenClaw plugin tool policies](35-native-plugin-tool-policy.md) — Proposed;
 enforce Agent plugin policies through a managed native policy plugin and existing

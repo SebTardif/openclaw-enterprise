@@ -391,6 +391,10 @@
                     "label": "Control Plane Setup"
                   },
                   {
+                    "page": "guides/deploy/production-upgrade",
+                    "label": "Image Upgrades"
+                  },
+                  {
                     "page": "guides/deploy/kubernetes",
                     "label": "Kubernetes"
                   },
@@ -461,6 +465,10 @@
                   {
                     "page": "guides/observability/metrics",
                     "label": "Metrics Scraping"
+                  },
+                  {
+                    "page": "guides/observability/demo",
+                    "label": "Demo Stack"
                   },
                   {
                     "page": "reference/metrics",
@@ -734,6 +742,7 @@
               "reference/settings/programmatic",
               "flows/platform-startup",
               "flows/production-startup",
+              "flows/coordinated-production-upgrade",
               "flows/docker-compose-development/startup",
               "flows/docker-compose-development/agent-execution",
               "flows/common-logging",
