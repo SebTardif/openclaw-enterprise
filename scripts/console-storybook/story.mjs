@@ -3,7 +3,9 @@ import { scenarios } from "./public/scenarios.mjs";
 // Injected by the Storybook build from the prepared static assets.
 /* global __CONSOLE_STORY_BUILD__ */
 const fixtureUrl = (id) =>
-  `/storybook-fixtures/frame.html?story=${encodeURIComponent(id)}&v=${__CONSOLE_STORY_BUILD__}`;
+  `/storybook-fixtures/frame.html?story=${encodeURIComponent(id)}&v=${__CONSOLE_STORY_BUILD__}${
+    scenarios[id].theme ? `&theme=${encodeURIComponent(scenarios[id].theme)}` : ""
+  }`;
 
 export function story(id) {
   const scenario = scenarios[id];
@@ -49,7 +51,7 @@ export function story(id) {
       const frame = document.createElement("iframe");
       frame.title = `${scenario.name}: interactive console`;
       frame.src = fixtureUrl(id);
-      frame.style.cssText = `display:block;width:100%;max-width:${scenario.mobile ? "390px" : "1600px"};height:min(900px, calc(100vh - 80px));min-height:480px;border:1px solid #d6d0c5;background:white`;
+      frame.style.cssText = `display:block;width:100%;max-width:${scenario.mobile ? "390px" : "1600px"};height:min(900px, calc(100vh - 80px));min-height:480px;border:1px solid #d6d0c5;background:white;color-scheme:light dark`;
       frame.setAttribute(
         "sandbox",
         "allow-scripts allow-same-origin allow-forms allow-modals allow-popups",
