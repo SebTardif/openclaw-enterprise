@@ -96,6 +96,7 @@ export function installFixture(scenario, evidence) {
   const secretMetadata = (id, name) => ({ id, namespaceId, name, ref: secretRef(id) });
   for (const secret of [
     secretMetadata("sec_demo_model", "Demo model API key (simulated)"),
+    secretMetadata("sec_demo_service_account", "Demo Service Accounts token (simulated)"),
     secretMetadata("sec_demo_slack_app_token", "Slack app token (simulated)"),
     secretMetadata("sec_demo_slack_bot_token", "Slack bot token (simulated)"),
     secretMetadata("sec_demo_slack_backup_token", "Slack backup token (simulated)"),
@@ -145,7 +146,9 @@ export function installFixture(scenario, evidence) {
         ? { method: "runtime" }
         : scenario.auth === "service"
           ? { method: "chatgpt_service_account", serviceAccountId: "sa_demo" }
-          : auth;
+          : scenario.auth === "codex_pat"
+            ? { method: "codex_pat", source: secretRef("sec_demo_service_account") }
+            : auth;
   let selectedRevisionId = null;
   if (scenario.candidateDeploymentStatus) {
     selectedRevisionId =
@@ -164,13 +167,13 @@ export function installFixture(scenario, evidence) {
     configurationId: config.id,
     executionMode: "dedicated",
     harnessAuth: selectedAuth,
+    ...(scenario.agentPlugins ? { plugins: structuredClone(scenario.agentPlugins) } : {}),
     servicePrincipalId: "identity_demo_agent",
     createdAt,
     activeRevisionId: selectedRevisionId,
     ...(scenario.repositoryBindings
       ? { repositoryBindings: structuredClone(scenario.repositoryBindings) }
       : {}),
-    ...(scenario.agentPlugins ? { plugins: structuredClone(scenario.agentPlugins) } : {}),
   };
   agents.set(agent.id, agent);
   credentials.set(agent.id, { transportConfigured: scenario.transport !== false });
@@ -189,6 +192,14 @@ export function installFixture(scenario, evidence) {
       configuration: structuredClone(configuration.values),
       secretBindings: structuredClone(configuration.secretBindings),
       harnessAuth: structuredClone(owner.harnessAuth),
+      ...(owner.plugins
+        ? {
+            plugins: {
+              driver: structuredClone(scenario.pluginCapabilities.driver),
+              plugins: structuredClone(owner.plugins),
+            },
+          }
+        : {}),
       harness: { id: "codex", version: "demo", mode: owner.executionMode },
       compute: { id: "kubernetes-demo", implementation: "kubernetes" },
       servicePrincipalId: owner.servicePrincipalId,
@@ -647,6 +658,20 @@ export function installFixture(scenario, evidence) {
         const saved = agents.get(id);
         if (!saved) {
           return error(404);
+        }
+        if (suffix === "/plugins/capabilities" && method === "GET" && scenario.pluginCapabilities) {
+          return response({
+            ...scenario.pluginCapabilities,
+            discoveryCredential: scenario.pluginDiscoveryCredential ?? "required",
+          });
+        }
+        if (suffix === "/plugins" && method === "POST" && scenario.pluginDiscovery) {
+          const page = scenario.pluginDiscovery.pages[body.cursor ?? "initial"];
+          return page ? response(page) : error(400, "PLUGIN_DISCOVERY_INVALID_RESPONSE");
+        }
+        if (suffix === "/plugins/details" && method === "POST" && scenario.pluginDiscovery) {
+          const entry = scenario.pluginDiscovery.details[body.pluginId];
+          return entry ? response(entry) : error(503, "PLUGIN_DISCOVERY_UNAVAILABLE");
         }
         if (suffix === "") {
           if (method === "GET") {
