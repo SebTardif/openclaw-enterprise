@@ -11,8 +11,9 @@ compatible Plugin Driver before an Agent can save nonempty plugin selections.
   lets an Agent show the difference between two pieces of text. Start with
   [Configure Agent plugins](plugins-configure.md).
 - **Dedicated Codex** can use selected apps from its curated catalog when the
-  runtime supports their approval policy. See [supported plugins and approval
-  policies](../../reference/agent-plugins.md#current-support).
+  runtime supports their approval policy. Use the Console **Plugins** tab on an
+  Agent draft to browse the catalog with a saved service-account Secret or edit
+  known policy JSON. See [supported plugins and approval policies](../../reference/agent-plugins.md#current-support).
 - **SSH Compute** supports Agents without user-selected plugins only.
 
 ## Know when a change takes effect

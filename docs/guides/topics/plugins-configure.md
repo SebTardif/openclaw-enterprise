@@ -1,9 +1,11 @@
 # Configure Agent plugins
 
-Use the OpenClaw Control Plane (OCC) CLI to select a plugin for an existing
-Agent, deploy the change, and check the result. This example enables the bundled
-Diffs plugin on an embedded OpenClaw Agent running on Kubernetes. Dedicated
-Codex Agents use a different catalog and approval policy; see
+Use the Console or OpenClaw Control Plane (OCC) CLI to select plugins for an
+existing Agent, deploy the change, and check the result. Console is the
+recommended path for Codex Agents because it can browse the selected Plugin
+Driver's catalog and edit tool policies. The CLI example below enables the
+bundled Diffs plugin on an embedded OpenClaw Agent running on Kubernetes.
+Dedicated Codex Agents use a different catalog and approval policy; see
 [plugin support](../../reference/agent-plugins.md#current-support).
 
 ## Before you start
@@ -19,6 +21,23 @@ Codex Agents use a different catalog and approval policy; see
   Configuration, and read the new Agent revision. Existing
   [model credential requirements](../../reference/agents.md#harness-authentication)
   still apply when deploying.
+
+## Use the Console
+
+Open the Agent, select **Create new version**, then open **Plugins**. **Configure
+plugins** opens the same policy editor used during Agent creation. For Codex
+Agents with a saved service-account Secret, Console can use that Secret for
+catalog discovery without showing its value in the browser. If discovery is not
+available, you can still edit **Plugin selections JSON** for known plugin IDs.
+
+Select **Save Plugin settings** to PATCH the Agent's `plugins` map. This does
+not change the running revision. Save or cancel Plugin edits before deployment,
+then select **Deploy new version**. Console rereads the Agent and Configuration
+before saving or deploying; if another update changed the Configuration,
+Harness authentication, or Plugin settings, reload the draft and reapply your
+change.
+
+## Use the CLI
 
 Set the Namespace and Agent IDs from your Installation:
 

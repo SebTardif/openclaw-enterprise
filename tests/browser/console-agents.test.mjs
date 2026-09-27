@@ -76,7 +76,11 @@ async function newPage(t, fixture, options = {}) {
       throw cleanupError;
     }
   });
-  context = await browser.newContext();
+  context = await browser.newContext({
+    ...(options.recordVideo
+      ? { recordVideo: { dir: artifacts, size: { width: 1280, height: 720 } } }
+      : {}),
+  });
   const page = await context.newPage();
   page.setDefaultTimeout(10_000);
   return { page, artifacts };
@@ -3665,6 +3669,369 @@ test("Agent detail preserves admitted revision history while draft edits change 
   await editor.fill(JSON.stringify(nativeValues("after-cancel")));
   await page.getByRole("button", { name: "Save Configuration" }).click();
   await page.getByText(/generation 7/).waitFor();
+});
+
+test("Agent detail saves plugin policies for a future deployment without changing the selected revision", async (t) => {
+  const fixture = await createConsoleAppFixture(t);
+  await fixture.bootstrap();
+  const pluginDriver = new CodexPluginDriver();
+  fixture.controller.registerDriver(pluginDriver);
+  fixture.controller.selectDriver("plugin", pluginDriver.id);
+  const namespace = await fixture.createNamespace("Existing Agent plugin policies", {
+    ready: true,
+  });
+  const secret = await fixture.createSecret(namespace.id, "Service account token", "pat-hidden");
+  const linearPluginId = "codex-plugin:linear@openai-curated-remote";
+  const listIssuesTool = "asdk_app_69a089a326dc8191b32a3f2553f5be2c/linear.list_issues";
+  const saveIssueTool = "asdk_app_69a089a326dc8191b32a3f2553f5be2c/linear.save_issue";
+  const initialPlugins = {
+    [linearPluginId]: {
+      enabled: true,
+      toolDefaults: { approval: "prompt", reviewer: "human" },
+      tools: { [listIssuesTool]: { approval: "native" } },
+    },
+  };
+  const stalePlugins = { [linearPluginId]: { enabled: true } };
+  const expectedPlugins = {
+    [linearPluginId]: {
+      enabled: true,
+      toolDefaults: { approval: "prompt", reviewer: "human" },
+      tools: {
+        [listIssuesTool]: { approval: "approve" },
+        [saveIssueTool]: { approval: "prompt" },
+      },
+    },
+  };
+  const agent = await fixture.createAgent(
+    namespace.id,
+    "Plugin policy draft",
+    nativeValues("plugins", { harnessId: "codex" }),
+    {
+      harnessAuth: { method: "codex_pat", source: secret.ref },
+      executionMode: "dedicated",
+    },
+  );
+  const servicePrincipalId = `service-agent-${agent.id}`;
+  const secretRoleId = `plugin-policy-secret-${agent.id}`;
+  fixture.policy.identities.push({
+    id: servicePrincipalId,
+    kind: "service_principal",
+    namespaceId: namespace.id,
+    agentId: agent.id,
+  });
+  fixture.policy.roles.push({
+    id: secretRoleId,
+    namespaceId: namespace.id,
+    permissions: [{ action: "operate", resourceKind: "secret" }],
+  });
+  fixture.policy.bindings.push({
+    id: secretRoleId,
+    namespaceId: namespace.id,
+    subjectKind: "identity",
+    subjectId: servicePrincipalId,
+    roleId: secretRoleId,
+    resourceKind: "secret",
+    resourceId: secret.id,
+  });
+  const patched = await fixture.updateAgent(namespace.id, agent.id, {
+    configurationId: agent.configurationId,
+    plugins: initialPlugins,
+  });
+  assert.deepEqual(patched.plugins, initialPlugins);
+  const first = await fixture.seedActiveAgentRevision(namespace.id, agent.id);
+  const { page, artifacts } = await newPage(t, fixture, { recordVideo: true });
+  await routeRuntimeCredentials(page, fixture, namespace.id, agent.id, {
+    transportConfigured: true,
+  });
+  await page.route(`${fixture.origin}/namespaces/${namespace.id}/agents/plugins`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        data: {
+          plugins: [
+            {
+              id: linearPluginId,
+              remoteId: "remote-linear",
+              name: "Linear",
+              description: "Plan and build products.",
+              tools: null,
+            },
+          ],
+          nextCursor: null,
+          setup: {
+            message: "Use a service account with access to the Linear app connection.",
+            links: [],
+          },
+        },
+        meta: { requestId: "req_00000000-0000-4000-8000-000000000001" },
+      }),
+    });
+  });
+  await page.route(
+    `${fixture.origin}/namespaces/${namespace.id}/agents/plugins/details`,
+    async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          data: {
+            id: linearPluginId,
+            remoteId: "remote-linear",
+            name: "Linear",
+            description: "Plan and build products.",
+            tools: [
+              {
+                id: listIssuesTool,
+                name: "List issues",
+                description: "List issues in the workspace.",
+              },
+              {
+                id: saveIssueTool,
+                name: "Save issue",
+                description: "Create or update an issue.",
+              },
+            ],
+          },
+          meta: { requestId: "req_00000000-0000-4000-8000-000000000001" },
+        }),
+      });
+    },
+  );
+  let failNextPluginSave = true;
+  await page.route(
+    `${fixture.origin}/namespaces/${namespace.id}/agents/${agent.id}`,
+    async (route) => {
+      if (route.request().method() === "PATCH" && failNextPluginSave) {
+        failNextPluginSave = false;
+        await route.fetch();
+        await route.fulfill({
+          status: 503,
+          contentType: "application/json",
+          body: JSON.stringify({
+            error: {
+              code: "DEPENDENCY_UNAVAILABLE",
+              message: "The selected preview simulates this failure.",
+            },
+            meta: { requestId: "req_00000000-0000-4000-8000-000000000001" },
+          }),
+        });
+        return;
+      }
+      await route.continue();
+    },
+  );
+  const requests = apiRequests(page, fixture.origin);
+  const url = detailUrl(fixture, namespace.id, agent.id, "draft", "plugins");
+  await login(page, fixture, url.pathname + url.search);
+  await page.getByRole("heading", { name: "Plugin policy draft" }).waitFor();
+  const json = page.getByLabel("Plugin selections JSON", { exact: true });
+  await page.locator("summary").filter({ hasText: "Plugin selections JSON" }).click();
+  assert.deepEqual(JSON.parse(await json.inputValue()), initialPlugins);
+
+  requests.length = 0;
+  await json.fill("[]");
+  await page.getByRole("button", { name: "Save Plugin settings", exact: true }).click();
+  assert.notEqual(await json.evaluate((node) => node.validationMessage), "");
+  assert.deepEqual(
+    pathRequests(requests, "PATCH", `/namespaces/${namespace.id}/agents/${agent.id}`),
+    [],
+  );
+
+  await json.fill(JSON.stringify(expectedPlugins, null, 2));
+  await fixture.updateAgent(namespace.id, agent.id, {
+    configurationId: agent.configurationId,
+    plugins: stalePlugins,
+  });
+  await page.getByRole("link", { name: "Namespaces", exact: true }).click();
+  await page.getByRole("heading", { name: "Namespaces", exact: true }).waitFor();
+  await page.goBack();
+  assert.deepEqual(JSON.parse(await json.inputValue()), expectedPlugins);
+  await page.getByRole("button", { name: "Save Plugin settings", exact: true }).click();
+  await page.getByText("The saved Agent Plugin settings changed while you were editing.").waitFor();
+  assert.deepEqual(
+    pathRequests(requests, "PATCH", `/namespaces/${namespace.id}/agents/${agent.id}`),
+    [],
+  );
+
+  await page.getByRole("button", { name: "Reload Plugin settings", exact: true }).click();
+  await page.getByRole("heading", { name: "Plugin draft" }).waitFor();
+  assert.deepEqual(JSON.parse(await json.inputValue()), stalePlugins);
+  await page.getByRole("button", { name: "Configure plugins", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "Configure plugins", exact: true });
+  await dialog.getByRole("button", { name: "Linear", exact: true }).click();
+  const catalogRequests = requests.filter(
+    (request) =>
+      request.path.endsWith("/agents/plugins") || request.path.endsWith("/agents/plugins/details"),
+  );
+  assert.deepEqual(catalogRequests.at(-2).body, { secretRef: secret.ref });
+  assert.deepEqual(catalogRequests.at(-1).body, {
+    secretRef: secret.ref,
+    pluginId: "remote-linear",
+  });
+  await dialog.getByLabel("Linear default approval", { exact: true }).selectOption("prompt");
+  await dialog.getByLabel("Linear default reviewer", { exact: true }).selectOption("human");
+  const listIssues = dialog.locator(`details.plugin-tool-row[data-tool="${listIssuesTool}"]`);
+  await listIssues.locator("summary").click();
+  await dialog.getByLabel("List issues approval", { exact: true }).selectOption("approve");
+  const saveIssue = dialog.locator(`details.plugin-tool-row[data-tool="${saveIssueTool}"]`);
+  await saveIssue.locator("summary").click();
+  await dialog.getByLabel("Save issue approval", { exact: true }).selectOption("prompt");
+  await dialog.screenshot({ path: join(artifacts, "agent-plugin-policy-dialog.png") });
+  await dialog.getByRole("button", { name: "Done", exact: true }).click();
+  assert.deepEqual(JSON.parse(await json.inputValue()), expectedPlugins);
+  await page.getByText("Save or cancel Plugin edits before deploying.").waitFor();
+  requests.length = 0;
+  await page.getByRole("button", { name: "Save Plugin settings", exact: true }).click();
+  await page.getByText("Outcome unknown. Plugin settings may have been saved.").waitFor();
+  assert.equal(
+    await page.getByRole("button", { name: "Save Plugin settings", exact: true }).isDisabled(),
+    true,
+  );
+  assert.equal(
+    await page.getByRole("button", { name: "Deploy new version", exact: true }).isDisabled(),
+    true,
+  );
+  assert.deepEqual(
+    pathRequests(requests, "PATCH", `/namespaces/${namespace.id}/agents/${agent.id}`).map(
+      (request) => request.body,
+    ),
+    [{ configurationId: agent.configurationId, plugins: expectedPlugins }],
+  );
+
+  await page.getByRole("button", { name: "Reload Plugin settings", exact: true }).click();
+  await page.getByRole("heading", { name: "Plugin draft" }).waitFor();
+  assert.deepEqual(JSON.parse(await json.inputValue()), expectedPlugins);
+  await page.getByText("Plugin settings saved. Deploy a new version to apply them.").waitFor();
+  const savedAgent = await fixture.request("GET", `/namespaces/${namespace.id}/agents/${agent.id}`);
+  assert.deepEqual(savedAgent.data.plugins, expectedPlugins);
+  assert.equal(savedAgent.data.activeRevisionId, first.revision.id);
+  const selectedRevision = await fixture.request(
+    "GET",
+    `/namespaces/${namespace.id}/agents/${agent.id}/revisions/${first.revision.id}`,
+  );
+  assert.deepEqual(selectedRevision.data.plugins.plugins, initialPlugins);
+  assert.deepEqual(
+    pathRequests(requests, "POST", `/namespaces/${namespace.id}/agents/${agent.id}/deploy`),
+    [],
+  );
+
+  await page.screenshot({ path: join(artifacts, "agent-plugin-policy-saved.png"), fullPage: true });
+  requests.length = 0;
+  const deployed = page.waitForResponse(
+    (response) =>
+      response.url() === `${fixture.origin}/namespaces/${namespace.id}/agents/${agent.id}/deploy` &&
+      response.request().method() === "POST",
+  );
+  await page.getByRole("button", { name: "Deploy new version", exact: true }).click();
+  const deployedResponse = await deployed;
+  assert.equal(deployedResponse.status(), 202);
+  const revision = (await deployedResponse.json()).data;
+  assert.deepEqual(revision.plugins.plugins, expectedPlugins);
+  const video = page.video();
+  await page.close();
+  if (video) {
+    t.diagnostic(`agent plugin policy video: ${await video.path()}`);
+  }
+});
+
+test("Agent detail discovers curated plugin tools without a Secret credential", async (t) => {
+  const fixture = await createConsoleAppFixture(t);
+  await fixture.bootstrap();
+  const pluginDriver = new CodexPluginDriver({ catalogSource: "openai-curated" });
+  fixture.controller.registerDriver(pluginDriver);
+  fixture.controller.selectDriver("plugin", pluginDriver.id);
+  const namespace = await fixture.createNamespace("Curated Agent plugin policies", {
+    ready: true,
+  });
+  const linearPluginId = "codex-plugin:linear@openai-curated-remote";
+  const fetchTool = "asdk_app_69a089a326dc8191b32a3f2553f5be2c/linear.fetch";
+  const listIssuesTool = "asdk_app_69a089a326dc8191b32a3f2553f5be2c/linear.list_issues";
+  const saveIssueTool = "asdk_app_69a089a326dc8191b32a3f2553f5be2c/linear.save_issue";
+  const expectedPlugins = {
+    [linearPluginId]: {
+      enabled: true,
+      tools: {
+        [fetchTool]: { approval: "approve" },
+        [listIssuesTool]: { approval: "approve" },
+        [saveIssueTool]: { approval: "prompt" },
+      },
+    },
+  };
+  const agent = await fixture.createAgent(
+    namespace.id,
+    "Curated plugin policy draft",
+    nativeValues("curated-plugins", { harnessId: "codex" }),
+    {
+      harnessAuth: null,
+      executionMode: "dedicated",
+    },
+  );
+  const originalFetch = globalThis.fetch;
+  const externalRequests = [];
+  t.mock.method(globalThis, "fetch", (url, options) => {
+    const parsed = new URL(typeof url === "string" ? url : url.url);
+    if (parsed.hostname !== "127.0.0.1" && parsed.hostname !== "localhost") {
+      externalRequests.push(String(url));
+      throw new Error("Curated discovery must not call an external service.");
+    }
+    return originalFetch(url, options);
+  });
+  const { page } = await newPage(t, fixture);
+  const requests = apiRequests(page, fixture.origin);
+  const url = detailUrl(fixture, namespace.id, agent.id, "draft", "plugins");
+  await login(page, fixture, url.pathname + url.search);
+  await page.getByRole("heading", { name: "Curated plugin policy draft" }).waitFor();
+  await page.getByRole("button", { name: "Configure plugins", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "Configure plugins", exact: true });
+  await dialog.getByRole("button", { name: "Linear", exact: true }).click();
+  assert.deepEqual(
+    pathRequests(requests, "POST", `/namespaces/${namespace.id}/agents/plugins`).map(
+      (request) => request.body,
+    ),
+    [{}],
+  );
+  assert.equal(
+    requests.some((request) => request.path.includes("/secrets")),
+    false,
+  );
+  await dialog.getByRole("button", { name: "Add Linear", exact: true }).click();
+  for (const [toolId, label] of [
+    [fetchTool, "Fetch approval"],
+    [listIssuesTool, "List issues approval"],
+    [saveIssueTool, "Save issue approval"],
+  ]) {
+    const row = dialog.locator(`details.plugin-tool-row[data-tool="${toolId}"]`);
+    await row.waitFor();
+    await row.locator("summary").click();
+    await dialog
+      .getByLabel(label, { exact: true })
+      .selectOption(toolId === saveIssueTool ? "prompt" : "approve");
+  }
+  await dialog.getByRole("button", { name: "Done", exact: true }).click();
+  const json = page.getByLabel("Plugin selections JSON", { exact: true });
+  assert.deepEqual(JSON.parse(await json.inputValue()), expectedPlugins);
+  requests.length = 0;
+  const savedPlugins = page.waitForResponse(
+    (response) =>
+      response.url() === `${fixture.origin}/namespaces/${namespace.id}/agents/${agent.id}` &&
+      response.request().method() === "PATCH",
+  );
+  await page.getByRole("button", { name: "Save Plugin settings", exact: true }).click();
+  assert.equal((await savedPlugins).status(), 200);
+  assert.deepEqual(
+    pathRequests(requests, "PATCH", `/namespaces/${namespace.id}/agents/${agent.id}`).map(
+      (request) => request.body,
+    ),
+    [{ configurationId: agent.configurationId, plugins: expectedPlugins }],
+  );
+  assert.equal(
+    requests.some((request) => request.path.includes("/secrets")),
+    false,
+  );
+  assert.deepEqual(externalRequests, []);
+  const savedAgent = await fixture.request("GET", `/namespaces/${namespace.id}/agents/${agent.id}`);
+  assert.deepEqual(savedAgent.data.plugins, expectedPlugins);
 });
 
 test("Agent credentials choose existing Secrets for harness authentication", async (t) => {

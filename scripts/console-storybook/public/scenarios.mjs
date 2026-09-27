@@ -1709,6 +1709,28 @@ export const scenarios = {
     ],
     gap: "The fixture simulates admission and worker completion; it does not verify a live Agent.",
   },
+  agentPluginDraft: {
+    group: "Pages/Agent detail",
+    name: "Edit plugin policies",
+    path: draft,
+    deployed: true,
+    pluginCapabilities,
+    agentPlugins: JSON.parse(pluginSelections),
+    actions: [
+      click("Plugins"),
+      { selector: ".plugin-json > summary", click: true },
+      click("Configure plugins"),
+      { selector: 'button[aria-label="codex-plugin:calendar@openai-curated-remote"]', click: true },
+    ],
+    description:
+      "Existing Agent plugin selections are edited on the Agent draft, separate from native Configuration. Deployment remains separate.",
+    steps: [
+      "Change Calendar's default approval or a saved tool override, then click Done.",
+      "Inspect Plugin selections JSON and save Plugin settings.",
+      "Return to Configuration to confirm the saved Agent plugins do not alter native Configuration JSON.",
+    ],
+    gap: "Simulated UI proof; no live plugin discovery or runtime invocation.",
+  },
   configurationNavigation: {
     group: "Pages/Agent detail",
     name: "Keep Configuration edits",

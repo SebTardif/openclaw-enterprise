@@ -6,6 +6,7 @@ import { createAgentStop } from "./stop.mjs";
 import { repositoryProfile, repositoryWriteAccessHelp } from "./repository-profiles.mjs";
 import { renderChannels } from "../channels.mjs";
 import { renderWorkspaceFiles } from "./workspace.mjs";
+import { createPluginFields } from "./plugin-fields.mjs";
 import { displayDate, shortId, namespacePath, link, message } from "./list.mjs";
 import {
   createRuntimeCredentialsPanel,
@@ -52,6 +53,27 @@ function nativeDocument(values, label) {
 
 function isPlainObject(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function parseJsonObject(input, reportInvalid = false, message = "Enter a valid JSON object.") {
+  try {
+    const values = JSON.parse(input.value);
+    if (!isPlainObject(values)) {
+      throw new Error();
+    }
+    input.setCustomValidity("");
+    return values;
+  } catch {
+    if (reportInvalid) {
+      const details = input.closest("details");
+      if (details) {
+        details.open = true;
+      }
+      input.setCustomValidity(message);
+      input.reportValidity();
+    }
+    return undefined;
+  }
 }
 
 function deploymentFailure(error) {
@@ -457,6 +479,7 @@ export async function renderAgentDetail(context, { agent: preloadedAgent = null 
   const tabsForSelection = [
     "configuration",
     "channels",
+    ...(selected === "draft" ? ["plugins"] : []),
     ...(selected === "draft" ? ["credentials"] : []),
     "workspace",
   ];
@@ -579,6 +602,7 @@ export async function renderAgentDetail(context, { agent: preloadedAgent = null 
   for (const [id, label] of [
     ["configuration", "Configuration"],
     ["channels", "Channels"],
+    ...(selected === "draft" ? [["plugins", "Plugins"]] : []),
     ...(selected === "draft" ? [["credentials", "Credentials"]] : []),
     ["workspace", "Workspace files"],
   ]) {
@@ -969,6 +993,13 @@ export async function renderAgentDetail(context, { agent: preloadedAgent = null 
       outcomeUnknown: retainedEditor?.outcomeUnknown ?? false,
       reloadRequired: retainedEditor?.reloadRequired ?? false,
     };
+    const retainedPlugins = context.drafts.get("plugins");
+    const draftPluginState = {
+      dirty: Boolean(retainedPlugins && retainedPlugins.text !== retainedPlugins.initialText),
+      saving: false,
+      outcomeUnknown: retainedPlugins?.outcomeUnknown ?? false,
+      reloadRequired: retainedPlugins?.reloadRequired ?? false,
+    };
     const runtimeAuth = agent.harnessAuth?.method === "runtime";
     const credentials = !runtimeAuth
       ? createRuntimeCredentialsPanel({
@@ -996,6 +1027,10 @@ export async function renderAgentDetail(context, { agent: preloadedAgent = null 
         draftEditorState.saving ||
         draftEditorState.outcomeUnknown ||
         draftEditorState.reloadRequired ||
+        draftPluginState.dirty ||
+        draftPluginState.saving ||
+        draftPluginState.outcomeUnknown ||
+        draftPluginState.reloadRequired ||
         !agent.harnessAuth ||
         revisionResult.status !== "fulfilled" ||
         (!runtimeAuth && !credentials?.canDeploy())
@@ -1019,6 +1054,15 @@ export async function renderAgentDetail(context, { agent: preloadedAgent = null 
           deployStatus.textContent = "Wait for Configuration save to finish before deploying.";
         } else if (draftEditorState.dirty) {
           deployStatus.textContent = "Save or cancel Configuration edits before deploying.";
+        } else if (draftPluginState.outcomeUnknown) {
+          deployStatus.textContent =
+            "Refresh this draft before deploying because the last Plugin save outcome is unknown.";
+        } else if (draftPluginState.reloadRequired) {
+          deployStatus.textContent = "Reload this draft before deploying.";
+        } else if (draftPluginState.saving) {
+          deployStatus.textContent = "Wait for Plugin save to finish before deploying.";
+        } else if (draftPluginState.dirty) {
+          deployStatus.textContent = "Save or cancel Plugin edits before deploying.";
         } else if (revisionResult.status !== "fulfilled") {
           deployStatus.textContent =
             "Version history is required before deploying this new version.";
@@ -1066,9 +1110,11 @@ export async function renderAgentDetail(context, { agent: preloadedAgent = null 
           if (
             freshAgent.configurationId !== snapshot.id ||
             JSON.stringify(freshAgent.harnessAuth) !== JSON.stringify(agent.harnessAuth) ||
+            JSON.stringify(freshAgent.plugins ?? {}) !== JSON.stringify(agent.plugins ?? {}) ||
             freshConfig.generation !== snapshot.generation
           ) {
-            deployFeedback.textContent = "The Configuration changed. Refresh before deploying.";
+            deployFeedback.textContent =
+              "The Configuration or Plugin settings changed. Refresh before deploying.";
             return;
           }
           const credentialBlockReason = runtimeCredentialBlockReason(freshConfig.values);
@@ -1127,6 +1173,7 @@ export async function renderAgentDetail(context, { agent: preloadedAgent = null 
         "ol",
         { className: "draft-steps" },
         element("li", {}, "Edit and save Configuration or Channels"),
+        element("li", {}, "Edit and save Plugins"),
         element("li", {}, "Check authentication and credentials"),
         element("li", {}, "Deploy the saved draft"),
       ),
@@ -1164,6 +1211,10 @@ export async function renderAgentDetail(context, { agent: preloadedAgent = null 
               ? "Wait for Configuration save to finish before leaving the editor."
               : null;
         updateNavigationControls();
+        updateDeployControls();
+      },
+      setDraftPluginState(nextState) {
+        Object.assign(draftPluginState, nextState);
         updateDeployControls();
       },
     };
@@ -1318,6 +1369,8 @@ export async function renderAgentDetail(context, { agent: preloadedAgent = null 
         },
       });
       content.append(channels);
+    } else if (selectedTab === "plugins" && draft) {
+      content.append(renderDraftPluginEditor(context, data));
     } else if (selectedTab === "credentials" && draft) {
       const retained = context.drafts.get("authentication");
       const baseline = retained?.baseline ?? {
@@ -1508,6 +1561,359 @@ export async function renderAgentDetail(context, { agent: preloadedAgent = null 
         ),
       );
     }
+  }
+
+  function renderDraftPluginEditor(context, data) {
+    const { setDraftPluginState } = data;
+    const retained = context.drafts.get("plugins");
+    let baseline = retained?.baseline ?? {
+      configurationId: agent.configurationId,
+      harnessAuth: agent.harnessAuth,
+      plugins: agent.plugins ?? {},
+    };
+    let pending = false;
+    let outcomeUnknown = retained?.outcomeUnknown ?? false;
+    let reloadRequired = retained?.reloadRequired ?? false;
+    let feedbackLocked = false;
+    let initialText = retained?.initialText ?? JSON.stringify(agent.plugins ?? {}, null, 2);
+    let pluginDiscoveryCredential = null;
+    let pluginDiscoveryGeneration = 0;
+    let pluginCatalog = { status: "idle", nextCursor: null };
+    const pluginEntries = new Map();
+    let pluginPageIds = [];
+    let pluginCursors = [null];
+    let pluginPageIndex = 0;
+    const plugins = element("textarea", {
+      id: "agent-plugins",
+      rows: "8",
+      spellcheck: "false",
+    });
+    plugins.value = retained?.text ?? initialText;
+    const pluginFields = createPluginFields({
+      input: plugins,
+      saveDescription: "Changes are saved to this Agent draft. Deploy a new version to admit them.",
+      onLoadPlugins: (direction) => void loadPluginCatalog(direction),
+      onLoadTools: (id) => void loadPluginTools(id),
+    });
+    const feedback = element("p", { className: "hint", role: "status" });
+    const save = button("Save Plugin settings", () => void savePlugins(), {
+      className: "primary",
+    });
+    const reload = button("Reload Plugin settings", () => {
+      context.drafts.forget("plugins");
+      context.navigate(target("draft", "plugins"), namespaceId, true);
+    });
+    const actions = element("div", { className: "form-actions" }, save, reload);
+    const section = element(
+      "section",
+      { className: "agent-card" },
+      element("h2", {}, "Plugin draft"),
+      element(
+        "p",
+        { className: "muted" },
+        "Plugin selections are saved on the Agent, separate from native Configuration. They affect future deployments after you deploy a new version.",
+      ),
+      pluginFields.section,
+      actions,
+      feedback,
+    );
+
+    context.drafts.track("plugins", () =>
+      plugins.value !== initialText || pending || outcomeUnknown || reloadRequired
+        ? {
+            text: plugins.value,
+            initialText,
+            baseline,
+            outcomeUnknown: outcomeUnknown || pending,
+            reloadRequired,
+          }
+        : undefined,
+    );
+
+    function discoveryCredential() {
+      if (agent.executionMode !== "dedicated") {
+        return null;
+      }
+      if (pluginDiscoveryCredential === "none") {
+        return {};
+      }
+      if (agent.harnessAuth?.method !== "codex_pat") {
+        return null;
+      }
+      const secretRef = agent.harnessAuth.source;
+      if (secretRef?.kind === "secret") {
+        return { secretRef };
+      }
+      return null;
+    }
+
+    function canDiscoverPlugins() {
+      return Boolean(discoveryCredential());
+    }
+
+    function updatePluginDiscovery() {
+      const canLoad = canDiscoverPlugins();
+      pluginFields.setCatalog({
+        ...pluginCatalog,
+        entries: pluginPageIds.map((id) => pluginEntries.get(id)),
+        knownEntries: [...pluginEntries.values()],
+        pageNumber: pluginPageIndex + 1,
+        hasPrevious: pluginPageIndex > 0,
+        canLoad,
+        message:
+          pluginCatalog.message ??
+          (canLoad
+            ? pluginDiscoveryCredential === "none"
+              ? "Load the installation's curated plugin catalog. Access and tool availability are checked separately."
+              : "Load plugins available to this Agent's saved service account credential. Plugin selections stay unchanged."
+            : "Plugin discovery requires Dedicated Codex execution and, in hosted mode, a saved service account Secret. Existing selections remain in JSON."),
+      });
+    }
+
+    function pluginDiscoveryError(error) {
+      const reason = {
+        FORBIDDEN: "You do not have permission to discover plugins with this credential.",
+        PLUGIN_DISCOVERY_CREDENTIALS_REJECTED:
+          "The service account token was rejected or cannot access plugins. Check its permissions.",
+        PLUGIN_DISCOVERY_RATE_LIMITED:
+          "The plugin service rate limit was reached. Try again later.",
+        PLUGIN_DISCOVERY_UNAVAILABLE:
+          "The plugin service is unavailable. Check the server's plugin service access and retry.",
+        PLUGIN_DISCOVERY_INVALID_RESPONSE:
+          "The plugin service returned an unsupported response. Retry or contact your operator.",
+      }[error.code];
+      return `${reason ?? "Plugins could not be loaded. Check the credential and retry."}${error.requestId ? ` Request: ${error.requestId}` : ""}`;
+    }
+
+    async function loadInstallationCapabilities() {
+      try {
+        const installation = await request("/installation");
+        if (!context.isCurrent()) {
+          return;
+        }
+        pluginDiscoveryCredential = installation.capabilities?.pluginDiscovery?.credential ?? null;
+        pluginFields.setCapabilities(installation.capabilities?.pluginPolicies ?? null);
+        updatePluginDiscovery();
+      } catch (error) {
+        if (!context.isCurrent()) {
+          return;
+        }
+        if (error.status === 401) {
+          context.onExpired();
+          return;
+        }
+        pluginFields.setCatalog({
+          status: "error",
+          entries: [],
+          canLoad: false,
+          message: `Installation capabilities unavailable. ${message(error)}`,
+        });
+      }
+    }
+
+    async function loadPluginCatalog(direction = "refresh") {
+      if (!canDiscoverPlugins() || pending || pluginCatalog.status === "loading") {
+        return;
+      }
+      let pageIndex = pluginPageIndex;
+      let cursor = pluginCursors[pageIndex];
+      if (direction === "next") {
+        if (!pluginCatalog.nextCursor) {
+          return;
+        }
+        pageIndex += 1;
+        cursor = pluginCatalog.nextCursor;
+      } else if (direction === "previous") {
+        if (pageIndex === 0) {
+          return;
+        }
+        pageIndex -= 1;
+        cursor = pluginCursors[pageIndex];
+      }
+      const generation = ++pluginDiscoveryGeneration;
+      for (const [id, entry] of pluginEntries) {
+        pluginEntries.set(id, { ...entry, toolStatus: undefined });
+      }
+      pluginCatalog = { ...pluginCatalog, status: "loading" };
+      updatePluginDiscovery();
+      try {
+        const page = await request(`${namespacePath(namespaceId)}/agents/plugins`, {
+          method: "POST",
+          body: { ...discoveryCredential(), ...(cursor ? { cursor } : {}) },
+        });
+        if (!context.isCurrent() || generation !== pluginDiscoveryGeneration) {
+          return;
+        }
+        for (const entry of page.plugins) {
+          pluginEntries.set(entry.id, entry);
+        }
+        pluginPageIds = page.plugins.map((entry) => entry.id);
+        pluginCursors = [...pluginCursors.slice(0, pageIndex), cursor];
+        pluginPageIndex = pageIndex;
+        pluginCatalog = { status: "ready", nextCursor: page.nextCursor, setup: page.setup };
+      } catch (error) {
+        if (!context.isCurrent() || generation !== pluginDiscoveryGeneration) {
+          return;
+        }
+        if (error.status === 401) {
+          context.onExpired();
+          return;
+        }
+        pluginCatalog = { ...pluginCatalog, status: "error", message: pluginDiscoveryError(error) };
+      } finally {
+        if (context.isCurrent() && generation === pluginDiscoveryGeneration) {
+          updatePluginDiscovery();
+        }
+      }
+    }
+
+    async function loadPluginTools(id) {
+      const entry = pluginEntries.get(id);
+      if (
+        !canDiscoverPlugins() ||
+        pending ||
+        pluginCatalog.status === "loading" ||
+        !entry?.remoteId ||
+        entry.toolStatus === "loading"
+      ) {
+        return;
+      }
+      const generation = pluginDiscoveryGeneration;
+      pluginEntries.set(id, { ...entry, toolStatus: "loading", toolError: undefined });
+      updatePluginDiscovery();
+      try {
+        const detail = await request(`${namespacePath(namespaceId)}/agents/plugins/details`, {
+          method: "POST",
+          body: { ...discoveryCredential(), pluginId: entry.remoteId },
+        });
+        if (
+          !context.isCurrent() ||
+          generation !== pluginDiscoveryGeneration ||
+          pluginEntries.get(id)?.remoteId !== entry.remoteId
+        ) {
+          return;
+        }
+        pluginEntries.set(id, { ...entry, ...detail, toolStatus: "loaded", toolError: undefined });
+      } catch (error) {
+        if (!context.isCurrent() || generation !== pluginDiscoveryGeneration) {
+          return;
+        }
+        if (error.status === 401) {
+          context.onExpired();
+          return;
+        }
+        pluginEntries.set(id, { ...entry, toolError: pluginDiscoveryError(error) });
+      } finally {
+        if (context.isCurrent() && generation === pluginDiscoveryGeneration) {
+          updatePluginDiscovery();
+        }
+      }
+    }
+
+    function updateState() {
+      const dirty = plugins.value !== initialText;
+      setDraftPluginState({
+        dirty,
+        saving: pending,
+        outcomeUnknown,
+        reloadRequired,
+      });
+      save.disabled = pending || outcomeUnknown || reloadRequired;
+      reload.disabled = pending;
+      pluginFields.setDisabled(pending || outcomeUnknown || reloadRequired);
+      if (feedbackLocked) {
+        return;
+      }
+      if (outcomeUnknown) {
+        feedback.textContent =
+          "Outcome unknown. Plugin settings may have been saved. Reload this draft before saving again.";
+      } else if (reloadRequired) {
+        feedback.textContent = "Reload this draft before saving Plugin settings.";
+      } else if (pending) {
+        feedback.textContent = "Saving Plugin settings…";
+      } else if (dirty) {
+        feedback.textContent = "Save or cancel these Plugin edits before deploying.";
+      } else {
+        feedback.textContent = "Plugin settings saved. Deploy a new version to apply them.";
+      }
+    }
+
+    async function savePlugins() {
+      if (pending || outcomeUnknown || reloadRequired) {
+        return;
+      }
+      const desiredPlugins = parseJsonObject(
+        plugins,
+        true,
+        "Enter a valid Plugin selections JSON object.",
+      );
+      if (desiredPlugins === undefined) {
+        return;
+      }
+      if (JSON.stringify(desiredPlugins) === JSON.stringify(baseline.plugins ?? {})) {
+        feedback.textContent = "No Plugin changes to save.";
+        feedbackLocked = true;
+        return;
+      }
+      pending = true;
+      feedbackLocked = false;
+      updateState();
+      let mutationStarted = false;
+      try {
+        const current = await request(path);
+        if (!context.isCurrent()) {
+          return;
+        }
+        if (
+          current.configurationId !== baseline.configurationId ||
+          JSON.stringify(current.harnessAuth) !== JSON.stringify(baseline.harnessAuth) ||
+          JSON.stringify(current.plugins ?? {}) !== JSON.stringify(baseline.plugins ?? {})
+        ) {
+          feedback.textContent =
+            "The saved Agent Plugin settings changed while you were editing. Reload this draft before saving.";
+          feedbackLocked = true;
+          reloadRequired = true;
+          return;
+        }
+        mutationStarted = true;
+        await request(path, {
+          method: "PATCH",
+          body: { configurationId: baseline.configurationId, plugins: desiredPlugins },
+        });
+        if (context.isCurrent()) {
+          context.drafts.forget("plugins");
+          details = null;
+          context.navigate(target("draft", "plugins"), namespaceId, true);
+        }
+      } catch (error) {
+        if (!context.isCurrent()) {
+          return;
+        }
+        if (error.status === 401) {
+          context.onExpired();
+          return;
+        }
+        outcomeUnknown = mutationStarted && ![400, 403, 404, 409, 429].includes(error.status);
+        feedback.textContent = outcomeUnknown
+          ? "Outcome unknown. Plugin settings may have been saved. Reload this draft before saving again."
+          : message(error, mutationStarted);
+        feedbackLocked = true;
+      } finally {
+        if (context.isCurrent()) {
+          pending = false;
+          updateState();
+        }
+      }
+    }
+
+    plugins.addEventListener("input", () => {
+      feedbackLocked = false;
+      updateState();
+    });
+    updatePluginDiscovery();
+    updateState();
+    void loadInstallationCapabilities();
+    return section;
   }
 
   function renderDraftConfigurationEditor(context, data) {

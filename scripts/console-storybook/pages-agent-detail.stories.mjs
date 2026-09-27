@@ -4,6 +4,7 @@ export default { title: "Pages/Agent detail" };
 
 export const Draft = story("draft");
 export const NewVersion = story("newVersion");
+export const PluginPolicies = { ...story("agentPluginDraft"), name: "Edit Plugin Policies" };
 export const ConfigurationEditor = { ...story("configurationEditor"), name: "Edit Configuration" };
 export const InvalidConfiguration = {
   ...story("invalidConfiguration"),

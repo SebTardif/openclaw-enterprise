@@ -81,14 +81,14 @@ or uncertain-outcome form state; follow save recovery below.
 
 For Codex plugins, open **Configure plugins**. With the
 [OpenAI curated catalog](../drivers/plugin-bundled.md#selection-and-catalogs),
-you can browse and select supported plugins without a discovery token. Their tool
-inventory and account access are unknown. In hosted mode, select **Service Accounts** with
-**Codex** and choose a PAT Secret, or enter a token under **Plugin discovery token
-(optional)**. **Previous page** and **Next page** fetch hosted pages; **Filter this
-page** filters locally. PAT catalog search is unavailable.
-Select a plugin to load tools, then **Add**. Use toggles and **Tool policy** for
-overrides. **Configured plugins** includes selections from other pages. **Done**
-closes the modal; **Create Agent** saves changes.
+you can browse supported plugins without a discovery token. In hosted mode, use
+**Service Accounts** with **Codex** and choose a PAT Secret, or enter a token
+under **Plugin discovery token (optional)**. Select a plugin, load tools, set
+overrides, and close the modal. **Create Agent** saves creation changes.
+
+For an existing Agent, open **Create new version** and **Plugins**. The same
+editor saves `Agent.plugins`, not native Configuration JSON. Deploy a new
+version to admit saved Plugin changes.
 
 [Discovery](../../flows/agent-plugins.md#credential-scoped-discovery) requires
 permission to use any selected Secret. The server reads its value without returning

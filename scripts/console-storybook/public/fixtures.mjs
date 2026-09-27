@@ -170,6 +170,7 @@ export function installFixture(scenario, evidence) {
     ...(scenario.repositoryBindings
       ? { repositoryBindings: structuredClone(scenario.repositoryBindings) }
       : {}),
+    ...(scenario.agentPlugins ? { plugins: structuredClone(scenario.agentPlugins) } : {}),
   };
   agents.set(agent.id, agent);
   credentials.set(agent.id, { transportConfigured: scenario.transport !== false });

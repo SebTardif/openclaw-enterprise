@@ -1,7 +1,7 @@
 ---
 created: 2026-09-09
-updated: 2026-09-26
-last_updated_session: 01a0db1e-7ab2-7bf1-936b-e71c9d6f9911
+updated: 2026-09-27
+last_updated_session: authoring-run/cd54c007-251c-4cef-af5a-a25b41711c84
 ---
 
 # Console Agent editing and runtime requests
@@ -27,12 +27,15 @@ graph TD
   subgraph Browser["Browser"]
     A["Read exact Agent"] --> B["Open detail action"]
     B --> C["Edit draft or provision credentials"]
+    B --> P["Edit Agent plugin policy"]
     B --> D["Read or write workspace files"]
     B --> E["Confirm Agent deletion"]
     B --> S["Confirm Agent stop"]
   end
   subgraph API["Controller API"]
     C --> F["Authorize exact request"]
+    P --> F
+    P --> Q["PATCH exact Agent plugins"]
     F -->|authentication saved| V["Confirm exact Agent Secret grant"]
     V -->|confirmed| W["Reload saved draft"]
     V -->|denied or interrupted| X["Show partial save and grant-only retry"]
@@ -55,15 +58,15 @@ graph TD
 
 `apps/controller/src/console/agents/detail.mjs:renderAgentDetail`
 
-The detail page reads the Agent and readable revisions, then its current
+The detail page reads the Agent and readable revisions, then current
 Configuration (`revision=draft`) or immutable AgentRevision (`revision=<id>`).
 **Current version** uses `activeRevisionId`, independent of the newest or viewed
-version. **View version vN** opens read-only details without changing selection.
+version. **View version vN** opens read-only details.
 **Deployment activity** reads the most recent visible version's persisted status;
 admitted, deployment work, and activation milestones project `queued`, `running`,
-`succeeded`, or `failed`, not live health. The viewed version separately shows
-its recorded result. **Refresh deployment** rereads activity and Agent selection.
-**Current observations** runs exact-version diagnostics only on demand. Its
+`succeeded`, or `failed`, not live health. The viewed version shows its recorded
+result. **Refresh deployment** rereads activity and Agent selection.
+**Current observations** runs exact-version diagnostics on demand. Its
 timestamped `succeeded`, `failed`, or `unknown` checks and request errors do not
 change persisted deployment status. The bodyless POST requires Agent `read` and
 `operate` plus exact AgentRevision `read`.
@@ -71,38 +74,44 @@ change persisted deployment status. The bodyless POST requires Agent `read` and
 Configuration. **Edit current Configuration** does not copy historical values.
 Stop and deletion target the Agent.
 
-In the draft, **Edit Configuration** accepts a JSON object and PATCHes only
+In the draft, **Edit Configuration** accepts a JSON object and PATCHes
 `{ values }` to the exact Namespace Configuration, retaining omitted
 `secretBindings`. It first rereads Agent and Configuration, rejecting changed
-Configuration ID or generation. This is not an atomic compare-and-swap: writes
-can race after the reads. The API owns authorization and generation.
+Configuration ID or generation. This is not atomic: writes can race after the
+reads. The API owns authorization and generation.
 
-Saving reloads the draft without changing admitted snapshots or selection.
-Invalid input, denied writes, and stale drafts retain editor text. An uncertain
-result blocks another save until readback. Unsaved or unresolved edits block
+Saving reloads the draft without changing admitted snapshots.
+Invalid input, denied writes, stale drafts, and uncertain results retain editor
+text and block another save until readback. Unsaved or unresolved edits block
 deployment. Ordinary edits survive navigation; pending saves block tab and
 version changes until readback.
 
+The draft **Plugins** tab uses
+`apps/controller/src/console/agents/plugin-fields.mjs:createPluginFields` to edit
+Agent `plugins`, not native Configuration. Curated discovery sends `{}`; hosted
+discovery sends a saved Secret reference without exposing its value. **Save
+Plugin settings** rereads Agent, PATCHes `{ configurationId, plugins }`
+only when Configuration ID, Harness auth, and Plugin map match the tab baseline.
+Invalid JSON, denied writes, stale baselines, and uncertain outcomes keep input
+and block deployment until reload. Saving does not change admitted revisions.
+
 Deployment rereads Agent, Configuration, and managed credential metadata. It
-requires a harness binding, generated transport credentials, and enabled Slack
-Secret bindings; Teams-enabled drafts remain blocked. Changed Configuration
-association, generation, or harness binding requires refresh. A bodyless deploy
-POST opens the returned version's activity. Failed reads send no POST. An
-uncertain POST blocks another until reload; inspect history before retrying.
+requires harness, generated transport credentials, and enabled Slack Secret
+bindings; Teams drafts remain blocked. Changed Configuration association,
+generation, harness binding, or Plugin settings requires refresh. A bodyless
+deploy POST opens the returned version's activity. Failed reads send no POST.
+An uncertain POST blocks another until reload; inspect history before retrying.
 Preflight reads do not make admission atomic.
 
 `apps/controller/src/console/drafts.mjs:createDraftStore` owns document-local
 snapshots. `console.mjs:resetReads` and `detail.mjs:renderTab` capture editors
-before teardown, excluding passwords. Namespace and Agent keys isolate drafts;
-session expiry, account changes, logout, and page exit clear them. No browser
-storage or URL carries draft contents. Preset variables, Create Agent, and Agent
-search use the same store.
+before teardown, excluding passwords. Namespace and Agent keys isolate drafts.
+Session expiry, account changes, logout, and page exit clear drafts; browser
+storage and URLs never carry contents.
 
-Configuration and authentication retain their save baselines across reentry, so
-fresh reads cannot silently overwrite concurrent edits. Channel drafts retain
-opening generation, controls, and staged Secret metadata; a changed baseline
-disables Save until Cancel. Saves clear captures; Cancel and reload discard edits.
-Pending saves retain recovery guards.
+Drafts retain save baselines across reentry, so fresh reads cannot overwrite
+concurrent edits. Saves clear captures; Cancel and reload discard edits. Pending
+saves keep recovery guards.
 
 `apps/controller/src/console/channels.mjs:renderChannels` renders Slack settings;
 only **Create new version** permits editing. Slack uses unresolved
@@ -114,10 +123,8 @@ Teams remains in native JSON and blocks Console deployment.
 from the Agent, or admitted authentication and channel `secretBindings` from the
 selected revision. `agents/secret-picker.mjs:renderSecretReference` checks the
 source Namespace, then requests `/namespaces/:namespaceId/secrets/:secretId`.
-Successful reads link names and IDs to metadata; absent, loading, and unavailable
-states remain distinct. Failures retain IDs, stale tab responses are ignored, and
-current 401s expire the session. Summaries need neither collection permission
-nor Secret values.
+Successful reads link names and IDs to metadata. Failures retain IDs, stale tab
+responses are ignored, and current 401s expire the session.
 
 `apps/controller/src/console/channels/slack.mjs:appendFields` separates channel
 senders from DMs. Wildcard, empty, or omitted channel `users` selects **Allow
@@ -128,8 +135,7 @@ requirements remain independent. `updatedSlack` replaces selected channels'
 The DM selector preserves omitted policies on existing configurations; new setup
 starts with Allowlist. `validate` rejects empty/wildcard DM allowlists and
 unsupported organization-wide policies. Selecting Open writes `allowFrom: ["*"]`;
-leaving it for Allowlist or Pairing clears the wildcard input. Untouched lists
-and native `dm.enabled` remain unchanged. Configuration save persists the
+Allowlist or Pairing clears the wildcard input. Configuration save persists the
 selection; redeployment applies it. See
 [Slack policies](../../reference/configuration/secrets.md#native-channel-configuration).
 
@@ -327,6 +333,8 @@ subsequent worker cleanup and the Namespace-owned resources it preserves.
 [keep this for the user to add notes. do not change between edits]
 
 ## Changelog
+
+- 2026-09-27 01:14: Trace Plugin policy editing, Agent PATCHes, and deployment freshness. (authoring-run/cd54c007-251c-4cef-af5a-a25b41711c84 - 26611779056c0aa579c891dae32c0559d9509b4c)
 
 - 2026-09-26 18:38: Trace searchable Secret selection, editable names, and duplicate-name recovery. (01a0e069-9ef8-7d81-802c-82c72c1f1e5d - dc07fe34cd2b0057693777acf4db394d211da393)
 

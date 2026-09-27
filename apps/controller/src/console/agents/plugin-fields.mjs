@@ -79,6 +79,7 @@ export function createPluginFields({
   input,
   catalog = null,
   capabilities = null,
+  saveDescription = "Changes are saved when you create the Agent.",
   onLoadPlugins = null,
   onLoadTools = null,
 }) {
@@ -146,7 +147,7 @@ export function createPluginFields({
       element("h2", { id: "plugin-dialog-title" }, "Configure plugins"),
       button("Done", () => dialog.close()),
     ),
-    element("p", { className: "hint" }, "Changes are saved when you create the Agent."),
+    element("p", { className: "hint" }, saveDescription),
     accessHelp,
     policyStatus,
     feedback,
