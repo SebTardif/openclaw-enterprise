@@ -49,7 +49,8 @@ Short: "Manage OpenClaw Control Plane (OCC) resources",
 Run `go run ./cmd/occ --help` again. The first line should now read
 `Manage OpenClaw Control Plane (OCC) resources`; the command and flag lists
 should still appear below it. Help is generated locally, so it does not contact
-a platform installation.
+a platform installation. This exercise changes only the CLI's help text; it does
+not create or modify platform resources.
 
 ## 3. Check the change
 
