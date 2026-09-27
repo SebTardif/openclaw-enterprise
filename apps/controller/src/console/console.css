@@ -41,10 +41,50 @@
   --warning-subtle: rgba(146, 64, 14, 0.08);
   --overlay: rgba(15, 23, 42, 0.4);
   --shadow: 0 8px 24px rgba(60, 42, 24, 0.09);
+  --control-border: #bbc7c0;
+  --plugin-help: #f7f9f8;
+  --plugin-selected: #e8f2ec;
+  --plugin-logo: #f0f4f2;
+  --switch-track: #e3e8e5;
+  --switch-thumb: #ffffff;
   --radius-sm: 6px;
   --radius: 10px;
   --radius-lg: 14px;
 }
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --bg: #191816;
+    --surface: #24221f;
+    --surface-muted: #2e2b27;
+    --hover: #3a3630;
+    --text: #e5e0d8;
+    --text-strong: #faf7f2;
+    --muted: #b9b1a5;
+    --line: #484238;
+    --input-border: #918575;
+    --accent: #f29a86;
+    --accent-subtle: rgba(242, 154, 134, 0.12);
+    --primary: #f29a86;
+    --primary-hover: #ffb19f;
+    --on-primary: #211e1a;
+    --success: #8bd5a3;
+    --success-subtle: rgba(139, 213, 163, 0.12);
+    --danger: #ff9b9b;
+    --danger-subtle: rgba(255, 155, 155, 0.12);
+    --warning: #f4c57e;
+    --warning-subtle: rgba(244, 197, 126, 0.12);
+    --overlay: rgba(0, 0, 0, 0.65);
+    --shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+    --control-border: var(--input-border);
+    --plugin-help: var(--surface-muted);
+    --plugin-selected: var(--accent-subtle);
+    --plugin-logo: var(--surface-muted);
+    --switch-track: var(--hover);
+    --switch-thumb: var(--text-strong);
+  }
+}
+
 * {
   box-sizing: border-box;
 }
@@ -375,7 +415,7 @@ p {
   max-width: 100%;
   min-height: 42px;
   padding: 10px 12px;
-  border: 1px solid #bbc7c0;
+  border: 1px solid var(--control-border);
   border-radius: 8px;
   text-overflow: ellipsis;
 }
@@ -513,8 +553,8 @@ select:not([multiple]):not([size]),
 select:not([multiple])[size="1"] {
   appearance: none;
   background-image:
-    linear-gradient(45deg, transparent 42%, #403c35 42%, #403c35 58%, transparent 58%),
-    linear-gradient(135deg, transparent 42%, #403c35 42%, #403c35 58%, transparent 58%);
+    linear-gradient(45deg, transparent 42%, var(--text) 42%, var(--text) 58%, transparent 58%),
+    linear-gradient(135deg, transparent 42%, var(--text) 42%, var(--text) 58%, transparent 58%);
   background-repeat: no-repeat;
   background-position:
     right 22px center,
@@ -1138,12 +1178,12 @@ summary:focus-visible {
 .plugin-access-help,
 .plugin-setup-reminder {
   padding: 12px 16px;
-  background: #f7f9f8;
+  background: var(--plugin-help);
   border: 1px solid var(--line);
   border-radius: 8px;
 }
 .plugin-dialog::backdrop {
-  background: rgba(15, 23, 42, 0.4);
+  background: var(--overlay);
 }
 .plugin-dialog-header,
 .plugin-detail-header,
@@ -1214,7 +1254,7 @@ summary:focus-visible {
 }
 .plugin-tabs [aria-pressed="true"],
 .plugin-list-item[aria-current="true"] {
-  background: #e8f2ec;
+  background: var(--plugin-selected);
   border-color: var(--accent);
 }
 .plugin-list-item {
@@ -1241,7 +1281,7 @@ summary:focus-visible {
   height: 32px;
   overflow: hidden;
   border-radius: 6px;
-  background: #f0f4f2;
+  background: var(--plugin-logo);
   color: var(--muted);
   font-size: 1rem;
 }
@@ -1355,9 +1395,9 @@ summary:focus-visible {
   width: 36px;
   height: 20px;
   margin: 0;
-  border: 1px solid #bbc7c0;
+  border: 1px solid var(--control-border);
   border-radius: 12px;
-  background: #e3e8e5;
+  background: var(--switch-track);
   cursor: pointer;
 }
 .plugin-tool-switch::before {
@@ -1368,13 +1408,14 @@ summary:focus-visible {
   top: 2px;
   left: 2px;
   border-radius: 50%;
-  background: white;
+  background: var(--switch-thumb);
 }
 .plugin-tool-switch:checked {
   background: var(--accent);
 }
 .plugin-tool-switch:checked::before {
   left: 18px;
+  background: var(--on-primary);
 }
 .plugin-tool-switch:indeterminate::before {
   width: 14px;

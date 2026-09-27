@@ -1,7 +1,7 @@
 ---
 created: 2026-09-01
 updated: 2026-09-27
-last_updated_session: 01a0e099-da9d-78f1-8e79-ea4a919edf7d
+last_updated_session: authoring-run/17425510-cf89-4fe3-bd40-25a2b5efa0f3
 ---
 
 # Platform console request flow
@@ -99,6 +99,12 @@ Driver activation. Requests do not reread configuration or credentials.
 `apps/controller/src/console-assets.ts:readConsoleAsset` serves allowlisted assets
 and the shared HTML shell with MIME types and same-origin CSP. Unknown console
 paths return the shell with `404`; API routes retain JSON errors.
+
+`apps/controller/src/console/index.html` advertises light and dark color schemes.
+`apps/controller/src/console/console.css` selects shared palette tokens through
+`prefers-color-scheme: dark`; the browser updates them when the system preference
+changes, including before sign-in. This is presentation-only: no account setting,
+storage write, or API request participates in appearance selection.
 
 `scripts/build-console-metadata.mjs` bakes the publisher's checked
 `OCC_BUILD_REVISION` into HTML. With `debug=true`, `shell.mjs:renderShell` displays
@@ -323,6 +329,8 @@ refresh and inspection.
 [keep this for the user to add notes. do not change between edits]
 
 ## Changelog
+
+- 2026-09-27 16:51: Document system-selected console appearance alongside the CSS change. (authoring-run/17425510-cf89-4fe3-bd40-25a2b5efa0f3 - 181b0472f9a5a9d422035edf5121d3a15c200cb5)
 
 - 2026-09-27 02:30: Use selected PAT Secrets for discovery. (01a0e099-da9d-78f1-8e79-ea4a919edf7d - ec4e9dc517497afe05be63a320542abcf61e8a55)
 

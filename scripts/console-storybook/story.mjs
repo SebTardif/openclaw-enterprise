@@ -50,6 +50,7 @@ export function story(id) {
       frame.title = `${scenario.name}: interactive console`;
       frame.src = fixtureUrl(id);
       frame.style.cssText = `display:block;width:100%;max-width:${scenario.mobile ? "390px" : "1600px"};height:min(900px, calc(100vh - 80px));min-height:480px;border:1px solid #d6d0c5;background:white`;
+      frame.style.colorScheme = "light dark";
       frame.setAttribute(
         "sandbox",
         "allow-scripts allow-same-origin allow-forms allow-modals allow-popups",

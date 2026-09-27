@@ -42,8 +42,10 @@ tab is hidden. Namespace rows are read-only.
 | Agents     | Selected Namespace; Namespace `read`, then exact Agent `read` filtering. |
 | Namespaces | Installation-wide collection filtered by exact Namespace `read`.         |
 
-The console uses a light appearance and OCC-served fonts; no external font
-service is required.
+The console follows your system's light or dark appearance, including changes
+while the page is open. Change your operating system or browser appearance to
+switch modes; there is no console-specific override. Fonts are served by OCC;
+no external font service is required.
 
 Returning pages retain content during access checks; controls await authorization.
 Agent detail keeps its mounted editor on refocus while access remains available.
