@@ -1583,7 +1583,7 @@ const assert = require("node:assert/strict");
 const cp = require("node:child_process");
 const fs = require("node:fs");
 const vm = require("node:vm");
-const { createInterface } = require("node:readline");
+const WebSocket = require("ws");
 function markStockBrokerStage(stage) {
   console.error("openclaw-ci-stock-broker-stage=" + stage);
 }
@@ -1609,6 +1609,7 @@ const environment = {
   CODEX_LOGIN_MODE: "api_key", OPENAI_API_KEY: "synthetic-offline-key",
   OPENCLAW_HARNESS_MODEL: "codex/gpt-5",
   APP_SERVER_TOKEN: "synthetic-transport-token", APP_SERVER_PORT: "4500",
+  OPENCLAW_PLUGIN_READY_MARKER: "/tmp/stock-codex-plugin-ready",
   SSL_CERT_FILE: brokerCaBundle,
   GIT_SSL_CAINFO: brokerCaBundle,
   REQUESTS_CA_BUNDLE: brokerCaBundle,
@@ -1686,10 +1687,23 @@ const homeControlSentinel = "synthetic-openclaw-control-sentinel\\n";
 fs.writeFileSync(homeControlSentinelPath, homeControlSentinel, { mode: 0o600 });
 assert.equal(fs.readFileSync(homeControlSentinelPath, "utf8"), homeControlSentinel);
 let native;
+let resolvePluginReady;
+let rejectPluginReady;
+const pluginReady = new Promise((resolve, reject) => {
+  resolvePluginReady = resolve;
+  rejectPluginReady = reject;
+});
 vm.runInNewContext(${JSON.stringify(AGENT_RUNTIME_ENTRYPOINT)}, {
-  URL, console, setTimeout, setInterval,
-  process: { env: environment, on() {}, exit() {} },
+  URL, console, setTimeout, clearTimeout, setInterval,
+  process: { env: environment, on() {}, exit(code) { rejectPluginReady(new Error("Codex runtime exited before plugin readiness: " + code)); } },
   require(name) {
+    if (name === "node:fs") return {
+      ...fs,
+      writeFileSync(path, ...args) {
+        fs.writeFileSync(path, ...args);
+        if (path === environment.OPENCLAW_PLUGIN_READY_MARKER) resolvePluginReady();
+      },
+    };
     if (name !== "node:child_process") return require(name);
     return {
       spawnSync(_command, args) {
@@ -1705,8 +1719,8 @@ vm.runInNewContext(${JSON.stringify(AGENT_RUNTIME_ENTRYPOINT)}, {
       spawn(command, args, options) {
         const appServer = args.indexOf("app-server");
         assert.ok(appServer > 0);
-        native = cp.spawn(command, [...args.slice(0, appServer + 1), "--listen", "stdio://"], {
-          ...options, env: environment, stdio: ["pipe", "pipe", "pipe"],
+        native = cp.spawn(command, args, {
+          ...options, env: environment, stdio: ["ignore", "ignore", "pipe"],
         });
         return native;
       },
@@ -1716,21 +1730,14 @@ vm.runInNewContext(${JSON.stringify(AGENT_RUNTIME_ENTRYPOINT)}, {
 assert.ok(native);
 const pending = new Map();
 let nextId = 1;
-const lines = createInterface({ input: native.stdout });
-lines.on("line", (line) => {
-  const message = JSON.parse(line);
-  if (pending.has(message.id)) {
-    const { resolve, reject } = pending.get(message.id);
-    pending.delete(message.id);
-    message.error ? reject(new Error(JSON.stringify(message.error))) : resolve(message.result);
-  }
-});
+let socket;
 let stderr = "";
 native.stderr.on("data", (chunk) => { stderr += chunk; });
+native.once("error", rejectPluginReady);
 const rpc = (method, params) => new Promise((resolve, reject) => {
   const id = nextId++;
   pending.set(id, { resolve, reject });
-  native.stdin.write(JSON.stringify({ id, method, params }) + "\\n");
+  socket.send(JSON.stringify({ id, method, params }));
 });
 async function execShell(script, permissionProfile = brokerPermissionProfile, timeoutMs = 30000) {
   try {
@@ -1765,6 +1772,9 @@ const timeout = setTimeout(() => {
 }, 90000);
 (async () => {
   try {
+    markStockBrokerStage("initialize");
+    // The real marker follows successful native policy reload and verification.
+    await pluginReady;
     // Resolve and reach the fixture outside Codex first, so the direct-bypass
     // assertion cannot pass merely because sandboxed DNS is unavailable.
     markStockBrokerStage("fixture-reachability");
@@ -1773,8 +1783,27 @@ const timeout = setTimeout(() => {
     const directRoute = cp.spawnSync("curl", ["--noproxy", "*", "-ksS", "--connect-timeout", "5", "--max-time", "10", "--resolve", "unrelated.oce.svc:443:" + unrelatedAddress, "https://unrelated.oce.svc/"], { encoding: "utf8" });
     assert.equal(directRoute.status, 0, "fixture must be reachable outside the sandbox: " + directRoute.stderr);
     markStockBrokerStage("initialize");
+    socket = new WebSocket("ws://127.0.0.1:" + environment.APP_SERVER_PORT, {
+      headers: { Authorization: "Bearer " + environment.APP_SERVER_TOKEN },
+    });
+    socket.on("message", (data) => {
+      const message = JSON.parse(data.toString());
+      if (pending.has(message.id)) {
+        const { resolve, reject } = pending.get(message.id);
+        pending.delete(message.id);
+        message.error ? reject(new Error(JSON.stringify(message.error))) : resolve(message.result);
+      }
+    });
+    socket.on("close", () => {
+      for (const { reject } of pending.values()) reject(new Error("Codex WebSocket closed\\n" + stderr));
+      pending.clear();
+    });
+    await new Promise((resolve, reject) => {
+      socket.once("open", resolve);
+      socket.once("error", reject);
+    });
     await rpc("initialize", { clientInfo: { name: "repository-broker-stock-codex-smoke", version: "1.0.0" }, capabilities: { experimentalApi: true } });
-    native.stdin.write(JSON.stringify({ method: "initialized" }) + "\\n");
+    socket.send(JSON.stringify({ method: "initialized" }));
 
     markStockBrokerStage("proxy-env");
     const proxyState = await execShell(${JSON.stringify(proxyEnvironmentProbe)});
@@ -1813,7 +1842,7 @@ const timeout = setTimeout(() => {
     process.stdout.write("stock-codex-repository-broker-ready " + JSON.stringify({ commit }) + "\\n");
   } finally {
     clearTimeout(timeout);
-    lines.close();
+    socket?.close();
     native.kill("SIGTERM");
   }
 })().catch((error) => { console.error(error); console.error(stderr); process.exitCode = 1; });
