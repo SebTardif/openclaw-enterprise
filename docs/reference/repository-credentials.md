@@ -1,41 +1,38 @@
 # Repository credentials
 
 Repository bindings grant bounded Git HTTPS and GitHub API access. OCC freezes
-grants into revisions; the worker prepares material. The credential service
-retains App keys, JWTs and installation tokens. Agents receive gateway bearers,
-client configuration and CA trust. Start with the
-[operator guide](../guides/repository-credentials.md).
+grants into revisions; the worker prepares material. The credential service holds
+App keys, JWTs and installation tokens. Agents receive gateway bearers, config
+and CA trust. Start with the [operator guide](../guides/repository-credentials.md).
 
 Kubernetes supports embedded OpenClaw (`api_key`) or dedicated Codex (API key or
 ChatGPT service account), without a Sandbox Driver. Other combinations reject
-repository-bearing revisions. Helm's `Recreate` strategy prevents overlapping
-worker/credential-service owners.
+repository-bearing revisions. Helm `Recreate` prevents overlap.
 
-Only the repository consumer receives repository and model credentials. Dedicated
-Slack tokens stay in the gateway. Repository profiles and model authentication
-are independent. [Kubernetes policies](drivers/kubernetes-compute/networking-and-isolation.md#networking)
+Only the repository consumer receives repository and model credentials; dedicated
+Slack tokens stay in the gateway. Profiles and model authentication are
+independent. [Kubernetes policies](drivers/kubernetes-compute/networking-and-isolation.md#networking)
 permit sidecar access.
 
-For repository-bound Codex consumers, Compute configures stock Codex with the
-exact broker hostname allowed, `allow_local_binding = true`, and `mode = "full"`.
-This permits local binding, disables Codex's additional private-address guard,
-and allows every HTTP method at otherwise allowed destinations. Explicit denies,
-Kubernetes NetworkPolicy, TLS verification, and broker repository authorization
-still apply. Unbound Agents retain their existing policy. See the
+For repository-bound Codex, Compute configures stock Codex with the exact broker
+hostname allowed, `allow_local_binding = true`, and `mode = "full"`.
+This permits local binding, disables Codex's private-address guard, and allows
+every HTTP method at otherwise allowed destinations. Explicit denies, Kubernetes
+NetworkPolicy, TLS verification, and broker repository authorization still
+apply. Unbound Agents retain their existing policy. See the
 [networking contract](drivers/kubernetes-compute/networking-and-isolation.md#networking).
 
-Trusted startup loads protected configuration into the service process; backend
-construction and sender callbacks remain private. Session controls are
-`open`, `status`, `close`, and `shutdown`. Separate service and Git/gh artifacts
-keep signing and service modules out of the client. `SIGTERM` or `SIGINT` starts
-bounded cleanup and disposal.
+Startup loads protected configuration into the service; backend
+construction and sender callbacks remain private. Session controls are `open`,
+`status`, `close`, and `shutdown`. Service and Git/gh artifacts keep signing
+modules out of the client. `SIGTERM` or `SIGINT` starts bounded cleanup.
 
 ## Repo Driver contract
 
 The `repo` capability uses `RepoDriver extends Driver`, with bundled
-`GitHubRepoDriver`. Trusted Installation `drivers.repo` and GitHub Backend
-`drivers.repo` select the same configured Driver ID. The
-[shared contract](../../packages/contracts/src/repo.ts) exposes five operations:
+`GitHubRepoDriver`. Trusted Installation and GitHub Backend `drivers.repo` select
+the same Driver ID. The [shared contract](../../packages/contracts/src/repo.ts)
+exposes five operations:
 
 - `listOptions` returns Namespace-approved opaque references, display names and
   profiles.
@@ -48,8 +45,8 @@ The `repo` capability uses `RepoDriver extends Driver`, with bundled
 
 Public status contains only `sessionId`, `state`, `deadlineWallMs` and `binding`
 (`providerInstanceId`, `repositoryId`, `grantId`). Each response is an immutable
-snapshot after private validation. Cleanup counters and configuration
-decoding remain private. Status cannot regenerate the closed-schema Git/gh files.
+snapshot after private validation. Cleanup counters and configuration decoding
+remain private. Status cannot regenerate the closed-schema Git/gh files.
 
 `maintenanceIntervalMs` schedules reconciliation; it is not a measured
 withdrawal bound. Configured IDs, `AgentRevision.repositoryCredentials` and
@@ -57,40 +54,39 @@ persisted `admitted_spec.repository_credentials` retain their meaning.
 
 State derives immutable Driver, Backend, profile and grant context from the
 admitted revision. It retains original Namespace, Agent, revision, admission,
-session and deadline identities after Agent deletion, without bearers or tokens.
+session and deadline identities after Agent deletion, but never bearers or
+tokens.
 
-Agent deletion closes sessions and retires Compute. Physical deletion and live
+Agent deletion closes sessions and retires Compute. Final deletion and live
 revision detachment require every attempt to be `disposed` or explicitly
-`abandoned` through installation-admin cleanup recovery. `CLOSED`, missing
-inventory and ordinary `invalidated` attempts retain cleanup Work and the deleting
-Agent. Deadlines do not settle provider cleanup. Evidence pruning and durable
-token recovery are unimplemented.
+`abandoned` through installation-admin recovery. `CLOSED`, missing inventory and
+ordinary `invalidated` attempts retain cleanup Work and the deleting Agent.
+Deadlines do not settle provider cleanup. Evidence pruning and durable token
+recovery are unimplemented.
 
-`abandoned` means an installation administrator acknowledged exact invalidated
-attempts after cleanup-pending evidence and stopped-Agent teardown. It keeps
-original cleanup context and records provider disposal as unknown. It never mints
-replacement authority or claims provider revocation.
+`abandoned` records an administrator acknowledgement for exact invalidated
+attempts after cleanup-pending evidence and stopped-Agent teardown. It preserves
+cleanup context, records provider disposal as unknown, and requires the durable
+PostgreSQL deletion teardown receipt. The in-memory store fails closed. Recovery
+never mints replacement authority or claims provider revocation.
 
-Worker restart can retain surviving service sessions and Compute material.
-Known closing sessions block same-revision replacement, including Compute repair,
-with retryable `REPOSITORY_CLEANUP_PENDING` until confirmed `DISPOSED`. Existing
-Work bounds and the original revision deadline still apply. Missing exposed
-sessions remain irrecoverable: `REPOSITORY_SESSION_RECOVERY_UNSAFE` fails the
-revision and queues runtime retirement while retaining cleanup. Never-delivered
-openings without a recorded session ID remain recoverable; known sessions require
-disposal before replacement. Users may deploy a new authorized revision. This
-neither settles old cleanup nor replays Git/API mutations; credential disposal
-does not establish their outcomes.
+Worker restart can retain service sessions and Compute material. Known closing
+sessions block same-revision replacement and Compute repair with retryable
+`REPOSITORY_CLEANUP_PENDING` until confirmed `DISPOSED`. Work bounds and the
+original deadline still apply. Missing exposed sessions are irrecoverable:
+`REPOSITORY_SESSION_RECOVERY_UNSAFE` fails the revision and queues runtime
+retirement while retaining cleanup. Never-delivered openings without a session ID
+remain recoverable; known sessions require disposal before replacement. A new
+authorized revision neither settles old cleanup nor replays Git/API mutations.
 
 ## Configuration
 
 ### Canonical platform registry
 
 The GitHub Backend selects one registry through `configuration.registryPath`;
-its `drivers.repo` names the selected Driver. API, worker and
-service load the same immutable, versioned ConfigMap. The registry contains
-nonsecret identity and Namespace policy for one App installation and multiple
-repositories:
+`drivers.repo` names the Driver. API, worker and service load the same
+immutable ConfigMap. The registry contains nonsecret identity and Namespace
+policy for one App installation and multiple repositories:
 
 ```json
 {
@@ -128,47 +124,43 @@ Each Namespace policy may set an optional
 accidental native Git pushes outside selected branches. This is not server-side
 branch authorization.
 
-The selected Driver configuration supplies `controlSocket`,
-`sessionDurationSeconds` and `publicCaPath`; it contains no App key. See
-[Backend configuration](backends.md) and the
-[installation procedure](../guides/deploy/production-installation.md) for wiring.
+The Driver configuration supplies `controlSocket`, `sessionDurationSeconds` and
+`publicCaPath`; it contains no App key. See [Backend configuration](backends.md)
+and the [installation procedure](../guides/deploy/production-installation.md).
 
 ### Agent-create repository options
 
 `GET /namespaces/:namespaceId/agents/repository-options` requires Agent `create`
-and returns only `repositoryRef`, `displayName` and `allowedProfiles`. Authorized
-optional discovery failure yields `503 REPOSITORY_OPTIONS_UNAVAILABLE`; no approvals
-yields `[]`; a closed Namespace yields 409. Only successful discovery or that
-explicit outage permits a fresh ordinary draft. Other failures block creation.
-Writes reauthorize and re-resolve choices.
+and returns `repositoryRef`, `displayName` and `allowedProfiles`. Authorized
+discovery outage yields `503 REPOSITORY_OPTIONS_UNAVAILABLE`; no approvals yield
+`[]`; a closed Namespace yields 409. Only success or that outage permits a fresh
+draft. Other failures block creation. Writes reauthorize choices.
 
 ### Profiles
 
 The Console offers **Read-only** (`git-read`) and **Contributor** (`git-full`).
 Contributor includes pushes, PR work, and issue management by default. Open
-**Customize access** to turn off issue management (`git-write`) when approved for
+**Customize access** to disable issue management (`git-write`) when approved for
 all selected repositories. Push and PR access remain bundled; this UI does not
-create new permission profiles. The API default remains `git-write`.
-All three enforced profiles include GitHub API access.
+create profiles. The API default remains `git-write`. All enforced profiles
+include GitHub API access.
 
 The [access-level reference](repository-credentials/access-levels.md) defines the
 exact permissions, supported commands and GraphQL boundary. Every session selects
-one repository. Writable levels are not a promise that an Agent cannot merge:
-GitHub rules still govern protected branches. Administration, workflow editing,
-Actions control and secrets permissions are not requested. Missing App permissions
-fail without widening the grant.
+one repository. Writable levels do not prevent merges: GitHub rules still govern protected
+branches. Administration, workflow editing, Actions control and secrets
+permissions are not requested. Missing App permissions fail without widening the grant.
 
 ### Standalone service inputs
 
 A protected JSON file supplies `gateway`, `sessionPolicy`, `backend` and optional
-positive safe-integer `limits`. The service validates configuration before
-listening. Configuration and private keys must be regular files owned by root or
-the service user, with private permissions. Every directory ancestor must have
-one of those owners and reject group/other writes. A root-owned sticky ancestor
-such as `/tmp` is allowed above the immediate parent; the immediate parent must
-always reject group/other writes. Symlinks and file replacement during loading
-are rejected. See the [configuration flow](../flows/repository-credential-configuration.md)
-for validation and key ownership. For standalone single-repository operation:
+positive safe-integer `limits`. The service validates before listening. Configuration and private keys must be regular files owned by root or
+the service user, with private permissions. Directory ancestors need one of those
+owners and no group/other writes. A root-owned sticky ancestor such as `/tmp` is
+allowed above the immediate parent; the immediate parent must stay private.
+Symlinks and file replacement during loading are rejected. See the
+[configuration flow](../flows/repository-credential-configuration.md). For
+standalone single-repository operation:
 
 ```json
 {

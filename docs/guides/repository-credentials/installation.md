@@ -254,9 +254,12 @@ POST /namespaces/{namespaceId}/agents/{agentId}/repository-credentials/cleanup/a
 The operation records attributable audit evidence and lets the normal deletion
 worker retry finalize the Agent. It does not mark credentials disposed, recover
 bearers, revoke provider tokens, replace repository authority, or replay Git
-operations. Because the worker Pod also hosts the credential-service sidecar, a
-rollout can interrupt other in-memory sessions; schedule maintenance and drain or
-stop active repository Agents before deploying this recovery path. Every
-controller and worker must be running the recovery-aware version before you
-invoke the endpoint, and rollback after an `abandoned` attempt requires rolling
-forward again before that Agent's deletion can finish.
+operations. Recovery requires the durable PostgreSQL state store and a
+worker-recorded deletion teardown receipt; the endpoint returns `409 Conflict`
+until that receipt exists, and the in-memory store refuses recovery. Because the
+worker Pod also hosts the credential-service sidecar, a rollout can interrupt
+other in-memory sessions; schedule maintenance and drain or stop active
+repository Agents before deploying this recovery path. Every controller and
+worker must be running the recovery-aware version before you invoke the endpoint,
+and rollback after an `abandoned` attempt requires rolling forward again before
+that Agent's deletion can finish.

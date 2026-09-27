@@ -5,8 +5,16 @@ import { createControlledClock } from "../fixtures/repository-credentials/clock.
 import test from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 import { createOccMetrics } from "../../apps/controller/src/metrics/index.ts";
+import { createFastifyApp } from "../../apps/controller/src/index.ts";
+import { resolveApprovedHarness as resolveApprovedDevelopmentHarness } from "../../apps/controller/src/composition/production-harness.ts";
+import { InMemoryAuditSink } from "../../packages/audit/src/index.ts";
 import { PostgresMetricsSnapshot } from "../../packages/occ/src/index.ts";
 import { encodeRepositoryCredentialSessionFiles } from "../../apps/controller/src/drivers/repo/github/credentials/client/config.ts";
+import {
+  authenticatedHeaders,
+  createTestAuthPrincipal,
+  signInToControllerApp,
+} from "../helpers/auth-session.mjs";
 import {
   authorizedPrincipal,
   cleanupBackendFixtures,
@@ -328,6 +336,106 @@ async function setup(
     stop,
     createWorkerPool,
     workerPool,
+  };
+}
+
+async function installAuthSeed(pool, seed, { bind = true } = {}) {
+  const principal = seed.principal;
+  await pool.query(
+    `INSERT INTO occ.iam_identities (id, kind, issuer, subject)
+     VALUES ($1, $2, $3, $4)`,
+    [principal.id, principal.kind, principal.issuer, principal.subject],
+  );
+  if (!bind) {
+    return;
+  }
+  for (const role of seed.roles) {
+    await pool.query(
+      `INSERT INTO occ.iam_roles (id, namespace_id, name, permissions)
+       VALUES ($1, $2, $3, $4::jsonb)`,
+      [role.id, role.namespaceId ?? null, role.name ?? null, JSON.stringify(role.permissions)],
+    );
+  }
+  for (const binding of seed.bindings) {
+    assert.equal(binding.subjectKind, "identity");
+    await pool.query(
+      `INSERT INTO occ.iam_access_bindings
+         (id, namespace_id, identity_subject_id, group_subject_id, role_id, resource_kind, resource_id)
+       VALUES ($1, $2, $3, NULL, $4, $5, $6)`,
+      [
+        binding.id,
+        binding.namespaceId ?? null,
+        binding.subjectId,
+        binding.roleId,
+        binding.resourceKind ?? null,
+        binding.resourceId ?? null,
+      ],
+    );
+  }
+}
+
+async function createRepositoryCleanupHttpFixture(context, fixture) {
+  const authFixture = await createTestAuthPrincipal({
+    installationId: fixture.installation.id,
+    email: `cleanup-admin-${randomUUID()}@example.com`,
+    password: `generated-password-${randomUUID()}`,
+    name: "Repository cleanup admin",
+  });
+  await installAuthSeed(fixture.observerPool, authFixture.seed);
+  const auditSink = new InMemoryAuditSink();
+  const app = createFastifyApp({
+    controller: fixture.controller,
+    iamDriver: fixture.controller.selectedDriver("iam"),
+    computeDriver: fixture.compute,
+    configurationDriver: fixture.controller.selectedDriver("configuration"),
+    secretDriver: fixture.secretDriver,
+    resolveHarness: resolveApprovedDevelopmentHarness,
+    auditSink,
+    development: {
+      enabled: true,
+      installationId: fixture.installation.id,
+    },
+    auth: authFixture.auth,
+  });
+  context.after(async () => {
+    await app.close();
+  });
+  const adminSession = await signInToControllerApp(app, authFixture);
+
+  async function createNonAdminSession() {
+    const email = `cleanup-nonadmin-${randomUUID()}@example.com`;
+    const password = `generated-password-${randomUUID()}`;
+    const account = await authFixture.auth.createAccount({
+      email,
+      password,
+      name: "Repository cleanup non-admin",
+    });
+    await installAuthSeed(
+      fixture.observerPool,
+      { ...authFixture.auth.principalSeed(account), roles: [], bindings: [] },
+      { bind: false },
+    );
+    return signInToControllerApp(app, { email, password });
+  }
+
+  return { app, adminSession, createNonAdminSession };
+}
+
+async function postRepositoryCleanup(app, session, namespaceId, agentId, body) {
+  const response = await app.inject({
+    method: "POST",
+    url: `/namespaces/${namespaceId}/agents/${agentId}/repository-credentials/cleanup/abandon`,
+    headers: {
+      ...authenticatedHeaders(session),
+      "content-type": "application/json",
+      host: "127.0.0.1",
+    },
+    payload: JSON.stringify(body),
+    remoteAddress: "127.0.0.1",
+  });
+  return {
+    statusCode: response.statusCode,
+    body: response.json(),
   };
 }
 
@@ -2706,7 +2814,7 @@ test(
     const revision = await fixture.revision(owner, 1, undefined, repository.snapshot);
     const retired = [];
     const runtimeCredentialDeletes = [];
-    await fixture.start({
+    const workerCompute = {
       ...fixture.compute,
       async retireRevision(retiredRevision) {
         retired.push(retiredRevision.id);
@@ -2715,7 +2823,8 @@ test(
       async deleteAgentRuntimeCredentials({ agent }) {
         runtimeCredentialDeletes.push(agent.id);
       },
-    });
+    };
+    await fixture.start(workerCompute);
     await fixture.work(revision, "succeeded");
     const [opened] = await repositoryAttempts(fixture, revision);
     assert.equal(opened.phase, "open");
@@ -2743,46 +2852,122 @@ test(
     const [invalidated] = await repositoryAttempts(fixture, revision);
     assert.equal(invalidated.phase, "invalidated");
     assert.equal(invalidated.liveRevisionId, revision.id);
-    const nonAdminPrincipalId = `prn_${randomUUID()}`;
-    await fixture.observerPool.query(
-      `INSERT INTO occ.iam_identities (id, kind, issuer, subject)
-       VALUES ($1, 'principal', 'test', $2)`,
-      [nonAdminPrincipalId, `repository-cleanup-${randomUUID()}`],
-    );
-
-    await assert.rejects(
-      fixture.controller.abandonAgentRepositoryCleanup(nonAdminPrincipalId, {
-        namespaceId: fixture.namespace.id,
-        agentId: owner.id,
-        admissionIds: [invalidated.admissionId],
-        reason: "operator verified exact teardown but cannot recover provider inventory",
-      }),
-      { name: "AuthorizationDeniedError" },
-    );
-    await assert.rejects(
-      fixture.controller.abandonAgentRepositoryCleanup(fixture.admin.id, {
-        namespaceId: fixture.namespace.id,
-        agentId: owner.id,
-        admissionIds: [`missing-${invalidated.admissionId}`],
-        reason: "operator verified exact teardown but cannot recover provider inventory",
-      }),
-      { name: "ScopeViolationError" },
-    );
-
-    const abandoned = await fixture.controller.abandonAgentRepositoryCleanup(fixture.admin.id, {
-      namespaceId: fixture.namespace.id,
-      agentId: owner.id,
+    const http = await createRepositoryCleanupHttpFixture(context, fixture);
+    const recoveryBody = {
       admissionIds: [invalidated.admissionId],
       reason: "operator verified exact teardown but cannot recover provider inventory",
+      evidence: {
+        deletionWorkerEvidence: "cleanup-pending-after-teardown",
+        providerDisposal: "unknown",
+        riskAcknowledgement: "provider-disposal-unknown",
+        notes: "storage erased and credential-service session material is unavailable",
+      },
+    };
+
+    const missingEvidence = await postRepositoryCleanup(
+      http.app,
+      http.adminSession,
+      fixture.namespace.id,
+      owner.id,
+      { admissionIds: [invalidated.admissionId], reason: recoveryBody.reason },
+    );
+    assert.equal(missingEvidence.statusCode, 400);
+    assert.equal(missingEvidence.body.error.code, "INVALID_REQUEST");
+
+    const malformedEvidence = await postRepositoryCleanup(
+      http.app,
+      http.adminSession,
+      fixture.namespace.id,
+      owner.id,
+      {
+        ...recoveryBody,
+        evidence: {
+          ...recoveryBody.evidence,
+          providerDisposal: "disposed",
+        },
+      },
+    );
+    assert.equal(malformedEvidence.statusCode, 400);
+    assert.equal(malformedEvidence.body.error.code, "INVALID_REQUEST");
+
+    const nonAdmin = await postRepositoryCleanup(
+      http.app,
+      await http.createNonAdminSession(),
+      fixture.namespace.id,
+      owner.id,
+      recoveryBody,
+    );
+    assert.equal(nonAdmin.statusCode, 403);
+    assert.equal(nonAdmin.body.error.code, "FORBIDDEN");
+
+    await fixture.stop();
+    const preTeardownOwner = await fixture.agent("repository-cleanup-preteardown");
+    const preTeardownRevision = await fixture.revision(
+      preTeardownOwner,
+      1,
+      undefined,
+      revision.repositoryCredentials,
+    );
+    const preTeardownAdmissionId = `pre-teardown-${randomUUID()}`;
+    await fixture.state.transact(async (unit) => {
+      await unit.repositorySessions.createAttempt({
+        namespaceId: fixture.namespace.id,
+        agentId: preTeardownOwner.id,
+        revisionId: preTeardownRevision.id,
+        repositoryRef: invalidated.repositoryRef,
+        admissionId: preTeardownAdmissionId,
+        durationSeconds: invalidated.durationSeconds,
+        deadlineWallMs: invalidated.deadlineWallMs,
+        createdAt: new Date().toISOString(),
+      });
+      const invalidatedPreTeardown = await unit.repositorySessions.advanceAttempt({
+        admissionId: preTeardownAdmissionId,
+        expectedPhase: "opening",
+        phase: "invalidated",
+        updatedAt: new Date().toISOString(),
+      });
+      assert.equal(invalidatedPreTeardown?.phase, "invalidated");
     });
-    assert.equal(abandoned.length, 1);
-    assert.equal(abandoned[0].phase, "abandoned");
-    assert.equal(abandoned[0].liveRevisionId, null);
+    const preTeardownDeletion = await fixture.requestDeletion(preTeardownOwner);
+    const preTeardownReceipt = await fixture.observerPool.query(
+      `SELECT deletion_teardown_completed_at AS completed_at,
+              deletion_teardown_claim_token AS claim_token
+       FROM occ.controller_work WHERE idempotency_key = $1`,
+      [preTeardownDeletion.idempotencyKey],
+    );
+    assert.equal(preTeardownReceipt.rows[0]?.completed_at, null);
+    assert.equal(preTeardownReceipt.rows[0]?.claim_token, null);
+    const preTeardown = await postRepositoryCleanup(
+      http.app,
+      http.adminSession,
+      fixture.namespace.id,
+      preTeardownOwner.id,
+      { ...recoveryBody, admissionIds: [preTeardownAdmissionId] },
+    );
+    assert.equal(preTeardown.statusCode, 409, JSON.stringify(preTeardown.body));
+    assert.equal(preTeardown.body.error.code, "RESOURCE_CONFLICT");
+
+    const recovered = await postRepositoryCleanup(
+      http.app,
+      http.adminSession,
+      fixture.namespace.id,
+      owner.id,
+      recoveryBody,
+    );
+    assert.equal(recovered.statusCode, 200);
+    assert.deepEqual(recovered.body.data, {
+      namespaceId: fixture.namespace.id,
+      agentId: owner.id,
+      abandonedAdmissionIds: [invalidated.admissionId],
+      providerDisposal: "unknown",
+      deletionFinalization: "pending-worker-retry",
+    });
 
     await fixture.observerPool.query(
       "UPDATE occ.controller_work SET available_at = clock_timestamp() WHERE idempotency_key = $1",
       [deletion.idempotencyKey],
     );
+    await fixture.start(workerCompute, () => {}, undefined, undefined, fixture.createWorkerPool());
     await waitFor("Agent deletion to finalize after explicit cleanup abandonment", async () => {
       const deleted = await fixture.state.read((view) =>
         view.agents.findAgent(fixture.namespace.id, owner.id),

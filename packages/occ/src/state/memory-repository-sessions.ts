@@ -1,6 +1,10 @@
 import type { AgentRevision } from "@openclaw-enterprise/contracts";
 import { immutableCopy } from "@openclaw-enterprise/utils";
-import { ResourceConflictError, ScopeViolationError } from "../errors.ts";
+import {
+  DependencyUnavailableError,
+  ResourceConflictError,
+  ScopeViolationError,
+} from "../errors.ts";
 import type {
   RepositoryRevisionOwner,
   RepositorySessionAttempt,
@@ -158,42 +162,10 @@ export function memoryRepositorySessions(
       attempts.set(saved.admissionId, saved);
       return immutableCopy(saved);
     },
-    abandonCleanupAttempts: async (input) => {
-      const updatedAt = timestamp(input.updatedAt);
-      const uniqueIds = new Set(input.admissionIds);
-      if (
-        uniqueIds.size === 0 ||
-        uniqueIds.size !== input.admissionIds.length ||
-        !input.admissionIds.every(validIdentifier)
-      ) {
-        throw new ScopeViolationError("The repository cleanup recovery input is invalid.");
-      }
-      const selected = input.admissionIds.map((admissionId) => attempts.get(admissionId));
-      if (
-        selected.some(
-          (attempt) =>
-            attempt === undefined ||
-            attempt.namespaceId !== input.namespaceId ||
-            attempt.agentId !== input.agentId ||
-            attempt.phase !== "invalidated",
-        )
-      ) {
-        throw new ScopeViolationError(
-          "The repository cleanup recovery must match exact invalidated attempts.",
-        );
-      }
-      const recovered: Readonly<RepositorySessionAttempt>[] = [];
-      for (const current of selected as RepositorySessionAttempt[]) {
-        const saved = immutableCopy({
-          ...current,
-          liveRevisionId: null,
-          phase: "abandoned" as const,
-          updatedAt,
-        });
-        attempts.set(saved.admissionId, saved);
-        recovered.push(saved);
-      }
-      return Object.freeze(recovered.map((attempt) => immutableCopy(attempt)));
+    abandonCleanupAttempts: async (_input) => {
+      throw new DependencyUnavailableError(
+        "Repository cleanup recovery requires a durable deletion teardown receipt.",
+      );
     },
   };
 }

@@ -277,11 +277,11 @@ fresh installation tokens under the same grant until the revision deadline.
 
 `apps/controller/src/worker.ts:ControllerWorker.completeActivatedRevision`
 commits completion and maintenance together, preserving the original actor.
-Repository revisions use the Driver's 30-second interval or a shorter Compute
-interval. Restart resumes queued work without inventing actors. After service
+Repository revisions use the Driver interval or a shorter Compute interval.
+Restart resumes queued work without inventing actors. After service
 restart, a missing known session is invalidated and cleanup Work remains.
-`REPOSITORY_SESSION_RECOVERY_UNSAFE` permanently fails observation and queues
-runtime retirement; later workers cannot remint for that revision. An authorized user can
+`REPOSITORY_SESSION_RECOVERY_UNSAFE` fails observation and queues runtime
+retirement; later workers cannot remint for that revision. An authorized user can
 deploy a new revision without settling old cleanup.
 
 `apps/controller/src/worker.ts:ControllerWorker.finalizeActiveRevision`
@@ -304,19 +304,21 @@ workloads. `CLOSED` denies local use but awaits disposal; missing inventory or
 invalidation does not prove provider settlement.
 
 `ControllerWorker.processAgentDeletion` closes and registers each revision's
-attempts, then retires Compute even while service cleanup is pending. Deleted-Agent
-Work covers only its exact owner and admitted revisions; the same boundary governs failed and stale Work transfer.
-`PostgresWorkQueue.completeAgentDeletion` calls `occ.finalize_agent_deletion` under
-the current claim. The function locks Namespace, Agent and attempts and returns a
-distinct pending outcome unless every attempt is `disposed` or explicitly
-`abandoned`. Invalidated attempts defer with
+attempts, then retires Compute while service cleanup is pending. Deleted-Agent
+Work covers only its owner and admitted revisions; the same boundary governs
+failed and stale Work transfer. `PostgresWorkQueue.completeAgentDeletion` calls
+`occ.finalize_agent_deletion` under the current claim. The function locks
+Namespace, Agent and attempts and returns pending unless every attempt is
+`disposed` or explicitly `abandoned`. Invalidated attempts defer with
 `REPOSITORY_CLEANUP_OPERATOR_ACTION_REQUIRED` and a five-minute minimum backoff.
-The installation-admin recovery route can abandon only exact invalidated
-admission IDs on a deleting stopped Agent after pending deletion Work and worker
-cleanup evidence already exist. It stores an attributable audit event, preserves
-cleanup context, and records provider disposal as unknown. Once attempts are
-settled or abandoned, the finalizer detaches live revision pointers, removes live
-rows and records deletion atomically.
+The installation-admin route abandons only exact invalidated admission IDs on a
+deleting stopped Agent after pending deletion Work and worker cleanup evidence.
+PostgreSQL requires the worker-recorded deletion teardown receipt; otherwise
+HTTP returns `409 Conflict`. The in-memory store has no receipt and fails closed.
+Recovery audits the action and records provider disposal as unknown. Once
+attempts settle or become abandoned, the finalizer
+detaches live revision pointers, removes live rows and records deletion
+atomically.
 
 Compute retirement waits for owned Pods to stop before removing their material.
 It preserves Secrets referenced by actual Pods and current Deployments, and

@@ -776,6 +776,15 @@ function invalidPluginRequest(): never {
   throw new PluginPolicyValidationError();
 }
 
+function postgresCheckViolation(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error as { readonly code?: unknown }).code === "23514"
+  );
+}
+
 function normalizeAgentPlugins(
   plugins: PluginDesiredState | undefined,
 ): PluginDesiredState | undefined {
@@ -3491,12 +3500,22 @@ export class OpenClawController {
           "Repository cleanup recovery requires a deleting stopped Agent.",
         );
       }
-      const abandoned = await state.repositorySessions.abandonCleanupAttempts({
-        namespaceId: input.namespaceId,
-        agentId: input.agentId,
-        admissionIds,
-        updatedAt: this.timestamp(),
-      });
+      let abandoned: readonly Readonly<RepositoryCleanupAttempt>[];
+      try {
+        abandoned = await state.repositorySessions.abandonCleanupAttempts({
+          namespaceId: input.namespaceId,
+          agentId: input.agentId,
+          admissionIds,
+          updatedAt: this.timestamp(),
+        });
+      } catch (error) {
+        if (error instanceof ScopeViolationError || postgresCheckViolation(error)) {
+          throw new ResourceConflictError(
+            "Repository cleanup recovery requires exact post-teardown cleanup evidence.",
+          );
+        }
+        throw error;
+      }
       if (abandoned.length !== admissionIds.length) {
         throw new ResourceConflictError(
           "Repository cleanup recovery did not match every exact admission.",
