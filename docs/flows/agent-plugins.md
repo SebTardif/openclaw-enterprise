@@ -1,7 +1,7 @@
 ---
 created: 2026-09-08
 updated: 2026-09-27
-last_updated_session: 01a0e3cf-cfd3-7c02-91ac-19a0efbd7645
+last_updated_session: 01a0d755-b86e-7d33-bddc-c21ba03a3276
 ---
 
 # Agent Plugin Deployment Flow
@@ -159,7 +159,7 @@ removes its managed tool allowance before the gateway starts.
 
 Dedicated Codex bootstraps its isolated `CODEX_HOME` with apps, plugins, and
 remote plugins enabled only for nonempty selections. Both states set
-`apps._default.enabled:false`. With selections, Compute renders the OpenClaw
+`apps._default.enabled:false` and `plugins._default.enabled:false`. With selections, Compute renders the OpenClaw
 bridge with `codexPlugins.enabled:true`, `allow_all_plugins:false`, and one entry
 per selected plugin. Disabled entries remain selected but cannot execute.
 
@@ -179,16 +179,16 @@ inventory; overrides require observed owned IDs. `driverPolicy.destructiveEnable
 maps to `destructive_enabled` independently. `toolDefaults.reviewer` maps
 `human`/`auto` to app `approvals_reviewer` values `user`/`auto_review`;
 omission inherits the Harness reviewer. Unsupported reviewer scopes fail before save.
-`writeCodexAppConfiguration` replaces each managed app
-subtree with `config/batchWrite`, removing stale per-app tool/link settings. It
-then rereads successful installations to check identity, version, and app mapping.
-Failed-only bindings are disabled; successful bindings retain admitted policy.
-Disabled selections do not contribute install attempts or startup results.
-`config/read` verifies the effective overlay before readiness, including every
-nested tool's enablement and approval against its requested override or app
-default. Absent/null fields inherit. Unexpected explicit tool enablement is
-rejected when OCE omitted the default, because it can bypass category restrictions.
-Account/link approval defaults must match the requested app approval.
+After installation, startup rechecks catalog identity, version, app mapping, and
+reported components. Remote `plugin/read` does not inspect bundles.
+`writeCodexPluginConfiguration` replaces both tables, clearing stale grants:
+successful enabled selections get true; disabled/failed selections get false.
+Final `plugin/read` verifies enablement. Failed-only app bindings are disabled.
+Disabled selections are neither installed nor reported.
+Even empty selections undergo `config/read` verification. Unselected entries must
+be explicitly false. Selected app tool/account policies must match requested
+settings; absent/null fields inherit. Explicit tool enables cannot bypass omitted
+defaults.
 
 `runtime-entrypoints.ts:verifyCodexReviewerConfiguration` checks explicit app
 reviewers against effective app/link settings and `configRequirements/read`.
@@ -196,7 +196,9 @@ It rejects forbidden reviewers, incompatible automatic-review approval settings,
 and human review conflicting with current-model requirements. These startup
 checks do not establish later session/model routing, strict review, workspace
 configuration, or managed requirements beyond reviewer checks. See the [remaining proof](../testing/plugins.md#current-proof-notes).
-Codex owns cache integrity and runtime health.
+Codex owns cache integrity and runtime health. The runtime must implement
+`plugins._default.enabled`; a config echo cannot distinguish older binaries
+that ignore it. See [runtime prerequisites](../reference/drivers/plugin-bundled.md#native-mappings-and-limits).
 
 For Compute-owned Kubernetes workloads, a selected OpenClaw install command's
 normal nonzero exit, a matching Codex `plugin/install` error response, or a
@@ -293,6 +295,8 @@ completed deployment attempt rather than ongoing runtime health.
 [keep this for the user to add notes. do not change between edits]
 
 ## Changelog
+
+- 2026-09-27 15:10: Added native plugin defaults, stale-grant reconciliation, skill admission, and catalog verification before activation. (codex/01a0d755-b86e-7d33-bddc-c21ba03a3276 - ab9527bb)
 
 - 2026-09-27 20:21: Documented approval mapping. (01a0e3cf-cfd3-7c02-91ac-19a0efbd7645 - 0663fa97ed5c0fcabc680241dbe7fbde9fde3562)
 

@@ -72,9 +72,9 @@ const CODEX_POLICY_SCHEMA: JSONSchema = deepFreeze({
 const OCC_CATALOG: readonly BundledCatalogEntry[] = deepFreeze(openClawCatalogEntries());
 
 // Entries use recorded marketplace identities; account access and tools remain unknown.
-// Releases with unsupported skills or local components must not be selectable.
+// Native startup validates the current release's components before activation.
 const CURATED_UNSUPPORTED =
-  "The recorded plugin release requires skills or local components that OCE does not support.";
+  "The recorded plugin release has local components that have not been verified as supported by OCE.";
 const OPENAI_CURATED_CATALOG: readonly BundledCatalogEntry[] = deepFreeze([
   {
     id: "codex-plugin:linear@openai-curated-remote",

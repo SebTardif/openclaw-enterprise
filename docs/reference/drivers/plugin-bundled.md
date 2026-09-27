@@ -35,8 +35,8 @@ The curated catalog includes Linear, Slack, GitHub, Notion, Figma, Canva,
 Datadog, Sentry, Adobe, Coursera Learning, and Google Contacts. Their recorded
 identities and presentation metadata do not include tool inventory or
 account-specific availability. Notion, Figma, Canva, Sentry, and Adobe are
-unavailable because their recorded releases require unsupported skills or local
-components. Select a plugin and set its default policy; per-tool controls are
+unavailable because their recorded releases have unverified local components.
+Use hosted discovery for current skill-plugin metadata. Select a plugin and set its default policy; per-tool controls are
 unavailable until the catalog supplies tool details. Startup resolves native
 metadata independently and still requires the Agent's actual authentication and
 provider access. Catalog membership does not grant access or prove execution.
@@ -82,13 +82,13 @@ To configure access:
 
 Unavailable entries explain the reported cause and link to recovery guidance:
 
-| Cause                                                    | Next step                                                                                           |
-| -------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
-| Disabled by administrator                                | Ask a workspace administrator to review access for the token's identity.                            |
-| Plan not eligible                                        | Ask the administrator to review workspace plan availability.                                        |
-| Required app unavailable                                 | Review app access and setup; credentials alone may not resolve this.                                |
-| No recognized reason                                     | Review workspace plugin access without assuming a specific cause.                                   |
-| Unsupported native components or no concrete hosted apps | Check [native limits](#native-mappings-and-limits); changing ChatGPT access cannot add OCE support. |
+| Cause                                              | Next step                                                                                           |
+| -------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| Disabled by administrator                          | Ask a workspace administrator to review access for the token's identity.                            |
+| Plan not eligible                                  | Ask the administrator to review workspace plan availability.                                        |
+| Required app unavailable                           | Review app access and setup; credentials alone may not resolve this.                                |
+| No recognized reason                               | Review workspace plugin access without assuming a specific cause.                                   |
+| Unsupported native components or no apps or skills | Check [native limits](#native-mappings-and-limits); changing ChatGPT access cannot add OCE support. |
 
 Catalog visibility and credentials do not establish native execution or policy
 enforcement. Startup independently resolves selections using the Agent's projected
@@ -101,8 +101,10 @@ external PluginDriver packages are rejected.
 | `codex-plugin` | `occ/codex-plugin`    | Dedicated Codex   | Native `openai-curated-remote` marketplace; selection IDs are `codex-plugin:<plugin>@openai-curated-remote`. |
 
 Codex startup resolves current identity, release metadata, and concrete apps from
-`plugin/read`'s `detail.apps`. Template metadata alone grants no app access;
-plugins without concrete apps are unsupported. Template lifecycle is deferred.
+`plugin/read`'s `detail.apps` and `detail.skills`. Hosted discovery supports skills
+alongside apps and skill-only plugins. Skill-only details have a known empty tool
+inventory; tool approval settings govern hosted app calls, not skill instructions.
+Template metadata alone grants no app access. Template lifecycle is deferred.
 
 No PluginDriver is selected by default. Plugin-free deployments remain permitted.
 Nonempty selections require valid supported policy and the same compatible Driver
@@ -159,8 +161,12 @@ as do two selected IDs targeting the same native tool.
 Catalog classifications are not required, and app defaults are not expanded into
 per-tool rules. The optional controller catalog reader still returns `tools:null`.
 
-The scope remains concrete hosted apps. Marketplace visibility does not imply
-support for remote skills, hooks, arbitrary MCP servers, or template-only apps.
+Supported plugins contain concrete hosted apps, skills, or both. Plugins reporting
+hooks, plugin MCP servers, scheduled tasks, or only templates remain unsupported.
+Startup rechecks catalog metadata before enabling the plugin. Remote `plugin/read`
+does not inspect installed bundle contents: selecting a plugin activates its
+whole native bundle, including components absent from catalog metadata. OCE does
+not provide a separate component sandbox for selected plugins.
 The selected-only OpenClaw bridge is required for the dedicated Agent path.
 Effective nested policy requires the bridge changes in
 [OpenClaw #151260](https://github.com/openclaw/openclaw/pull/151260) and
@@ -189,15 +195,23 @@ changes, strict review, workspace configuration, managed requirements beyond
 reviewer checks, and real Agent enforcement remain draft acceptance gates; see
 [runtime proof notes](../../testing/plugins.md#current-proof-notes).
 
-Dedicated Codex starts without user plugins/apps, including when no PluginDriver
-is selected. Compute writes the safe baseline into the Agent's isolated
-`CODEX_HOME`, with native plugin loading and remote plugin loading disabled.
-When a supported curated Codex app is selected, startup reads native catalog
-detail, writes the selected app entry with `enabled:true`, and applies the
-selected-only OpenClaw bridge configuration during native preparation. The
-Driver's optional internal catalog reader remains available; the required OpenClaw Codex
-transport plugin is separate infrastructure. Operator plugin directories and
-configuration are never imported.
+Dedicated Codex writes `apps._default.enabled=false` and
+`plugins._default.enabled=false` into its isolated `CODEX_HOME` before starting
+app-server. Empty selections also disable the Apps and Plugins features.
+After installation, startup replaces the owned app and plugin tables with the
+current selection: exact `name@marketplace` plugin IDs, concrete app IDs, and
+explicit disabled entries for disabled or failed selections. Removed selections
+lose their user-layer grants. Inherited unselected entries that enable a plugin
+or app, even by omitting `enabled`, prevent readiness. Source/account-disabled
+plugins remain disabled.
+
+This requires a Codex build that implements `plugins._default.enabled`; older
+binaries may accept and return the setting without enforcing it. Deploy a
+verified compatible runtime before using this preparation path. These are
+ordinary layered settings, not enterprise requirements. Later session overrides
+and direct host `mcpServer/tool/call` requests are outside this startup guarantee.
+The selected-only OpenClaw bridge remains required; its Codex transport plugin
+is separate infrastructure. Operator profiles are never imported.
 
 The Driver rejects conflicting raw Configuration for its managed fields rather
 than silently overwriting it. For OpenClaw, this includes an existing selected

@@ -1138,52 +1138,43 @@ async function codexAppServerRequest(method, params) {
   return responses[1];
 }
 
-function codexConfigPathSegment(segment) {
-  requireNonEmptyString(segment, "Codex config path segment");
-  return /^[A-Za-z0-9_-]+$/.test(segment) ? segment : JSON.stringify(segment);
-}
-
-function codexAppConfigEdits(configuration) {
-  const features = isPlainObject(configuration.features) ? configuration.features : {};
-  const apps = isPlainObject(configuration.apps) ? configuration.apps : {};
-  const edits = [
-    { keyPath: "features.apps", mergeStrategy: "replace", value: features.apps === true },
-    { keyPath: "features.plugins", mergeStrategy: "replace", value: features.plugins === true },
-    {
-      keyPath: "features.remote_plugin",
+function codexPluginConfigEdits(configuration) {
+  return [
+    ...["apps", "plugins", "remote_plugin"].map((feature) => ({
+      keyPath: "features." + feature,
       mergeStrategy: "replace",
-      value: features.remote_plugin === true,
-    },
-    {
-      keyPath: 'apps."_default"',
+      value: configuration.features?.[feature] === true,
+    })),
+    // Replace owned tables so a removed selection cannot retain a user-layer grant.
+    ...["apps", "plugins"].map((keyPath) => ({
+      keyPath,
       mergeStrategy: "replace",
-      value: isPlainObject(apps._default) ? apps._default : { enabled: false },
-    },
+      value: configuration[keyPath],
+    })),
   ];
-  for (const [appId, config] of Object.entries(apps)) {
-    if (appId === "_default") continue;
-    edits.push({
-      keyPath: "apps." + codexConfigPathSegment(appId),
-      mergeStrategy: "replace",
-      value: config,
-    });
-  }
-  return edits;
 }
 
-async function writeCodexAppConfiguration(configuration) {
+async function writeCodexPluginConfiguration(configuration) {
   await codexAppServerRequest("config/batchWrite", {
-    edits: codexAppConfigEdits(configuration),
+    edits: codexPluginConfigEdits(configuration),
     reloadUserConfig: true,
   });
 }
 
-async function readCodexAppConfiguration() {
+async function readCodexPluginConfiguration() {
   const response = await codexAppServerRequest("config/read", {});
   return response?.config;
 }
 
 function verifyCodexNestedPolicy(configuration, effective) {
+  for (const table of ["apps", "plugins"]) {
+    for (const [id, policy] of Object.entries(effective?.[table] ?? {})) {
+      // Explicit entries override the default, including entries that omit enabled.
+      if (id !== "_default" && !hasOwn(configuration[table], id) && policy?.enabled !== false) {
+        throw new Error("Codex effective " + table + " configuration enables an unselected entry; remove the native override or update the Agent selection.");
+      }
+    }
+  }
   for (const [appId, app] of Object.entries(configuration.apps ?? {})) {
     if (appId === "_default") continue;
     const actual = effective?.apps?.[appId];
@@ -1265,9 +1256,9 @@ function codexSummaryMatchesInstall(summary, plugin) {
   return summary?.id === plugin.nativeId || summary?.id === slug || summary?.name === slug;
 }
 
-function verifyCodexPluginDetail(plugin, readParams, detail) {
+function verifyCodexPluginDetail(plugin, readParams, detail, requireEnabled) {
   const summary = detail?.plugin?.summary;
-  if (summary?.installed !== true || summary?.enabled !== true) {
+  if (summary?.installed !== true || (requireEnabled && summary?.enabled !== true)) {
     throw new Error("Codex plugin was not installed and enabled before runtime readiness.");
   }
   if (detail.plugin.marketplaceName !== undefined && detail.plugin.marketplaceName !== plugin.registry) {
@@ -1315,11 +1306,12 @@ async function readCodexToolStatuses() {
 }
 
 async function installCodexSelectionSet(selections, failures = []) {
-  if (Object.keys(selections).length === 0) return { successfulPluginIds: [], failures: [] };
   const enabledPluginIds = enabledCodexSelectionIds(selections);
-  const listed = await codexAppServerRequest("plugin/list", {});
-  const readParamsList = pluginRuntimeTranslator.codexReadParamsForSelections(selections, listed);
-  if (readParamsList.length === 0) return { successfulPluginIds: [], failures: [] };
+  const readParamsList = Object.keys(selections).length === 0
+    ? []
+    : pluginRuntimeTranslator.codexReadParamsForSelections(
+        selections, await codexAppServerRequest("plugin/list", {}),
+      );
   const resolvedDetails = [];
   for (const readParams of readParamsList) {
     resolvedDetails.push(await codexAppServerRequest("plugin/read", readParams));
@@ -1393,7 +1385,6 @@ async function installCodexSelectionSet(selections, failures = []) {
     ? await readCodexToolStatuses()
     : [];
   const effectiveResolvedArtifact = pluginRuntimeTranslator.codexRuntimeArtifact(selections, resolvedDetails, failed, toolStatuses);
-  await writeCodexAppConfiguration(effectiveResolvedArtifact.configuration);
   const installedDetails = [];
   for (const readParams of readParamsList) {
     const selectedPlugin = installs.find(
@@ -1405,7 +1396,9 @@ async function installCodexSelectionSet(selections, failures = []) {
     ) {
       installedDetails.push(resolvedDetails[readParamsList.indexOf(readParams)]);
     } else {
-      installedDetails.push(await codexAppServerRequest("plugin/read", readParams));
+      const detail = await codexAppServerRequest("plugin/read", readParams);
+      verifyCodexPluginDetail(selectedPlugin, readParams, detail, false);
+      installedDetails.push(detail);
     }
   }
   const installedArtifact = pluginRuntimeTranslator.codexRuntimeArtifact(selections, installedDetails, failed, toolStatuses);
@@ -1415,16 +1408,19 @@ async function installCodexSelectionSet(selections, failures = []) {
   if (JSON.stringify(installedArtifact.configuration) !== JSON.stringify(effectiveResolvedArtifact.configuration)) {
     throw new Error("Codex plugin installed app mapping does not match startup resolution.");
   }
+  // Remote plugin/read reports catalog metadata, not cached bundle contents.
+  // Recheck the admitted release and app mapping before granting activation.
+  await writeCodexPluginConfiguration(effectiveResolvedArtifact.configuration);
   for (const plugin of effectiveResolvedArtifact.installs) {
     if (failedIds.has(plugin.pluginId) || !enabledPluginIds.has(plugin.pluginId)) continue;
     const readParams = readParamsList.find((candidate) => candidate.pluginName === plugin.remotePluginId);
     if (readParams === undefined) {
       throw new Error("Codex plugin installed identity does not match the selected catalog entry.");
     }
-    const detail = installedDetails[readParamsList.indexOf(readParams)];
-    verifyCodexPluginDetail(plugin, readParams, detail);
+    const detail = await codexAppServerRequest("plugin/read", readParams);
+    verifyCodexPluginDetail(plugin, readParams, detail, true);
   }
-  const effectiveConfiguration = await readCodexAppConfiguration();
+  const effectiveConfiguration = await readCodexPluginConfiguration();
   await verifyCodexReviewerConfiguration(effectiveResolvedArtifact.configuration, effectiveConfiguration);
   assertConfigContainsOverlay(effectiveConfiguration, effectiveResolvedArtifact.configuration);
   verifyCodexNestedPolicy(effectiveResolvedArtifact.configuration, effectiveConfiguration);

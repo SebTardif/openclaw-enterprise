@@ -252,7 +252,7 @@ test("Hardcoded OpenAI catalog returns curated details without provider requests
   assert.ok(github);
   assert.equal(github.remoteId, "plugin_connector_1p_1a69035c238881919c4190932b2df699");
   assert.deepEqual(await driver.getCatalogPlugin({ pluginId: github.remoteId }), github);
-  // Recorded releases with unsupported components must never be offered for selection.
+  // Unverified local components still prevent selection from this static catalog.
   assert.deepEqual(
     new Set(page.plugins.filter((entry) => entry.available === false).map((entry) => entry.name)),
     new Set(["Notion", "Figma", "Canva", "Sentry", "Adobe"]),
@@ -262,7 +262,7 @@ test("Hardcoded OpenAI catalog returns curated details without provider requests
     assert.ok(entry.remoteId);
     assert.deepEqual(await driver.getCatalogPlugin({ pluginId: entry.remoteId }), entry);
     if (entry.available === false) {
-      assert.match(entry.unavailableReason, /skills/);
+      assert.match(entry.unavailableReason, /local components/);
     }
   }
   assert.deepEqual(await driver.listCatalog(context("dedicated")), page.plugins);
@@ -354,7 +354,7 @@ test("Codex startup default-denies plugins", () => {
     remote_plugin: false,
   });
   assert.deepEqual(empty.configuration.apps, { _default: { enabled: false } });
-  assert.deepEqual(empty.configuration.plugins, {});
+  assert.deepEqual(empty.configuration.plugins, { _default: { enabled: false } });
   assert.deepEqual(empty.installs, []);
 });
 
@@ -415,6 +415,12 @@ test("Codex startup translation renders selected marketplace app plugins", () =>
   const bridgeConfiguration = codexOpenClawConfiguration(selections);
 
   assert.equal(artifact.kind, "codex");
+  assert.deepEqual(artifact.configuration.plugins, {
+    _default: { enabled: false },
+    "linear@openai-curated-remote": { enabled: true },
+    "google-calendar@openai-curated-remote": { enabled: true },
+    "third-plugin@openai-curated-remote": { enabled: true },
+  });
   assert.deepEqual(artifact.configuration.apps, {
     _default: { enabled: false },
     asdk_app_69a089a326dc8191b32a3f2553f5be2c: {
@@ -471,6 +477,56 @@ test("Codex startup translation renders selected marketplace app plugins", () =>
       registry: "openai-curated-remote",
     },
   ]);
+});
+
+test("Codex activates selected skills independently of app tools and excludes disabled or failed plugins", () => {
+  const skillPluginId = "codex-plugin:writing@openai-curated-remote";
+  const skillDetail = codexDetail("writing", [], { skills: [{ name: "draft" }] });
+  const selections = {
+    ...codexSelection(linearPluginId, { toolDefaults: { enabled: false } }),
+    ...codexSelection(calendarPluginId, { enabled: false }),
+    ...codexSelection(thirdPluginId),
+    ...codexSelection(skillPluginId),
+  };
+  const artifact = codexRuntimeArtifact(
+    selections,
+    [
+      codexDetail("linear", ["app_notes"], { skills: [{ name: "notes" }] }),
+      codexDetails[1],
+      codexDetails[2],
+      skillDetail,
+    ],
+    [{ pluginId: thirdPluginId }],
+  );
+  assert.deepEqual(artifact.configuration.plugins, {
+    _default: { enabled: false },
+    "linear@openai-curated-remote": { enabled: true },
+    "google-calendar@openai-curated-remote": { enabled: false },
+    "third-plugin@openai-curated-remote": { enabled: false },
+    "writing@openai-curated-remote": { enabled: true },
+  });
+  assert.deepEqual(artifact.configuration.apps, {
+    _default: { enabled: false },
+    connector_third_fixture: { enabled: false },
+    app_notes: {
+      enabled: true,
+      default_tools_enabled: false,
+      default_tools_approval_mode: "auto",
+    },
+  });
+
+  // Aliases cannot represent separate install outcomes for one native plugin.
+  const aliases = {
+    ...codexSelection(skillPluginId),
+    "writing@openai-curated-remote": { enabled: true },
+  };
+  for (const enabled of [true, false]) {
+    aliases["writing@openai-curated-remote"].enabled = enabled;
+    assert.throws(
+      () => codexRuntimeArtifact(aliases, [skillDetail]),
+      /duplicate native plugin IDs/,
+    );
+  }
 });
 
 test("Codex startup translation preserves explicit approval defaults and routed reviewer selection", () => {
@@ -722,11 +778,11 @@ test("Codex startup translation fails selected-only policy gaps at startup", () 
       [codexDetail("linear", ["app"], { version: "" })],
       /release version/i,
     ],
-    [
+    ...["hooks", "mcpServers", "scheduledTasks"].map((field) => [
       codexSelection(linearPluginId),
-      [codexDetail("linear", ["app"], { mcpServers: [{ id: "native" }] })],
-      /mcpServers/i,
-    ],
+      [codexDetail("linear", [], { skills: [{ name: "draft" }], [field]: [{ id: "native" }] })],
+      new RegExp(field, "i"),
+    ]),
     [
       {
         ...codexSelection(linearPluginId, {

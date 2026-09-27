@@ -1,0 +1,8 @@
+{
+  "requiredEnv": ["OCC_TEST_CODEX_APP_SERVER_BIN"],
+  "files": [
+    {
+      "path": "tests/integration/codex-plugin-policy-runtime.test.mjs"
+    }
+  ]
+}
