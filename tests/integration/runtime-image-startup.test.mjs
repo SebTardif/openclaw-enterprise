@@ -177,7 +177,7 @@ test(
     // node/Codex bodies: this proves initialization order, not pairing or a model turn.
     const launch = String.raw`
 const assert = require("node:assert/strict");
-const { existsSync, mkdirSync, readFileSync, writeFileSync } = require("node:fs");
+const { existsSync, readFileSync, writeFileSync } = require("node:fs");
 const { spawnSync } = require("node:child_process");
 const entrypoint = process.argv[1];
 const sentinel = "Owner edit that must survive a Harness restart.\n";
@@ -214,15 +214,12 @@ for (let attempt = 0; attempt < 4; attempt++) {
     require("node:fs").readFileSync("/home/node/.openclaw/plugin-skills/slack/SKILL.md", "utf8"),
     /name:\s*slack/,
   );
-  const relativeProof = "/home/node/openclaw-runtime-assets/plugin-skills/slack/references/relative-proof.md";
-  mkdirSync(require("node:path").dirname(relativeProof), { recursive: true });
-  writeFileSync(relativeProof, "# Relative plugin asset proof\n");
-  assert.equal(
+  assert.match(
     require("node:fs").readFileSync(
-      "/home/node/.openclaw/plugin-skills/slack/references/relative-proof.md",
+      "/home/node/.openclaw/plugin-skills/block-kit/references/official-block-kit.md",
       "utf8",
     ),
-    "# Relative plugin asset proof\n",
+    /# Block Kit/,
   );
   assert.equal(result.stdout.split("WORKSPACE_CHILD_STARTED").length - 1, 2);
   if (attempt === 0) {
@@ -972,6 +969,9 @@ if (!slack.isFile()) {
 }
 if (!/name:\\s*slack/.test(readFileSync("/home/node/openclaw-runtime-assets/plugin-skills/slack/SKILL.md", "utf8"))) {
   throw new Error("Kubernetes gateway entrypoint cannot read Slack Skill.md from runtime assets.");
+}
+if (!/# Block Kit/.test(readFileSync("/home/node/openclaw-runtime-assets/plugin-skills/block-kit/references/official-block-kit.md", "utf8"))) {
+  throw new Error("Kubernetes gateway entrypoint cannot read packaged relative plugin skill files.");
 }
 process.stdout.write(JSON.stringify({ bundledCount: bundled.length, slackSkill: true }));
 `,
