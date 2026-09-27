@@ -26,10 +26,9 @@ python3 -m http.server 6006 --bind 127.0.0.1 \
   --directory scripts/console-storybook/dist/site
 ```
 
-Serve this build at its own origin's root. The console uses absolute `/console/`
-URLs. Reload with **Reset story**, not the embedded frame's current console URL.
-The Storybook build workflow also uploads a static artifact; it does not publish
-or change access to the documentation site.
+Serve at the origin root for absolute `/console/` URLs. Build fingerprints version
+fixture pages and module imports to prevent stale cached UI. Use **Reset story**
+to restart. CI uploads a static artifact without publishing the documentation site.
 
 ## Appearance review
 
@@ -103,25 +102,24 @@ Choose a Preset, fill its variables, review seeded workspace files, and create
 an Agent with the Codex harness. The Console submits its inline Configuration
 and saved Secret references, follows simulated provisioning and deployment
 activation, and opens Workspace files for the returned revision. A separate flow
-starts without a Preset, selects OpenAI with Codex, enters a dummy API key or service account
-token, selects a model, edits IDENTITY.md, and clears USER.md before creation.
+starts without a Preset, selects OpenAI with Codex, creates or selects a model
+Secret, selects a model, edits IDENTITY.md, and clears USER.md before creation.
 OpenClaw and unsupported-runtime stories retain the draft workflow: provision
 credentials and deploy from Agent detail. These transitions demonstrate
 presentation only; they do not prove a worker ran.
 
-The DevDay create segment rehearses the same create-and-deploy path with a
-shipped SWE Agent Preset copied from standard Codex, a fake service account token,
-a prefilled `gpt-6-astra` default, an existing model Secret option, Calendar plugin
-configuration from the simulated discovery catalog, repository choices
-`openclaw/openclaw-enterprise` and `openclaw/openclaw`, prefilled channel
-`C0C43A2QA11`, and simulated Slack Secrets. The separate Preset workspace story
-demonstrates variable-rendered file contents and an intentionally empty file.
-The DevDay picker includes both bundled standard presets and all three custom
-presets: SWE Agent, Q&A Agent, and Oncall Agent.
+The DevDay segment offers SWE, Community, Q&A, Oncall, and both standard presets.
+DevDay presets supply model defaults, templated workspace files, and four Slack
+channels. Choose or create a model Secret; configure Linear from the simulated
+curated catalog and select `openclaw/openclaw-enterprise` or `openclaw/openclaw`.
+The catalog works with any Preset, either Secret option, or no Preset. Production
+discovery requires an eligible Codex service-account token.
+The workspace story demonstrates variable-rendered and intentionally empty files.
 The Standard OpenClaw preset story previews its native harness settings.
 Preset Secret stories cover existing selection, pending metadata, denied reads,
 and an empty catalog; each leaves new-token entry available explicitly.
-Q&A Agent and Oncall Agent remain disabled in the example Installation YAML.
+Community Agent, Q&A Agent, and Oncall Agent remain disabled in the example
+Installation YAML.
 
 Use the [DevDay storyboard](../../scripts/console-storybook/devday-storyboard.md)
 for presenter actions, expected visible states, and fallbacks.
@@ -181,24 +179,29 @@ not backend persistence or live gateway proof.
 
 ### Choose and switch revision Secrets
 
-Open **Components / Credentials / Slack tokens stored** to inspect current model,
-app-token, and bot-token Secret references. Select **Create new Secret...**, then
-**Cancel** to preserve the selection without writing a Secret. Selecting an existing
-Secret stages a binding; the relevant Save button applies it. Switching the app token
-leaves the bot token unchanged. The API-key switch story provides a second model Secret.
+In **Components / Credentials / Slack tokens stored**, inspect all three Secret
+references. Cancel **Create new Secret...** without writing; select an existing
+Secret, then Save. Switching app tokens preserves the bot binding. The API-key
+switch story provides a second model Secret.
 
-**Secret list denied** preserves existing references when metadata cannot be
-listed. **Slack grant denied** shows the saved reference and explains that the
-Agent still needs access to that Secret; it does not report deployment readiness.
+**Secret list denied** retains bound IDs. **Slack grant denied** preserves the
+saved reference but requires Agent access recovery before deployment.
 
 Review the [bound model Secret](../assets/revision-secret-picker/harness-bound.png),
 [staged Slack switch](../assets/revision-secret-picker/slack-switch.png),
 [creation dialog](../assets/revision-secret-picker/create-secret.png),
 [denied list](../assets/revision-secret-picker/list-denied.png),
 [denied grant](../assets/revision-secret-picker/grant-denied.png), and
-[walkthrough](../assets/revision-secret-picker/walkthrough.mp4). These use dummy
-Storybook data and prove UI behavior only, not live authorization, credential
-validity, or deployment.
+[walkthrough](../assets/revision-secret-picker/walkthrough.mp4) using simulated data.
+
+### Inspect bound Secrets in revisions
+
+In **Components/Channels → Revision read only**, inspect Slack Secret identities;
+switch to **Configuration** for Harness authentication. Values never appear.
+
+**Revision Secret metadata denied**, **Revision Secret metadata missing**, and
+**Revision Secret metadata loading** retain IDs during failed or pending reads.
+**Revision without Slack bindings** shows **No Secret bound**.
 
 ### Discover and configure plugins
 
@@ -233,7 +236,8 @@ access, installation, or runtime policy enforcement.
 
 Use **Edit Configuration** on the new revision to change native JSON, or edit
 Slack through Channels. Save and compare the draft with the original revision.
-Deploy again to admit a new snapshot. The fixture retains both versions.
+While viewing the original revision, select **Deploy new revision** to admit the
+current saved draft as a new snapshot. The fixture retains both versions.
 Credential edits likewise need deployment to affect managed runtime configuration.
 Workspace-file writes apply immediately and do not create a revision.
 

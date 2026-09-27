@@ -1320,6 +1320,32 @@ async function assertK3dImageReference(cluster, reference, envName) {
   }
 }
 
+async function importImageArchiveInK3dNodes(cluster, archive) {
+  for (const node of cluster.nodes) {
+    const nodeArchive = `/tmp/openclaw-ci-image-import-${randomSuffix()}.tar`;
+    try {
+      await execFile(
+        process.env.OCC_DOCKER_BIN ?? "docker",
+        ["cp", archive, `${node}:${nodeArchive}`],
+        { timeoutMs: 600_000 },
+      );
+      await execFile(
+        process.env.OCC_DOCKER_BIN ?? "docker",
+        ["exec", node, "ctr", "-n", "k8s.io", "images", "import", "--all-platforms", nodeArchive],
+        { timeoutMs: 600_000 },
+      );
+    } finally {
+      await execFile(
+        process.env.OCC_DOCKER_BIN ?? "docker",
+        ["exec", node, "rm", "-f", nodeArchive],
+        {
+          timeoutMs: 60_000,
+        },
+      ).catch(() => {});
+    }
+  }
+}
+
 async function registerImageInK3d(statePath, state, cluster, image, envName) {
   const existing = state.resources.find(
     (resource) =>
@@ -1383,12 +1409,10 @@ async function registerImageInK3d(statePath, state, cluster, image, envName) {
       ]),
     );
     await timedPreparation(state.lane, "image-archive-import", () =>
-      // Bound a stalled stream so failed preparation can reach owned cleanup.
-      execFile(
-        process.env.OPENCLAW_CI_K3D_BIN ?? "k3d",
-        ["image", "import", "--mode", "direct", archive, "-c", cluster.name],
-        { timeoutMs: 600_000 },
-      ),
+      // k3d tools-node mode can exit successfully after a per-node import
+      // failure, so import the prepared archive into each owned node directly
+      // and propagate node-local containerd errors.
+      importImageArchiveInK3dNodes(cluster, archive),
     );
   } finally {
     await rm(archive, { force: true });
@@ -1506,6 +1530,73 @@ async function prepareK3dRuntimeImages(
     cluster.codexSeccompProfile = seccomp.profileName;
     cluster.codexSeccompProfiles = seccomp.nodes;
     await writeState(statePath, state);
+  }
+}
+
+async function prepareImagesPackagingCodexSeccompProfile(statePath, state, env) {
+  const cluster = await timedPreparation(state.lane, "k3d-create", () =>
+    ensureK3dCluster(statePath, state),
+  );
+  const runtimeImage = await timedPreparation(state.lane, "runtime-image-import", () =>
+    registerImageInK3d(
+      statePath,
+      state,
+      cluster,
+      env.OCC_TEST_KUBERNETES_RUNTIME_IMAGE,
+      "OCC_TEST_KUBERNETES_RUNTIME_IMAGE",
+    ),
+  );
+  progress(
+    state.lane,
+    "Deriving the reviewed Codex seccomp profile for native runtime image smoke tests.",
+  );
+  const seccomp = await timedPreparation(state.lane, "codex-seccomp-profile", () =>
+    prepareCodexSeccompProfile({
+      cluster,
+      image: runtimeImage.reference,
+      execFile,
+      kubectl: cluster.kubectl ?? process.env.OCC_KUBECTL_BIN ?? "kubectl",
+      codexVersion:
+        env.OCC_TEST_KUBERNETES_CODEX_VERSION ??
+        process.env.OCC_TEST_KUBERNETES_CODEX_VERSION ??
+        "0.156.0",
+    }),
+  );
+  if (!seccomp.dockerProfilePath || !isAbsolute(seccomp.dockerProfilePath)) {
+    throw new Error("Codex seccomp preparation did not publish an absolute Docker profile path.");
+  }
+  env.OCC_TEST_CODEX_SECCOMP_PROFILE = seccomp.dockerProfilePath;
+  env.OCC_TEST_KUBERNETES_CODEX_SECCOMP_PROFILE = seccomp.profileName;
+  cluster.codexSeccompProfile = seccomp.profileName;
+  cluster.codexSeccompProfiles = seccomp.nodes;
+  cluster.codexDockerSeccompProfile = {
+    path: seccomp.dockerProfilePath,
+    sha256: seccomp.profileSha256,
+  };
+  await writeState(statePath, state);
+}
+
+export async function prepareRuntimeImageSmoke({ image, statePath }) {
+  assertDockerImageId(image, "Runtime smoke image");
+  const path = normalizeStatePath(statePath);
+  if (await readState(path)) {
+    throw new Error(`CI state already exists at ${path}; run cleanup before runtime smoke.`);
+  }
+  const state = baseState("images-packaging", path);
+  const tag = `localhost/${ownedName("openclaw-ci-image", state.prefix, { maxLength: 48 })}/runtime-smoke:local`;
+  const env = { ...baseEnv(path, state), OCC_TEST_KUBERNETES_RUNTIME_IMAGE: tag };
+  const resource = addResource(state, "image-tag", { name: tag });
+  await writeState(path, state);
+  try {
+    // Import the caller's exact loaded config ID without rebuilding or pulling.
+    await execFile(process.env.OCC_DOCKER_BIN ?? "docker", ["tag", image, tag]);
+    await markResourceReady(path, state, resource);
+    await prepareImagesPackagingCodexSeccompProfile(path, state, env);
+    await saveLaneEnv(path, state, env);
+    return { env, cleanup: () => cleanupResourceIds(path) };
+  } catch (error) {
+    await cleanupResourceIds(path);
+    throw error;
   }
 }
 
@@ -1632,6 +1723,9 @@ async function prepareLane({ lane, statePath }) {
           )
         ).env,
       );
+      if (lanePrepare(name).codexSeccomp) {
+        await prepareImagesPackagingCodexSeccompProfile(resolvedStatePath, state, env);
+      }
       break;
     case "repository-credentials-container":
       Object.assign(
@@ -1733,9 +1827,10 @@ async function prepareLane({ lane, statePath }) {
       );
       env.OCC_TEST_KUBERNETES_KUBECONFIG = cluster.kubeconfig;
       env.OCC_TEST_KUBERNETES_CONTEXT = cluster.context;
-      // Bound archive/import concurrency to keep disk and containerd pressure
-      // predictable while overlapping independent transfers. Each import still
-      // verifies the immutable reference through CRI on every node.
+      // k3d tools-mode imports use a shared per-cluster helper container.
+      // Serialize imports for this cluster while the pulls and builds above
+      // continue to overlap. Each import still verifies the immutable reference
+      // through CRI on every node.
       await timedPreparation(name, "workload-image-imports", () =>
         prepareTogether(
           [
@@ -1755,7 +1850,7 @@ async function prepareLane({ lane, statePath }) {
               ).reference;
             }),
           ],
-          2,
+          1,
         ),
       );
       break;
@@ -1772,7 +1867,7 @@ async function prepareLane({ lane, statePath }) {
         ),
       );
       const images = {
-        // Start the largest image first so smaller imports can overlap it.
+        // Start the larger service first; pulls still overlap before imports run serially.
         OCC_TEST_OBSERVABILITY_GRAFANA_IMAGE: demo.images.grafana,
         OCC_TEST_OBSERVABILITY_PROMETHEUS_IMAGE: demo.images.prometheus,
         OCC_TEST_OBSERVABILITY_LOKI_IMAGE: demo.images.loki,
@@ -1794,6 +1889,8 @@ async function prepareLane({ lane, statePath }) {
       );
       env.OCC_TEST_KUBERNETES_KUBECONFIG = cluster.kubeconfig;
       env.OCC_TEST_KUBERNETES_CONTEXT = cluster.context;
+      // k3d tools-mode imports share one helper container per cluster, so keep
+      // this phase serial even though source-image pulls above can overlap.
       await timedPreparation(name, "demo-image-imports", () =>
         prepareTogether(
           Object.entries(images).map(([variable, image]) => async () => {
@@ -1802,7 +1899,7 @@ async function prepareLane({ lane, statePath }) {
               await registerImageInK3d(resolvedStatePath, state, cluster, image, variable)
             ).reference;
           }),
-          2,
+          1,
         ),
       );
       break;
