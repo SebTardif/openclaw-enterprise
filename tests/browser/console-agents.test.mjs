@@ -5239,6 +5239,18 @@ test("Create Agent browses the curated plugin catalog without a discovery creden
   fixture.controller.registerDriver(driver);
   fixture.controller.selectDriver("plugin", driver.id);
   const namespace = await fixture.createNamespace("Curated plugin browsing", { ready: true });
+  const linearPluginId = "codex-plugin:linear@openai-curated-remote";
+  const fetchTool = "asdk_app_69a089a326dc8191b32a3f2553f5be2c/linear.fetch";
+  const saveIssueTool = "asdk_app_69a089a326dc8191b32a3f2553f5be2c/linear.save_issue";
+  const selected = {
+    [linearPluginId]: {
+      enabled: true,
+      tools: {
+        [fetchTool]: { approval: "approve" },
+        [saveIssueTool]: { approval: "prompt" },
+      },
+    },
+  };
   const { page } = await newPage(t, fixture);
   const requests = apiRequests(page, fixture.origin);
 
@@ -5256,12 +5268,15 @@ test("Create Agent browses the curated plugin catalog without a discovery creden
   );
   await linear.click();
   await dialog.getByRole("button", { name: "Add Linear", exact: true }).click();
-  assert.deepEqual(JSON.parse(await page.locator("#agent-plugins").inputValue()), {
-    "codex-plugin:linear@openai-curated-remote": { enabled: true },
-  });
+  assert.equal(await dialog.locator("details.plugin-tool-row").count(), 42);
+  await dialog.locator(`details.plugin-tool-row[data-tool="${fetchTool}"] summary`).click();
+  await dialog.getByLabel("Fetch approval", { exact: true }).selectOption("approve");
+  await dialog.locator(`details.plugin-tool-row[data-tool="${saveIssueTool}"] summary`).click();
+  await dialog.getByLabel("Save issue approval", { exact: true }).selectOption("prompt");
+  assert.deepEqual(JSON.parse(await page.locator("#agent-plugins").inputValue()), selected);
   assert.deepEqual(
     pathRequests(requests, "POST", `${catalogPath}/details`).map(({ body }) => body),
-    [{ pluginId: "plugin_asdk_app_69a089a326dc8191b32a3f2553f5be2c" }],
+    [],
   );
 });
 
