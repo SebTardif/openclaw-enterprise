@@ -27,8 +27,8 @@ source build; it is not a published OpenClaw release.
 | Input                                        | Selection                                                                                                    |
 | -------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
 | Build base                                   | `docker.io/library/node:24-bookworm@sha256:934240a162082fd8b8a2f90cd5114446443f1eba1c5378f6687167ca405e6584` |
-| OpenClaw source commit                       | `ef2f575ec382cea3ed58a49e858c96425c8ad586`                                                                   |
-| Source archive SHA-256                       | `ff9c3e4f392be42b75ab6bf256fdfa6799db17933ac22e5b9eea2a0e49d4bcd1`                                           |
+| OpenClaw source commit                       | `368eabd3e1ed00de0f8f1c5259d43fc39d265cdd`                                                                   |
+| Source archive SHA-256                       | `ede242963ad512c910cc32a87036cb0af34ae595c29bb3449cce30bb9c2b4c6d`                                           |
 | Dedicated Codex CLI (`OPENAI_CODEX_VERSION`) | `0.156.0`                                                                                                    |
 
 The source's package version is `2026.9.6`; it does not identify this custom
@@ -74,7 +74,7 @@ installing packages at gateway startup. Slack credentials remain operator-owned
 runtime Secrets; do not put them in the image.
 
 Keep the source commit and archive checksum together when updating OpenClaw.
-Follow the [pinned upstream Docker assembly](https://github.com/openclaw/openclaw/blob/ef2f575ec382cea3ed58a49e858c96425c8ad586/Dockerfile)
+Follow the [pinned upstream Docker assembly](https://github.com/openclaw/openclaw/blob/368eabd3e1ed00de0f8f1c5259d43fc39d265cdd/Dockerfile)
 to keep plugin dependencies and runtime assets consistent. Its plugin-local
 dependency layout preserves dependencies that differ from core versions.
 Plugin chunks emitted directly under `dist` also need package-root resolution.
