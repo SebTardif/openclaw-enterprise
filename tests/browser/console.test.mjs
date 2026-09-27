@@ -203,13 +203,13 @@ function apiRequests(page, origin) {
   return requests;
 }
 
-test("console follows system appearance before sign-in and during navigation", async (t) => {
+test("console defaults to dark appearance regardless of system preference", async (t) => {
   const fixture = await createConsoleAppFixture(t);
   await fixture.bootstrap();
   const namespace = await fixture.createNamespace("Appearance", { ready: true });
   const { page } = await newPage(t, fixture);
 
-  async function assertAppearance(dark) {
+  async function assertDarkAppearance() {
     const palette = await page.locator("body").evaluate((body) => {
       const style = getComputedStyle(body);
       return { background: style.backgroundColor, text: style.color };
@@ -226,34 +226,34 @@ test("console follows system appearance before sign-in and during navigation", a
     };
     const background = luminance(palette.background);
     const text = luminance(palette.text);
-    assert.equal(background < text, dark);
+    assert.ok(background < text);
     assert.ok((Math.max(background, text) + 0.05) / (Math.min(background, text) + 0.05) >= 4.5);
     assert.equal(
       await page.locator("html").evaluate((root) => getComputedStyle(root).colorScheme),
-      dark ? "dark" : "light",
+      "dark",
     );
   }
 
-  // Exercise the controller-served CSS before a session exists, not a fixture palette.
-  await page.emulateMedia({ colorScheme: "dark" });
+  // A light system preference must not override the signed-out dark default.
+  await page.emulateMedia({ colorScheme: "light" });
   await page.goto(`${fixture.origin}/console/`);
   await page.getByLabel("Username").waitFor();
-  await assertAppearance(true);
+  await assertDarkAppearance();
   await login(page, fixture, `/console/agents?namespace=${namespace.id}`);
   await page.getByRole("heading", { name: "Agents", exact: true }).waitFor();
-  await assertAppearance(true);
+  await assertDarkAppearance();
 
-  // A preference change must repaint an already mounted page without navigation.
-  await page.emulateMedia({ colorScheme: "light" });
-  await assertAppearance(false);
+  // System preference changes must not override the console appearance.
   await page.emulateMedia({ colorScheme: "dark" });
-  await assertAppearance(true);
+  await assertDarkAppearance();
+  await page.emulateMedia({ colorScheme: "light" });
+  await assertDarkAppearance();
   await page.getByRole("link", { name: "Namespaces", exact: true }).click();
   await page.getByRole("heading", { name: "Namespaces", exact: true }).waitFor();
-  await assertAppearance(true);
+  await assertDarkAppearance();
   await page.reload();
   await page.getByRole("heading", { name: "Namespaces", exact: true }).waitFor();
-  await assertAppearance(true);
+  await assertDarkAppearance();
 });
 
 test("console debug flag is opt-in and follows Namespace navigation without leaking prior Agent reads", async (t) => {

@@ -339,12 +339,14 @@ attach reviewable screenshots and video to the task and PR.
 ## Review system appearance
 
 In **Pages/Agents → Populated**, switch the browser's emulated
-`prefers-color-scheme` between light and dark without reloading. Check the shell,
-search field, status badges, focus rings, and mobile navigation drawer. Repeat
+`prefers-color-scheme` between light and dark without reloading. The console must
+remain dark. Check the shell, search field, status badges, focus rings, and mobile
+navigation drawer. Repeat
 with **Pages/Sign in → Signed out**, **Invalid credentials**, and **Checking
 session**, and **Pages/Agents → Empty**, **Access denied**, and **Loading**.
 Open **Components/Plugins** to check the modal, selected rows, and tool switches;
-check missing-credential states under **Components/Credentials** in both modes.
+check missing-credential states in **Components/Credentials** under both system
+preferences.
 The production CSS owns the palette; fixtures must not override it. Capture
-screenshots of both appearances and a recording of the live switch after
+screenshots and a recording showing dark mode persists during system changes after
 rebuilding Storybook. These previews do not prove deployment.
