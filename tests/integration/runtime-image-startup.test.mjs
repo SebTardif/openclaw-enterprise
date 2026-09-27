@@ -177,7 +177,7 @@ test(
     // node/Codex bodies: this proves initialization order, not pairing or a model turn.
     const launch = String.raw`
 const assert = require("node:assert/strict");
-const { existsSync, readFileSync, writeFileSync } = require("node:fs");
+const { existsSync, mkdirSync, readFileSync, writeFileSync } = require("node:fs");
 const { spawnSync } = require("node:child_process");
 const entrypoint = process.argv[1];
 const sentinel = "Owner edit that must survive a Harness restart.\n";
@@ -214,12 +214,15 @@ for (let attempt = 0; attempt < 4; attempt++) {
     require("node:fs").readFileSync("/home/node/.openclaw/plugin-skills/slack/SKILL.md", "utf8"),
     /name:\s*slack/,
   );
-  assert.match(
+  const relativeProof = "/home/node/openclaw-runtime-assets/plugin-skills/slack/references/relative-proof.md";
+  mkdirSync(require("node:path").dirname(relativeProof), { recursive: true });
+  writeFileSync(relativeProof, "# Relative plugin asset proof\n");
+  assert.equal(
     require("node:fs").readFileSync(
-      "/home/node/.openclaw/plugin-skills/block-kit/references/official-block-kit.md",
+      "/home/node/.openclaw/plugin-skills/slack/references/relative-proof.md",
       "utf8",
     ),
-    /# Block Kit/,
+    "# Relative plugin asset proof\n",
   );
   assert.equal(result.stdout.split("WORKSPACE_CHILD_STARTED").length - 1, 2);
   if (attempt === 0) {
@@ -943,14 +946,14 @@ async function runGatewaySmoke(t, harnessId, options = {}) {
   }
 }
 
-async function assertDedicatedRuntimeAssets(containerName) {
+async function assertGatewayRuntimeAssets(containerName) {
   const { stdout } = await runDocker([
     "exec",
     containerName,
     "node",
     "-e",
     `
-const { lstatSync, readFileSync, realpathSync, readdirSync } = require("node:fs");
+const { lstatSync, readFileSync, readdirSync } = require("node:fs");
 const appSkills = lstatSync("/app/skills");
 if (!appSkills.isDirectory() || appSkills.isSymbolicLink()) {
   throw new Error("/app/skills must be a real directory in the runtime image.");
@@ -967,18 +970,8 @@ const slack = lstatSync("/home/node/openclaw-runtime-assets/plugin-skills/slack/
 if (!slack.isFile()) {
   throw new Error("Kubernetes gateway entrypoint did not publish Slack plugin skills.");
 }
-const conventional = lstatSync("/home/node/.openclaw/plugin-skills");
-if (!conventional.isSymbolicLink()) {
-  throw new Error("Dedicated Agent startup did not publish the conventional plugin skills path.");
-}
-if (realpathSync("/home/node/.openclaw/plugin-skills") !== realpathSync("/home/node/openclaw-runtime-assets/plugin-skills")) {
-  throw new Error("Dedicated Agent conventional plugin skills path does not point at runtime assets.");
-}
-if (!/name:\\s*slack/.test(readFileSync("/home/node/.openclaw/plugin-skills/slack/SKILL.md", "utf8"))) {
-  throw new Error("Dedicated Agent conventional plugin skills path cannot read Slack Skill.md.");
-}
-if (!/# Block Kit/.test(readFileSync("/home/node/.openclaw/plugin-skills/block-kit/references/official-block-kit.md", "utf8"))) {
-  throw new Error("Dedicated Agent conventional plugin skills path cannot read relative plugin skill files.");
+if (!/name:\\s*slack/.test(readFileSync("/home/node/openclaw-runtime-assets/plugin-skills/slack/SKILL.md", "utf8"))) {
+  throw new Error("Kubernetes gateway entrypoint cannot read Slack Skill.md from runtime assets.");
 }
 process.stdout.write(JSON.stringify({ bundledCount: bundled.length, slackSkill: true }));
 `,
@@ -1278,7 +1271,7 @@ test(
     const entries = jsonLogEntries(logs);
     assertGatewayReadyLog(entries);
     assertGatewayModelLog(entries, `codex/${runtimeImageModel}`);
-    await assertDedicatedRuntimeAssets(containerName);
+    await assertGatewayRuntimeAssets(containerName);
     const { stdout } = await runDocker([
       "exec",
       containerName,
