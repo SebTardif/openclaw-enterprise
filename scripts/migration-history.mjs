@@ -102,7 +102,9 @@ function requireReceiptsMatchEntries(receipts, entries) {
 }
 
 function classifyReceipts(receipts, manifest) {
-  const backendCompletedLength = manifest.entries.length - 1;
+  const backendCompletedLength =
+    manifest.entries.findIndex((entry) => entry.tag === "0031_backend_terminology_compatibility") +
+    1;
   const providerCompleted = manifest.compatibleLineages?.providerCompleted;
   if (providerCompleted !== undefined && receipts.length >= providerCompleted.entries.length) {
     const providerEntries = [

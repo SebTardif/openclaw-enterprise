@@ -250,6 +250,7 @@ export type {
 } from "./state/agent-provisioning.ts";
 
 export const BOOTSTRAP_DEFAULT_NAMESPACE_NAME = "default";
+const repositoryAdmissionId = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 
 export interface ControllerOptions {
   readonly authorize?: (
@@ -361,6 +362,14 @@ export interface UpdateConfigurationInput {
 export interface DeployAgentInput {
   readonly namespaceId: string;
   readonly agentId: string;
+}
+
+export interface AbandonAgentRepositoryCleanupInput {
+  readonly namespaceId: string;
+  readonly agentId: string;
+  readonly admissionIds: readonly string[];
+  readonly reason: string;
+  readonly notes?: string;
 }
 
 export interface ActiveAgentRevisionSelection {
@@ -3433,6 +3442,95 @@ export class OpenClawController {
         actorId: principalId,
       });
       return deleting;
+    });
+  }
+
+  async abandonAgentRepositoryCleanup(
+    principalId: string,
+    input: AbandonAgentRepositoryCleanupInput,
+  ): Promise<readonly Readonly<RepositorySessionAttempt>[]> {
+    if (!isNonEmptyString(input.namespaceId)) {
+      throw new ScopeViolationError("The exact Namespace identity is missing.");
+    }
+    if (!isNonEmptyString(input.agentId)) {
+      throw new ScopeViolationError("The exact Agent identity is missing.");
+    }
+    const admissionIds = Object.freeze([...input.admissionIds]);
+    if (
+      admissionIds.length < 1 ||
+      admissionIds.length > 64 ||
+      new Set(admissionIds).size !== admissionIds.length ||
+      admissionIds.some(
+        (admissionId) => repositoryAdmissionId.exec(admissionId)?.[0] !== admissionId,
+      )
+    ) {
+      throw new ScopeViolationError("The repository cleanup recovery admission IDs are invalid.");
+    }
+    if (!isNonEmptyString(input.reason) || input.reason.length > 512) {
+      throw new ScopeViolationError("The repository cleanup recovery reason is invalid.");
+    }
+    if (
+      input.notes !== undefined &&
+      (!isNonEmptyString(input.notes) || input.notes.length > 1_024)
+    ) {
+      throw new ScopeViolationError("The repository cleanup recovery notes are invalid.");
+    }
+    await this.authorize(principalId, "administer", {
+      kind: "installation",
+      id: this.installation.id,
+    });
+    return this.mutate(async (state) => {
+      await this.lockNamespace(state, input.namespaceId);
+      const agent = await state.agents.lockAgent(input.namespaceId, input.agentId);
+      if (agent === undefined) {
+        throw new ScopeViolationError("The Agent does not belong to the exact Namespace.");
+      }
+      if (agent.status !== "deleting" || agent.desiredRuntimeState !== "stopped") {
+        throw new ResourceConflictError(
+          "Repository cleanup recovery requires a deleting stopped Agent.",
+        );
+      }
+      const abandoned = await state.repositorySessions.abandonCleanupAttempts({
+        namespaceId: input.namespaceId,
+        agentId: input.agentId,
+        admissionIds,
+        updatedAt: this.timestamp(),
+      });
+      if (abandoned.length !== admissionIds.length) {
+        throw new ResourceConflictError(
+          "Repository cleanup recovery did not match every exact admission.",
+        );
+      }
+      await state.audit.append({
+        id: `aud_${crypto.randomUUID()}`,
+        installationId: this.installation.id,
+        namespaceId: input.namespaceId,
+        occurredAt: this.timestamp(),
+        kind: "mutation",
+        actorId: principalId,
+        source: "occ",
+        action: "openclaw.agents.repository_credentials.cleanup.abandon",
+        resource: { kind: "agent", id: input.agentId, namespaceId: input.namespaceId },
+        iamDriverId: this.selectedDriver("iam").id,
+        authorization: {
+          principalId,
+          action: "administer",
+          resource: { kind: "installation", id: this.installation.id },
+        },
+        outcome: "success",
+        details: {
+          reasonCode: "REPOSITORY_CLEANUP_ABANDONED",
+          repositoryCleanupRecovery: {
+            admissionIds: abandoned.map((attempt) => attempt.admissionId),
+            reason: input.reason,
+            deletionWorkerEvidence: "cleanup-pending-after-teardown",
+            providerDisposal: "unknown",
+            riskAcknowledgement: "provider-disposal-unknown",
+            ...(input.notes === undefined ? {} : { notes: input.notes }),
+          },
+        },
+      });
+      return abandoned;
     });
   }
 

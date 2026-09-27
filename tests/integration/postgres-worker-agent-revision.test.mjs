@@ -51,10 +51,14 @@ async function setup(
     ["delete", "agent"],
     ["delete", "secret"],
   ]);
+  const admin = authorizedPrincipal(await state.loadNativeIAMState(), [
+    ["administer", "installation"],
+  ]);
   assert.ok(
     actor,
     "persisted IAM must contain a Principal authorized for Agent lifecycle and Secret cleanup",
   );
+  assert.ok(admin, "persisted IAM must contain an Installation administrator.");
 
   let worker;
   context.after(async () => {
@@ -307,6 +311,7 @@ async function setup(
     installation,
     controller,
     actor,
+    admin,
     namespace,
     observerPool,
     state,
@@ -423,6 +428,9 @@ function repositoryBoundary({ count = 1, deadlineWallMs = Date.now() + 120_000 }
   return {
     driver,
     calls,
+    forgetSession(sessionId) {
+      sessions.delete(sessionId);
+    },
     snapshot: {
       driver: { id: driver.id, implementation: driver.implementation },
       deadlineWallMs,
@@ -1134,18 +1142,25 @@ for (const loss of ["missing", "closed-repair"]) {
         stopped.includes(candidate.id) ? true : undefined,
       );
       if (loss === "missing") {
-        await waitFor("invalidated cleanup to wait for Driver maintenance", async () => {
+        await waitFor("invalidated cleanup to require operator action with backoff", async () => {
           const delayed = await fixture.observerPool.query(
             `SELECT EXTRACT(EPOCH FROM (available_at - updated_at)) * 1000 AS delay_ms
              FROM occ.controller_work
              WHERE revision_id = $1 AND state = 'queued' AND idempotency_key LIKE $2`,
             [candidate.id, `agent_revision:${candidate.id}:repository_cleanup:retire:%`],
           );
-          return Number(delayed.rows[0]?.delay_ms) >=
-            repository.driver.maintenanceIntervalMs - 1_000
-            ? true
-            : undefined;
+          return Number(delayed.rows[0]?.delay_ms) >= 299_000 ? true : undefined;
         });
+        assert.ok(
+          (
+            await fixture.observerPool.query(
+              `SELECT details->>'reasonCode' AS code
+               FROM occ.audit_events
+               WHERE resource_id = $1 AND details->>'reasonCode' = $2`,
+              [candidate.id, "REPOSITORY_CLEANUP_OPERATOR_ACTION_REQUIRED"],
+            )
+          ).rowCount >= 1,
+        );
       }
       await fixture.stop();
       const refusal = await fixture.observerPool.query(
@@ -2678,6 +2693,128 @@ test(
     assert.deepEqual(audit.rows, [
       { outcome: "success", reason_code: "AGENT_DELETED", attempt_count: 2 },
     ]);
+  },
+);
+
+test(
+  "Agent deletion requires explicit admin abandonment after post-teardown repository cleanup loss",
+  requiresPostgres,
+  async (context) => {
+    const repository = repositoryBoundary();
+    const fixture = await setup(context, { repoDriver: repository.driver });
+    const owner = await fixture.agent("delete-repository-cleanup");
+    const revision = await fixture.revision(owner, 1, undefined, repository.snapshot);
+    const retired = [];
+    const runtimeCredentialDeletes = [];
+    await fixture.start({
+      ...fixture.compute,
+      async retireRevision(retiredRevision) {
+        retired.push(retiredRevision.id);
+        return fixture.compute.retireRevision(retiredRevision);
+      },
+      async deleteAgentRuntimeCredentials({ agent }) {
+        runtimeCredentialDeletes.push(agent.id);
+      },
+    });
+    await fixture.work(revision, "succeeded");
+    const [opened] = await repositoryAttempts(fixture, revision);
+    assert.equal(opened.phase, "open");
+    repository.forgetSession(opened.sessionId);
+
+    const deletion = await fixture.requestDeletion(owner);
+    await waitFor("Agent deletion to reach operator-gated repository cleanup", async () => {
+      const status = await fixture.observerPool.query(
+        `SELECT state, deletion_teardown_completed_at IS NOT NULL AS teardown_recorded
+         FROM occ.controller_work WHERE idempotency_key = $1`,
+        [deletion.idempotencyKey],
+      );
+      if (status.rows[0]?.state === "queued" && status.rows[0].teardown_recorded === true) {
+        return status.rows[0];
+      }
+      return undefined;
+    });
+    assert.deepEqual(retired, [revision.id]);
+    assert.deepEqual(runtimeCredentialDeletes, [owner.id]);
+    const retainedOwner = await fixture.state.read((view) =>
+      view.agents.findAgent(fixture.namespace.id, owner.id),
+    );
+    assert.equal(retainedOwner?.status, "deleting");
+    assert.equal(retainedOwner?.desiredRuntimeState, "stopped");
+    const [invalidated] = await repositoryAttempts(fixture, revision);
+    assert.equal(invalidated.phase, "invalidated");
+    assert.equal(invalidated.liveRevisionId, revision.id);
+    const nonAdminPrincipalId = `prn_${randomUUID()}`;
+    await fixture.observerPool.query(
+      `INSERT INTO occ.iam_identities (id, kind, issuer, subject)
+       VALUES ($1, 'principal', 'test', $2)`,
+      [nonAdminPrincipalId, `repository-cleanup-${randomUUID()}`],
+    );
+
+    await assert.rejects(
+      fixture.controller.abandonAgentRepositoryCleanup(nonAdminPrincipalId, {
+        namespaceId: fixture.namespace.id,
+        agentId: owner.id,
+        admissionIds: [invalidated.admissionId],
+        reason: "operator verified exact teardown but cannot recover provider inventory",
+      }),
+      { name: "AuthorizationDeniedError" },
+    );
+    await assert.rejects(
+      fixture.controller.abandonAgentRepositoryCleanup(fixture.admin.id, {
+        namespaceId: fixture.namespace.id,
+        agentId: owner.id,
+        admissionIds: [`missing-${invalidated.admissionId}`],
+        reason: "operator verified exact teardown but cannot recover provider inventory",
+      }),
+      { name: "ScopeViolationError" },
+    );
+
+    const abandoned = await fixture.controller.abandonAgentRepositoryCleanup(fixture.admin.id, {
+      namespaceId: fixture.namespace.id,
+      agentId: owner.id,
+      admissionIds: [invalidated.admissionId],
+      reason: "operator verified exact teardown but cannot recover provider inventory",
+    });
+    assert.equal(abandoned.length, 1);
+    assert.equal(abandoned[0].phase, "abandoned");
+    assert.equal(abandoned[0].liveRevisionId, null);
+
+    await fixture.observerPool.query(
+      "UPDATE occ.controller_work SET available_at = clock_timestamp() WHERE idempotency_key = $1",
+      [deletion.idempotencyKey],
+    );
+    await waitFor("Agent deletion to finalize after explicit cleanup abandonment", async () => {
+      const deleted = await fixture.state.read((view) =>
+        view.agents.findAgent(fixture.namespace.id, owner.id),
+      );
+      return deleted === undefined ? true : undefined;
+    });
+    const [retainedAttempt, cleanupAudit, deletionAudit] = await Promise.all([
+      fixture.state.read((view) => view.repositorySessions.findAttempt(invalidated.admissionId)),
+      fixture.observerPool.query(
+        `SELECT details->'repositoryCleanupRecovery' AS recovery
+         FROM occ.audit_events
+         WHERE namespace_id = $1
+           AND resource_id = $2
+           AND action = 'openclaw.agents.repository_credentials.cleanup.abandon'`,
+        [fixture.namespace.id, owner.id],
+      ),
+      fixture.observerPool.query(
+        `SELECT details->>'reasonCode' AS reason_code
+         FROM occ.audit_events
+         WHERE namespace_id = $1
+           AND resource_id = $2
+           AND action = 'openclaw.agents.lifecycle.delete'
+           AND outcome = 'success'`,
+        [fixture.namespace.id, owner.id],
+      ),
+    ]);
+    assert.equal(retainedAttempt.phase, "abandoned");
+    assert.equal(retainedAttempt.liveRevisionId, null);
+    assert.equal(cleanupAudit.rowCount, 1);
+    assert.equal(cleanupAudit.rows[0].recovery.providerDisposal, "unknown");
+    assert.deepEqual(cleanupAudit.rows[0].recovery.admissionIds, [invalidated.admissionId]);
+    assert.deepEqual(deletionAudit.rows, [{ reason_code: "AGENT_DELETED" }]);
   },
 );
 

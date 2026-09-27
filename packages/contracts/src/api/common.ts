@@ -21,6 +21,11 @@ export const ConfigurationGeneration = Type.Integer({
 });
 export const AgentId = Type.String({ pattern: `^agt_${UUID_V4}$` });
 export const RevisionId = Type.String({ pattern: `^rev_${UUID_V4}$` });
+export const RepositoryAdmissionId = Type.String({
+  minLength: 1,
+  maxLength: 128,
+  pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+});
 export const AuditId = Type.String({ pattern: `^aud_${UUID_V4}$` });
 export const RequestId = Type.String({ pattern: `^req_${UUID_V4}$` });
 export const AgentProvisioningWorkId = Type.String({
@@ -226,6 +231,41 @@ export const UpdateSecretBody = Type.Object(
 );
 
 export const AgentRuntimeCredentialsBody = Type.Object({}, { additionalProperties: false });
+
+export const AbandonAgentRepositoryCleanupBody = Type.Object(
+  {
+    admissionIds: Type.Array(RepositoryAdmissionId, {
+      minItems: 1,
+      maxItems: 64,
+      uniqueItems: true,
+      description:
+        "Exact repository credential admission IDs to classify as abandoned for this deleting Agent.",
+    }),
+    reason: Type.String({
+      minLength: 1,
+      maxLength: 512,
+      pattern: "^(?=.*\\S)[^\\u0000]*$",
+      description:
+        "Operator reason recorded with the recovery audit event. Do not include secrets.",
+    }),
+    evidence: Type.Object(
+      {
+        deletionWorkerEvidence: Type.Literal("cleanup-pending-after-teardown"),
+        providerDisposal: Type.Literal("unknown"),
+        riskAcknowledgement: Type.Literal("provider-disposal-unknown"),
+        notes: Type.Optional(
+          Type.String({ minLength: 1, maxLength: 1024, pattern: "^(?=.*\\S)[^\\u0000]*$" }),
+        ),
+      },
+      {
+        additionalProperties: false,
+        description:
+          "Explicit acknowledgement that OCC can finalize local Agent deletion while provider cleanup remains unknown.",
+      },
+    ),
+  },
+  { additionalProperties: false },
+);
 
 export const DiscoverAgentModelsBody = Type.Object(
   {

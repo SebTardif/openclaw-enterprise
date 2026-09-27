@@ -48,6 +48,8 @@ export interface ControllerWork {
   readonly completedAt?: Date;
   readonly reasonCode?: string;
   readonly resultData?: Readonly<Record<string, unknown>>;
+  readonly deletionTeardownCompletedAt?: Date;
+  readonly deletionTeardownClaimToken?: string;
   readonly createdAt: Date;
   readonly updatedAt: Date;
 }

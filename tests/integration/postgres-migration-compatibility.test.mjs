@@ -1015,7 +1015,7 @@ async function assertCompletedHistory(db, previous = []) {
   const providerEntries = manifest.compatibleLineages.providerCompleted.entries;
   const expectedEntries =
     previous.length === providerEntries.length && receiptsMatchEntries(previous, providerEntries)
-      ? [...providerEntries, manifest.entries.at(-1)]
+      ? [...providerEntries, ...manifest.entries.slice(providerEntries.length)]
       : manifest.entries;
   assert.deepEqual(
     receipts.map(({ hash, created_at }) => [hash, Number(created_at)]),
@@ -1035,6 +1035,7 @@ async function assertCompletedHistory(db, previous = []) {
     WHERE n.nspname='occ' AND p.prosecdef ORDER BY identity`)
     ).rows,
     [
+      ["occ.abandon_repository_cleanup(text,text,text[],timestamp with time zone)", true],
       ["occ.finalize_agent_deletion(text,text,text,uuid)", true],
       ["occ.validate_access_binding_scope()", false],
       ["occ.validate_group_membership()", false],
@@ -1329,7 +1330,7 @@ async function canonicalData(db) {
       table === "agents"
         ? ["repository_bindings"]
         : table === "controller_work"
-          ? ["work_kind"]
+          ? ["work_kind", "deletion_teardown_claim_token", "deletion_teardown_completed_at"]
           : [];
     result[table] = (
       await db.app.query(
@@ -1385,7 +1386,7 @@ test(
       [28, "repositoryRetention"],
       [29, "workspaceSetup"],
       [30, "agentProvisioning"],
-      [31, "backendCompleted"],
+      [32, "backendCompleted"],
     ]) {
       await context.test(`populated canonical ${history}`, async (child) => {
         const db = await historyDatabase(child, fixture, "main", { prefix });
@@ -1656,7 +1657,7 @@ test(
       [28, "repositoryRetention"],
       [29, "workspaceSetup"],
       [30, "agentProvisioning"],
-      [31, "backendCompleted"],
+      [32, "backendCompleted"],
     ]) {
       await context.test(`prefix ${prefix} transaction`, async (child) => {
         const db = await historyDatabase(child, fixture, "rollback", { prefix });
@@ -1960,7 +1961,7 @@ test(
         "INSERT INTO occ.iam_identities(id,kind,issuer,subject) VALUES($1,'principal','migration-fixture',$1)",
         [principal],
       );
-      for (const [label, operation] of [
+      const operations = [
         [
           "finalizer",
           () =>
@@ -1987,7 +1988,25 @@ test(
               [`binding-${phase}-${suffix}`, principal, role],
             ),
         ],
-      ]) {
+      ];
+      if (!vulnerable) {
+        operations.unshift([
+          "cleanup-abandonment",
+          () =>
+            assert.rejects(
+              db.app.query(
+                "SELECT * FROM occ.abandon_repository_cleanup('absent-namespace','absent-agent',ARRAY['admission-fixture']::text[],$1)",
+                [new Date()],
+              ),
+              (error) =>
+                error !== null &&
+                typeof error === "object" &&
+                "code" in error &&
+                (error.code === "23514" || error.code === "42501"),
+            ),
+        ]);
+      }
+      for (const [label, operation] of operations) {
         const before = await count();
         await operation();
         const after = await count();

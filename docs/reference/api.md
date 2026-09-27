@@ -46,7 +46,7 @@ Each operation lists its supported status codes.
 | [Backends](#backends) | 1 operation |
 | [Installation](#installation) | 3 operations |
 | [Namespaces](#namespaces) | 4 operations |
-| [Agents](#agents) | 20 operations |
+| [Agents](#agents) | 21 operations |
 | [Agent deployments](#agent-deployments) | 1 operation |
 | [Agent revisions](#agent-revisions) | 2 operations |
 | [Configurations](#configurations) | 4 operations |
@@ -736,6 +736,7 @@ Get an exact Installation-owned Namespace
 | [`PATCH /namespaces/{namespaceId}/agents/{agentId}`](#patch-namespacesnamespaceidagentsagentid) | Replace an exact Namespace-owned Agent's editable draft |
 | [`POST /namespaces/{namespaceId}/agents/{agentId}/deploy`](#post-namespacesnamespaceidagentsagentiddeploy) | Admit an immutable revision from the Agent's saved draft |
 | [`GET /namespaces/{namespaceId}/agents/{agentId}/native-admin`](#get-namespacesnamespaceidagentsagentidnativeadmin) | Resolve native admin UI launch availability for one Agent |
+| [`POST /namespaces/{namespaceId}/agents/{agentId}/repository-credentials/cleanup/abandon`](#post-namespacesnamespaceidagentsagentidrepositorycredentialscleanupabandon) | Explicitly classify exact lost repository credential cleanup attempts as abandoned |
 | [`GET /namespaces/{namespaceId}/agents/{agentId}/runtime-credentials`](#get-namespacesnamespaceidagentsagentidruntimecredentials) | Get metadata for one Agent's provisioned runtime credentials |
 | [`POST /namespaces/{namespaceId}/agents/{agentId}/runtime-credentials`](#post-namespacesnamespaceidagentsagentidruntimecredentials) | Provision initial runtime credentials for one undeployed Agent |
 | [`GET /namespaces/{namespaceId}/agents/{agentId}/runtime-images`](#get-namespacesnamespaceidagentsagentidruntimeimages) | Read observed images and source commits for an Agent's active runtime |
@@ -1646,6 +1647,69 @@ Resolve native admin UI launch availability for one Agent
 | `data.url` | `string (uri)` | No | — |
 | `meta` | `object` | Yes | — |
 | `meta.requestId` | `string` | Yes | — |
+
+#### `POST /namespaces/{namespaceId}/agents/{agentId}/repository-credentials/cleanup/abandon`
+
+<span id="post-namespacesnamespaceidagentsagentidrepositorycredentialscleanupabandon"></span>
+
+Explicitly classify exact lost repository credential cleanup attempts as abandoned
+
+**Operation ID:** `abandonAgentRepositoryCleanup`
+
+**Permissions:** Requires administer permission on the requested Installation.
+
+| Action | Resource | Scope |
+| --- | --- | --- |
+| `administer` | `installation` | `requested` |
+
+##### Parameters
+
+| Name | In | Type | Required | Constraints |
+| --- | --- | --- | --- | --- |
+| `namespaceId` | path | `string` | Yes | pattern: `^ns_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `agentId` | path | `string` | Yes | pattern: `^agt_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+
+##### Request body
+
+**Required:** Yes
+
+**Content type:** `application/json`
+
+| Field | Type | Required | Constraints |
+| --- | --- | --- | --- |
+| `admissionIds` | `array<string>` | Yes | min items: 1; max items: 64; Exact repository credential admission IDs to classify as abandoned for this deleting Agent. |
+| `evidence` | `object` | Yes | Explicit acknowledgement that OCC can finalize local Agent deletion while provider cleanup remains unknown. |
+| `evidence.deletionWorkerEvidence` | `"cleanup-pending-after-teardown"` | Yes | — |
+| `evidence.notes` | `string` | No | min length: 1; max length: 1024; pattern: `^(?=.*\S)[^\u0000]*$` |
+| `evidence.providerDisposal` | `"unknown"` | Yes | — |
+| `evidence.riskAcknowledgement` | `"provider-disposal-unknown"` | Yes | — |
+| `reason` | `string` | Yes | min length: 1; max length: 512; pattern: `^(?=.*\S)[^\u0000]*$`; Operator reason recorded with the recovery audit event. Do not include secrets. |
+
+##### Responses
+
+| Status | Meaning |
+| --- | --- |
+| `200` | OK |
+| `400` | Bad Request |
+| `401` | Unauthorized |
+| `403` | Forbidden |
+| `404` | Not Found |
+| `409` | Conflict |
+| `500` | Internal Server Error |
+| `503` | Service Unavailable |
+
+**`200` response body:** `application/json`
+
+| Field | Type | Required | Constraints |
+| --- | --- | --- | --- |
+| `data` | `object` | Yes | — |
+| `data.abandonedAdmissionIds` | `array<string>` | Yes | min items: 1; max items: 64 |
+| `data.agentId` | `string` | Yes | pattern: `^agt_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `data.deletionFinalization` | `"pending-worker-retry"` | Yes | — |
+| `data.namespaceId` | `string` | Yes | pattern: `^ns_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
+| `data.providerDisposal` | `"unknown"` | Yes | — |
+| `meta` | `object` | Yes | — |
+| `meta.requestId` | `string` | Yes | pattern: `^req_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$` |
 
 #### `GET /namespaces/{namespaceId}/agents/{agentId}/runtime-credentials`
 

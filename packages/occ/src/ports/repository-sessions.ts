@@ -6,7 +6,8 @@ export interface RepositoryRevisionOwner {
   readonly revisionId: string;
 }
 
-export type RepositorySessionPhase = "opening" | "open" | "closing" | "disposed" | "invalidated";
+export type RepositorySessionPhase =
+  "opening" | "open" | "closing" | "disposed" | "invalidated" | "abandoned";
 
 /** Safe recovery identifiers only; gateway bearer material never belongs in State. */
 export interface RepositorySessionAttempt extends RepositoryRevisionOwner {
@@ -55,4 +56,11 @@ export interface RepositorySessionRepository extends RepositorySessionReadReposi
     readonly sessionId?: string;
     readonly updatedAt: string;
   }): Promise<Readonly<RepositorySessionAttempt> | undefined>;
+  /** Explicit installation-admin recovery for lost invalidated sessions on a deleting Agent. */
+  abandonCleanupAttempts(input: {
+    readonly namespaceId: string;
+    readonly agentId: string;
+    readonly admissionIds: readonly string[];
+    readonly updatedAt: string;
+  }): Promise<readonly Readonly<RepositorySessionAttempt>[]>;
 }

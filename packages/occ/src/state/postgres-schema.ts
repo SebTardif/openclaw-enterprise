@@ -563,7 +563,7 @@ export const repositorySessionAttempts = occSchema.table(
     check(
       "repository_session_attempts_live_revision_valid",
       sql`(${table.liveRevisionId} IS NOT NULL AND ${table.liveRevisionId} = ${table.revisionId})
-        OR (${table.liveRevisionId} IS NULL AND ${table.phase} = 'disposed')`,
+        OR (${table.liveRevisionId} IS NULL AND ${table.phase} IN ('disposed', 'abandoned'))`,
     ),
     check(
       "repository_session_attempts_cleanup_context_valid",
@@ -608,13 +608,13 @@ export const repositorySessionAttempts = occSchema.table(
     ),
     check(
       "repository_session_attempts_phase_valid",
-      sql`${table.phase} IN ('opening', 'open', 'closing', 'disposed', 'invalidated')`,
+      sql`${table.phase} IN ('opening', 'open', 'closing', 'disposed', 'invalidated', 'abandoned')`,
     ),
     check(
       "repository_session_attempts_phase_session_valid",
       sql`(${table.phase} = 'opening' AND ${table.sessionId} IS NULL)
         OR (${table.phase} IN ('open', 'disposed') AND ${table.sessionId} IS NOT NULL)
-        OR ${table.phase} IN ('closing', 'invalidated')`,
+        OR ${table.phase} IN ('closing', 'invalidated', 'abandoned')`,
     ),
     check(
       "repository_session_attempts_timestamps_valid",
@@ -836,6 +836,10 @@ export const controllerWork = occSchema.table(
     completedAt: timestamp("completed_at", { withTimezone: true }),
     reasonCode: text("reason_code"),
     resultData: jsonb("result_data").$type<Record<string, unknown>>(),
+    deletionTeardownCompletedAt: timestamp("deletion_teardown_completed_at", {
+      withTimezone: true,
+    }),
+    deletionTeardownClaimToken: uuid("deletion_teardown_claim_token"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
   },
@@ -907,6 +911,21 @@ export const controllerWork = occSchema.table(
           AND ${table.completedAt} IS NULL
           AND ${table.reasonCode} IS NULL
           AND ${table.resultData} IS NULL)
+      )`,
+    ),
+    check(
+      "controller_work_deletion_teardown_receipt_valid",
+      sql`(
+        (${table.deletionTeardownCompletedAt} IS NULL AND ${table.deletionTeardownClaimToken} IS NULL)
+        OR (
+          ${table.workKind} = 'lifecycle'
+          AND ${table.revisionId} IS NULL
+          AND ${table.agentId} IS NOT NULL
+          AND ${table.namespaceTarget} IS NULL
+          AND ${table.agentTarget} = 'deleted'
+          AND ${table.deletionTeardownCompletedAt} IS NOT NULL
+          AND ${table.deletionTeardownClaimToken} IS NOT NULL
+        )
       )`,
     ),
     check(

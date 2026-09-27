@@ -17,6 +17,7 @@ import {
   NamespaceId,
   PermissionActionSchema,
   BackendId,
+  RepositoryAdmissionId,
   RepositoryBindingSelectionSchema,
   RepositoryBindingSelectionsSchema,
   RevisionId,
@@ -521,6 +522,22 @@ export const AgentRuntimeCredentialResponse = Type.Object(
   { $id: "AgentRuntimeCredentialResponse", additionalProperties: false },
 );
 
+export const AgentRepositoryCleanupRecoverySchema = Type.Object(
+  {
+    namespaceId: NamespaceId,
+    agentId: AgentId,
+    abandonedAdmissionIds: Type.Array(RepositoryAdmissionId, { minItems: 1, maxItems: 64 }),
+    providerDisposal: Type.Literal("unknown"),
+    deletionFinalization: Type.Literal("pending-worker-retry"),
+  },
+  { additionalProperties: false },
+);
+
+export const AgentRepositoryCleanupRecoveryResponse = Type.Object(
+  { data: AgentRepositoryCleanupRecoverySchema, meta: Meta },
+  { $id: "AgentRepositoryCleanupRecoveryResponse", additionalProperties: false },
+);
+
 export const IAMRoleResponse = Type.Object(
   { data: IAMRoleSchema, meta: Meta },
   { additionalProperties: false },
@@ -740,6 +757,9 @@ export type AgentWire = Type.Static<typeof AgentSchema>;
 export type AgentRuntimeCredentialStatusWire = Type.Static<
   typeof AgentRuntimeCredentialStatusSchema
 >;
+export type AgentRepositoryCleanupRecoveryWire = Type.Static<
+  typeof AgentRepositoryCleanupRecoverySchema
+>;
 export type AgentProvisioningStatusWire = Type.Static<typeof AgentProvisioningStatusSchema>;
 export type IAMPermissionWire = Type.Static<typeof IAMPermissionSchema>;
 export type IAMRoleWire = Type.Static<typeof IAMRoleSchema>;
@@ -759,6 +779,9 @@ export type ServiceAccountResponse = Type.Static<typeof ServiceAccountResponse>;
 export type ServiceAccountListResponse = Type.Static<typeof ServiceAccountListResponse>;
 export type AgentResponse = Type.Static<typeof AgentResponse>;
 export type AgentRuntimeCredentialResponse = Type.Static<typeof AgentRuntimeCredentialResponse>;
+export type AgentRepositoryCleanupRecoveryResponse = Type.Static<
+  typeof AgentRepositoryCleanupRecoveryResponse
+>;
 export type IAMRoleResponse = Type.Static<typeof IAMRoleResponse>;
 export type IAMRoleListResponse = Type.Static<typeof IAMRoleListResponse>;
 export type IAMAccessBindingResponse = Type.Static<typeof IAMAccessBindingResponse>;

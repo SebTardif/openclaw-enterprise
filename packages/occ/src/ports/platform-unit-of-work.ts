@@ -97,6 +97,7 @@ export function bindPlatformUnitOfWork(
       "listNamespaceAttempts",
       "createAttempt",
       "advanceAttempt",
+      "abandonCleanupAttempts",
     ]),
     provisioning: bindRepository(repositories.provisioning, lifetime, [
       "findByWorkId",

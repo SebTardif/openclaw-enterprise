@@ -6247,6 +6247,204 @@
         ]
       }
     },
+    "/namespaces/{namespaceId}/agents/{agentId}/repository-credentials/cleanup/abandon": {
+      "post": {
+        "description": "Requires administer permission on the requested Installation.",
+        "operationId": "abandonAgentRepositoryCleanup",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "namespaceId",
+            "required": true,
+            "schema": {
+              "pattern": "^ns_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "agentId",
+            "required": true,
+            "schema": {
+              "pattern": "^agt_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "admissionIds": {
+                    "description": "Exact repository credential admission IDs to classify as abandoned for this deleting Agent.",
+                    "items": {
+                      "maxLength": 128,
+                      "minLength": 1,
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+                      "type": "string"
+                    },
+                    "maxItems": 64,
+                    "minItems": 1,
+                    "type": "array",
+                    "uniqueItems": true
+                  },
+                  "evidence": {
+                    "additionalProperties": false,
+                    "description": "Explicit acknowledgement that OCC can finalize local Agent deletion while provider cleanup remains unknown.",
+                    "properties": {
+                      "deletionWorkerEvidence": {
+                        "const": "cleanup-pending-after-teardown",
+                        "type": "string"
+                      },
+                      "notes": {
+                        "maxLength": 1024,
+                        "minLength": 1,
+                        "pattern": "^(?=.*\\S)[^\\u0000]*$",
+                        "type": "string"
+                      },
+                      "providerDisposal": { "const": "unknown", "type": "string" },
+                      "riskAcknowledgement": {
+                        "const": "provider-disposal-unknown",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "deletionWorkerEvidence",
+                      "providerDisposal",
+                      "riskAcknowledgement"
+                    ],
+                    "type": "object"
+                  },
+                  "reason": {
+                    "description": "Operator reason recorded with the recovery audit event. Do not include secrets.",
+                    "maxLength": 512,
+                    "minLength": 1,
+                    "pattern": "^(?=.*\\S)[^\\u0000]*$",
+                    "type": "string"
+                  }
+                },
+                "required": ["admissionIds", "reason", "evidence"],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "data": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "abandonedAdmissionIds": {
+                          "items": {
+                            "maxLength": 128,
+                            "minLength": 1,
+                            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+                            "type": "string"
+                          },
+                          "maxItems": 64,
+                          "minItems": 1,
+                          "type": "array"
+                        },
+                        "agentId": {
+                          "pattern": "^agt_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                          "type": "string"
+                        },
+                        "deletionFinalization": {
+                          "const": "pending-worker-retry",
+                          "type": "string"
+                        },
+                        "namespaceId": {
+                          "pattern": "^ns_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                          "type": "string"
+                        },
+                        "providerDisposal": { "const": "unknown", "type": "string" }
+                      },
+                      "required": [
+                        "namespaceId",
+                        "agentId",
+                        "abandonedAdmissionIds",
+                        "providerDisposal",
+                        "deletionFinalization"
+                      ],
+                      "type": "object"
+                    },
+                    "meta": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "requestId": {
+                          "pattern": "^req_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                          "type": "string"
+                        }
+                      },
+                      "required": ["requestId"],
+                      "type": "object"
+                    }
+                  },
+                  "required": ["data", "meta"],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Default Response"
+          },
+          "400": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-5" } }
+            },
+            "description": "Default Response"
+          },
+          "401": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-5" } }
+            },
+            "description": "Default Response"
+          },
+          "403": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-5" } }
+            },
+            "description": "Default Response"
+          },
+          "404": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-5" } }
+            },
+            "description": "Default Response"
+          },
+          "409": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-5" } }
+            },
+            "description": "Default Response"
+          },
+          "500": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-5" } }
+            },
+            "description": "Default Response"
+          },
+          "503": {
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/def-5" } }
+            },
+            "description": "Default Response"
+          }
+        },
+        "summary": "Explicitly classify exact lost repository credential cleanup attempts as abandoned",
+        "tags": ["Agents"],
+        "x-openclaw-permissions": [
+          { "action": "administer", "resourceKind": "installation", "scope": "requested" }
+        ]
+      }
+    },
     "/namespaces/{namespaceId}/agents/{agentId}/revisions": {
       "get": {
         "description": "Requires read permission on the requested Agent. Only AgentRevision resources with individual read permission are returned.",

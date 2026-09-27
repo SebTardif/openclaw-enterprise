@@ -306,9 +306,15 @@ attempts, then retires Compute even while service cleanup is pending. Deleted-Ag
 Work covers only its exact owner and admitted revisions; the same boundary governs failed and stale Work transfer.
 `PostgresWorkQueue.completeAgentDeletion` calls `occ.finalize_agent_deletion` under
 the current claim. The function locks Namespace, Agent and attempts and returns a
-distinct pending outcome unless every attempt is disposed. The worker defers that
-outcome without consuming its retry budget. Once settled, the finalizer detaches
-live revision pointers, removes live rows and records deletion atomically.
+distinct pending outcome unless every attempt is `disposed` or explicitly
+`abandoned`. Invalidated attempts defer with
+`REPOSITORY_CLEANUP_OPERATOR_ACTION_REQUIRED` and a five-minute minimum backoff.
+The installation-admin recovery route can abandon only exact invalidated
+admission IDs on a deleting stopped Agent after pending deletion Work and worker
+cleanup evidence already exist. It stores an attributable audit event, preserves
+cleanup context, and records provider disposal as unknown. Once attempts are
+settled or abandoned, the finalizer detaches live revision pointers, removes live
+rows and records deletion atomically.
 
 Compute retirement waits for owned Pods to stop before removing their material.
 It preserves Secrets referenced by actual Pods and current Deployments, and

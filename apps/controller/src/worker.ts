@@ -389,6 +389,18 @@ export class ControllerWorker {
   private lastHealthAt = 0;
   private pendingHealth: Promise<void> | undefined;
 
+  private repositoryCleanupDefer(attempts: readonly { readonly phase: string }[]): {
+    readonly code: string;
+    readonly delayMs?: number;
+  } {
+    return attempts.some((attempt) => attempt.phase === "invalidated")
+      ? {
+          code: "REPOSITORY_CLEANUP_OPERATOR_ACTION_REQUIRED",
+          delayMs: Math.max(this.repositoryCleanupRetryMs, 300_000),
+        }
+      : { code: "REPOSITORY_CLEANUP_PENDING" };
+  }
+
   constructor(options: ControllerWorkerOptions) {
     this.metrics = options.metrics;
     this.mode = options.mode ?? "development";
@@ -973,6 +985,7 @@ export class ControllerWorker {
       }
       complete = false;
     }
+    let pendingCode = "REPOSITORY_CLEANUP_PENDING";
     await this.state.transactWithQueue(async (unit, queue) => {
       if ((await queue.heartbeat(claim)) === undefined) {
         throw new WorkClaimLostError();
@@ -990,12 +1003,12 @@ export class ControllerWorker {
       if (complete) {
         await queue.complete(claim);
       } else {
+        const pending = this.repositoryCleanupDefer(attempts);
+        pendingCode = pending.code;
         await queue.defer(
           claim,
-          { code: "REPOSITORY_CLEANUP_PENDING" },
-          attempts.some((attempt) => attempt.phase === "invalidated")
-            ? { delayMs: this.repositoryCleanupRetryMs }
-            : undefined,
+          { code: pending.code },
+          pending.delayMs === undefined ? {} : { delayMs: pending.delayMs },
         );
       }
     }, this.queueOptions);
@@ -1006,7 +1019,7 @@ export class ControllerWorker {
       agentId: claim.agentId,
       revisionId: claim.revisionId,
       outcome: complete ? "success" : "pending",
-      code: complete ? "REPOSITORY_CLEANUP_COMPLETE" : "REPOSITORY_CLEANUP_PENDING",
+      code: complete ? "REPOSITORY_CLEANUP_COMPLETE" : pendingCode,
     });
   }
 
@@ -1436,18 +1449,30 @@ export class ControllerWorker {
       if (claim.agentId === undefined) {
         throw new Error("The worker Agent deletion context is unavailable.");
       }
-      const completed = await this.state.transactWithQueue(async (_unit, queue) => {
+      const completed = await this.state.transactWithQueue(async (unit, queue) => {
         const completed = await queue.completeAgentDeletion(
           claim,
           claim.namespaceId,
           claim.agentId!,
         );
         if (completed === "cleanup-pending") {
-          await queue.defer(claim, { code: "REPOSITORY_CLEANUP_PENDING" });
+          const attempts = (
+            await unit.repositorySessions.listNamespaceAttempts(claim.namespaceId)
+          ).filter((attempt) => attempt.agentId === claim.agentId);
+          const pending = this.repositoryCleanupDefer(attempts);
+          await queue.defer(
+            claim,
+            { code: pending.code },
+            pending.delayMs === undefined ? {} : { delayMs: pending.delayMs },
+          );
+          return pending.code;
         }
         return completed;
       }, this.queueOptions);
-      if (completed === "cleanup-pending") {
+      if (
+        completed === "REPOSITORY_CLEANUP_PENDING" ||
+        completed === "REPOSITORY_CLEANUP_OPERATOR_ACTION_REQUIRED"
+      ) {
         this.passOutcome = "pending";
         this.emit({
           event: "worker.completed",
@@ -1455,7 +1480,7 @@ export class ControllerWorker {
           namespaceId: claim.namespaceId,
           agentId: claim.agentId,
           outcome: "pending",
-          code: "REPOSITORY_CLEANUP_PENDING",
+          code: completed,
         });
         return;
       }

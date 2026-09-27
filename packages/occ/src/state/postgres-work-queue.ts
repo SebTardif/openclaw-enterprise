@@ -76,6 +76,8 @@ interface WorkRow {
   readonly completed_at: Date | string | null;
   readonly reason_code: string | null;
   readonly result_data: Record<string, unknown> | null;
+  readonly deletion_teardown_completed_at: Date | string | null;
+  readonly deletion_teardown_claim_token: string | null;
   readonly created_at: Date | string;
   readonly updated_at: Date | string;
 }
@@ -311,6 +313,12 @@ function asWork(value: unknown): ControllerWork {
     ...(row.completed_at === null ? {} : { completedAt: asDate(row.completed_at) }),
     ...(row.reason_code === null ? {} : { reasonCode: row.reason_code }),
     ...(row.result_data === null ? {} : { resultData: Object.freeze({ ...row.result_data }) }),
+    ...(row.deletion_teardown_completed_at === null
+      ? {}
+      : { deletionTeardownCompletedAt: asDate(row.deletion_teardown_completed_at) }),
+    ...(row.deletion_teardown_claim_token === null
+      ? {}
+      : { deletionTeardownClaimToken: row.deletion_teardown_claim_token }),
     createdAt: asDate(row.created_at),
     updatedAt: asDate(row.updated_at),
   });

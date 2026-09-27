@@ -257,6 +257,14 @@
       "tag": "0031_backend_terminology_compatibility",
       "breakpoints": true,
       "sha256": "e123912bb4116b1b1ecbccbce0a75d52c502e77971e8a7c93ec9dde59689a1b6"
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1787000000032,
+      "tag": "0032_repository_cleanup_abandonment",
+      "breakpoints": true,
+      "sha256": "cbb8ba9ecd0747deb64148cea49d489cdf3d2a1279009cd3250fc2dc173732b4"
     }
   ],
   "initialSchemaStates": {
@@ -284,7 +292,7 @@
     "main": "bd490d16dd23ec1ea722bb370155e9454fb52187bd2b16cd8a0fe277e3e41bde",
     "repositoryCredentials": "5f9359057412199ea7a5659bdedbef664fb6da7bcd99d7a552f01a5782b904ea",
     "workspaceSetup": "3d7801c345eea875fb79adba4e04a4e2b24bad49ffe6ada62cc58117c5cce134",
-    "completed": "a2ba6fc82fbf0047cea491efad4a9e58eacaed7c29ce8528accff331569c51dd",
+    "completed": "35a4b949d908909e3c366fb66b3abb69adda15e9838fb3a71e36bac2248ba000",
     "repositoryRetention": "a66448129d9ae2adf076f1d7887d3c7151cdc68f635c6fac7984d4254604d074",
     "agentProvisioning": "baac9e369ace8610f96948c1a930e6387431b1d0a33cefa3893765e52f8f7a52",
     "backendCompleted": "a2ba6fc82fbf0047cea491efad4a9e58eacaed7c29ce8528accff331569c51dd",

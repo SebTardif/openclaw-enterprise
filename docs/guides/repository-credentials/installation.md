@@ -227,3 +227,36 @@ revision. That deployment does not settle old cleanup or replay repository
 operations. See [restart and cleanup limits](../../reference/repository-credentials.md#repo-driver-contract).
 Updating policy requires a new immutable registry ConfigMap and consistent
 selection by all three consumers; existing admitted grants are not silently widened.
+
+## Recover lost cleanup inventory
+
+Use explicit recovery only after the Agent is already deleting and stopped, the
+worker has recorded cleanup-pending evidence, and external teardown evidence
+shows no exact provider session can be recovered. Authenticate as an Installation
+administrator and submit only the exact invalidated admission IDs:
+
+```http
+POST /namespaces/{namespaceId}/agents/{agentId}/repository-credentials/cleanup/abandon
+```
+
+```json
+{
+  "admissionIds": ["admission-id"],
+  "reason": "operator evidence summary",
+  "evidence": {
+    "deletionWorkerEvidence": "cleanup-pending-after-teardown",
+    "providerDisposal": "unknown",
+    "riskAcknowledgement": "provider-disposal-unknown"
+  }
+}
+```
+
+The operation records attributable audit evidence and lets the normal deletion
+worker retry finalize the Agent. It does not mark credentials disposed, recover
+bearers, revoke provider tokens, replace repository authority, or replay Git
+operations. Because the worker Pod also hosts the credential-service sidecar, a
+rollout can interrupt other in-memory sessions; schedule maintenance and drain or
+stop active repository Agents before deploying this recovery path. Every
+controller and worker must be running the recovery-aware version before you
+invoke the endpoint, and rollback after an `abandoned` attempt requires rolling
+forward again before that Agent's deletion can finish.

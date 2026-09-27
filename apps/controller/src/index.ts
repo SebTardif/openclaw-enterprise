@@ -351,6 +351,9 @@ function operationTarget(
   if (operation.operationId === "createNamespace") {
     return { kind: "namespace", id: installationId };
   }
+  if (operation.operationId === "abandonAgentRepositoryCleanup") {
+    return { kind: "installation", id: installationId };
+  }
   if (operation.resourceKind === "preset" && namespaceId) {
     return { kind: "preset", id: presetId ?? namespaceId, namespaceId };
   }
@@ -2270,6 +2273,46 @@ export function createFastifyApp(options: ControllerAppOptions): FastifyInstance
         return clientAgent(deleting);
       });
       reply.status(202).send({ data: agent, meta: { requestId: request.id } });
+      return;
+    }
+
+    if (operation.operationId === "abandonAgentRepositoryCleanup") {
+      const requestBody = body as {
+        readonly admissionIds?: readonly string[];
+        readonly reason?: string;
+        readonly evidence?: {
+          readonly deletionWorkerEvidence?: string;
+          readonly providerDisposal?: string;
+          readonly riskAcknowledgement?: string;
+          readonly notes?: string;
+        };
+      };
+      if (
+        !Array.isArray(requestBody.admissionIds) ||
+        typeof requestBody.reason !== "string" ||
+        requestBody.evidence?.deletionWorkerEvidence !== "cleanup-pending-after-teardown" ||
+        requestBody.evidence.providerDisposal !== "unknown" ||
+        requestBody.evidence.riskAcknowledgement !== "provider-disposal-unknown"
+      ) {
+        throw failure(400, "INVALID_REQUEST", "The request does not match the operation contract.");
+      }
+      const recovered = await controller!.abandonAgentRepositoryCleanup(context.actorId, {
+        namespaceId,
+        agentId,
+        admissionIds: requestBody.admissionIds!,
+        reason: requestBody.reason,
+        ...(requestBody.evidence.notes === undefined ? {} : { notes: requestBody.evidence.notes }),
+      });
+      reply.send({
+        data: {
+          namespaceId,
+          agentId,
+          abandonedAdmissionIds: recovered.map((attempt) => attempt.admissionId),
+          providerDisposal: "unknown",
+          deletionFinalization: "pending-worker-retry",
+        },
+        meta: { requestId: request.id },
+      });
       return;
     }
 

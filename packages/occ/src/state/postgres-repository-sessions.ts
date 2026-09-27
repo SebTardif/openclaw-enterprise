@@ -35,7 +35,7 @@ function attemptFromRow(value: unknown): Readonly<RepositorySessionAttempt> {
     durationSeconds <= 0 ||
     !Number.isSafeInteger(deadlineWallMs) ||
     deadlineWallMs <= 0 ||
-    !["opening", "open", "closing", "disposed", "invalidated"].includes(phase)
+    !["opening", "open", "closing", "disposed", "invalidated", "abandoned"].includes(phase)
   ) {
     throw new DependencyUnavailableError("Persisted repository session input or phase is invalid.");
   }
@@ -122,6 +122,16 @@ export function postgresRepositorySessions(
         ],
       );
       return result.rows[0] === undefined ? undefined : attemptFromRow(result.rows[0]);
+    },
+    abandonCleanupAttempts: async (input) => {
+      const result = await client.query(
+        `SELECT ${columns}
+         FROM occ.abandon_repository_cleanup(
+           $1::text, $2::text, $3::text[], $4::timestamptz
+         )`,
+        [input.namespaceId, input.agentId, [...input.admissionIds], input.updatedAt],
+      );
+      return Object.freeze(result.rows.map(attemptFromRow));
     },
   };
 }

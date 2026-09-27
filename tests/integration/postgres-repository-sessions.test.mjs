@@ -264,6 +264,168 @@ test(
       },
     );
 
+    await t.test(
+      "explicit recovery can abandon exact invalidated attempts after deletion cleanup evidence",
+      async () => {
+        const { namespace, agent, revision } = await seedSessionRevision(store);
+        const input = sessionAttempt(revision);
+        await insertAttempt(pool, input);
+        await pool.query(
+          "UPDATE occ.repository_session_attempts SET phase = 'invalidated', updated_at = $2 WHERE admission_id = $1",
+          [input.admissionId, "2030-03-17T17:46:41.000Z"],
+        );
+        await assert.rejects(
+          pool.query(
+            "UPDATE occ.repository_session_attempts SET phase = 'abandoned', live_revision_id = NULL WHERE admission_id = $1",
+            [input.admissionId],
+          ),
+          { code: "42501" },
+        );
+        await assert.rejects(
+          store.transact((unit) =>
+            unit.repositorySessions.abandonCleanupAttempts({
+              namespaceId: namespace.id,
+              agentId: agent.id,
+              admissionIds: [input.admissionId],
+              updatedAt: "2030-03-17T17:46:42.000Z",
+            }),
+          ),
+          { name: "ScopeViolationError" },
+        );
+
+        const workId = `agent:${agent.id}:delete`;
+        await pool.query(
+          "UPDATE occ.agents SET desired_runtime_state = 'stopped', status = 'deleting' WHERE namespace_id = $1 AND id = $2",
+          [namespace.id, agent.id],
+        );
+        await pool.query(
+          `INSERT INTO occ.controller_work (
+             idempotency_key, namespace_id, agent_id, revision_id, actor_id,
+             namespace_target, agent_target, state, available_at, attempt_count, created_at, updated_at
+           ) VALUES ($1,$2,$3,NULL,$4,NULL,'deleted','queued',$5,1,$5,$5)`,
+          [workId, namespace.id, agent.id, "operator", "2030-03-17T17:46:42.000Z"],
+        );
+        await assert.rejects(
+          pool.query(
+            "UPDATE occ.controller_work SET deletion_teardown_completed_at = clock_timestamp() WHERE idempotency_key = $1",
+            [workId],
+          ),
+          { code: "42501" },
+        );
+        await assert.rejects(
+          pool.query(
+            `INSERT INTO occ.controller_work (
+               idempotency_key, namespace_id, agent_id, revision_id, actor_id,
+               namespace_target, agent_target, state, available_at, attempt_count,
+               deletion_teardown_completed_at, deletion_teardown_claim_token, created_at, updated_at
+             ) VALUES ($1,$2,$3,NULL,$4,NULL,'deleted','queued',$5,1,$5,$6,$5,$5)`,
+            [
+              `${workId}:forged`,
+              namespace.id,
+              agent.id,
+              "operator",
+              "2030-03-17T17:46:42.000Z",
+              randomUUID(),
+            ],
+          ),
+          { code: "42501" },
+        );
+        await assert.rejects(
+          store.transact((unit) =>
+            unit.repositorySessions.abandonCleanupAttempts({
+              namespaceId: namespace.id,
+              agentId: agent.id,
+              admissionIds: [input.admissionId],
+              updatedAt: "2030-03-17T17:46:42.000Z",
+            }),
+          ),
+          { name: "ScopeViolationError" },
+        );
+
+        const claim = randomUUID();
+        await pool.query(
+          `UPDATE occ.controller_work
+           SET state = 'claimed', claim_token = $2, lease_expires_at = $3, updated_at = $3
+           WHERE idempotency_key = $1`,
+          [workId, claim, "2030-03-17T17:56:43.000Z"],
+        );
+        assert.equal(
+          (
+            await pool.query("SELECT occ.finalize_agent_deletion($1,$2,$3,$4) AS completed", [
+              namespace.id,
+              agent.id,
+              workId,
+              claim,
+            ])
+          ).rows[0].completed,
+          null,
+        );
+        assert.equal(
+          (
+            await pool.query(
+              `SELECT deletion_teardown_completed_at IS NOT NULL AS recorded
+               FROM occ.controller_work WHERE idempotency_key = $1`,
+              [workId],
+            )
+          ).rows[0].recorded,
+          true,
+        );
+        await assert.rejects(
+          store.transact((unit) =>
+            unit.repositorySessions.abandonCleanupAttempts({
+              namespaceId: namespace.id,
+              agentId: agent.id,
+              admissionIds: [`missing-${input.admissionId}`],
+              updatedAt: "2030-03-17T17:46:43.000Z",
+            }),
+          ),
+          { name: "ScopeViolationError" },
+        );
+        const abandoned = await store.transact((unit) =>
+          unit.repositorySessions.abandonCleanupAttempts({
+            namespaceId: namespace.id,
+            agentId: agent.id,
+            admissionIds: [input.admissionId],
+            updatedAt: "2030-03-17T17:46:43.000Z",
+          }),
+        );
+        assert.equal(abandoned.length, 1);
+        assert.equal(abandoned[0].phase, "abandoned");
+        assert.equal(abandoned[0].liveRevisionId, null);
+        assert.deepEqual(abandoned[0].cleanupContext, {
+          driver: revision.repositoryCredentials.driver,
+          binding: revision.repositoryCredentials.bindings[0],
+        });
+        await assert.rejects(
+          pool.query(
+            "UPDATE occ.repository_session_attempts SET phase = 'opening' WHERE admission_id = $1",
+            [input.admissionId],
+          ),
+          { code: "23514" },
+        );
+        assert.equal(
+          (
+            await pool.query("SELECT occ.finalize_agent_deletion($1,$2,$3,$4) AS completed", [
+              namespace.id,
+              agent.id,
+              workId,
+              claim,
+            ])
+          ).rows[0].completed,
+          true,
+        );
+        const retained = await store.read((view) =>
+          view.repositorySessions.findAttempt(input.admissionId),
+        );
+        assert.equal(retained.phase, "abandoned");
+        assert.equal(retained.liveRevisionId, null);
+        assert.equal(
+          await store.read((view) => view.agents.findAgent(namespace.id, agent.id)),
+          undefined,
+        );
+      },
+    );
+
     await t.test("session admission serializes behind deleting ownership", async () => {
       const { namespace, agent, revision } = await seedSessionRevision(store);
       const deleting = await pool.connect();

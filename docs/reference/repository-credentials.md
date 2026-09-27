@@ -1,7 +1,7 @@
 # Repository credentials
 
 Repository bindings grant bounded Git HTTPS and GitHub API access. OCC freezes
-grants into a revision; the worker prepares material. The credential service
+grants into revisions; the worker prepares material. The credential service
 retains App keys, JWTs and installation tokens. Agents receive gateway bearers,
 client configuration and CA trust. Start with the
 [operator guide](../guides/repository-credentials.md).
@@ -14,7 +14,7 @@ worker/credential-service owners.
 Only the repository consumer receives repository and model credentials. Dedicated
 Slack tokens stay in the gateway. Repository profiles and model authentication
 are independent. [Kubernetes policies](drivers/kubernetes-compute/networking-and-isolation.md#networking)
-allow consumer access to the credential sidecar.
+permit sidecar access.
 
 For repository-bound Codex consumers, Compute configures stock Codex with the
 exact broker hostname allowed, `allow_local_binding = true`, and `mode = "full"`.
@@ -24,15 +24,15 @@ Kubernetes NetworkPolicy, TLS verification, and broker repository authorization
 still apply. Unbound Agents retain their existing policy. See the
 [networking contract](drivers/kubernetes-compute/networking-and-isolation.md#networking).
 
-Trusted startup loads protected configuration into the separate service process;
-backend construction and sender callbacks remain private. Session controls are
+Trusted startup loads protected configuration into the service process; backend
+construction and sender callbacks remain private. Session controls are
 `open`, `status`, `close`, and `shutdown`. Separate service and Git/gh artifacts
 keep signing and service modules out of the client. `SIGTERM` or `SIGINT` starts
 bounded cleanup and disposal.
 
 ## Repo Driver contract
 
-The optional `repo` capability uses `RepoDriver extends Driver`, with the bundled
+The `repo` capability uses `RepoDriver extends Driver`, with bundled
 `GitHubRepoDriver`. Trusted Installation `drivers.repo` and GitHub Backend
 `drivers.repo` select the same configured Driver ID. The
 [shared contract](../../packages/contracts/src/repo.ts) exposes five operations:
@@ -48,31 +48,37 @@ The optional `repo` capability uses `RepoDriver extends Driver`, with the bundle
 
 Public status contains only `sessionId`, `state`, `deadlineWallMs` and `binding`
 (`providerInstanceId`, `repositoryId`, `grantId`). Each response is an immutable
-snapshot after complete private validation. Cleanup counters and configuration
+snapshot after private validation. Cleanup counters and configuration
 decoding remain private. Status cannot regenerate the closed-schema Git/gh files.
 
-`maintenanceIntervalMs` schedules worker reconciliation; it is not a measured
+`maintenanceIntervalMs` schedules reconciliation; it is not a measured
 withdrawal bound. Configured IDs, `AgentRevision.repositoryCredentials` and
 persisted `admitted_spec.repository_credentials` retain their meaning.
 
 State derives immutable Driver, Backend, profile and grant context from the
-admitted revision. It retains original Namespace, Agent, revision, admission and
-session identities and deadlines after Agent deletion, without bearers or tokens.
+admitted revision. It retains original Namespace, Agent, revision, admission,
+session and deadline identities after Agent deletion, without bearers or tokens.
 
 Agent deletion closes sessions and retires Compute. Physical deletion and live
-revision detachment require every attempt to be `disposed`. `CLOSED`, missing
-inventory and `invalidated` attempts retain cleanup Work and the deleting Agent.
-Deadlines do not settle provider cleanup. Evidence pruning and durable token
-recovery are unimplemented.
+revision detachment require every attempt to be `disposed` or explicitly
+`abandoned` through installation-admin cleanup recovery. `CLOSED`, missing
+inventory and ordinary `invalidated` attempts retain cleanup Work and the deleting
+Agent. Deadlines do not settle provider cleanup. Evidence pruning and durable
+token recovery are unimplemented.
+
+`abandoned` means an installation administrator acknowledged exact invalidated
+attempts after cleanup-pending evidence and stopped-Agent teardown. It keeps
+original cleanup context and records provider disposal as unknown. It never mints
+replacement authority or claims provider revocation.
 
 Worker restart can retain surviving service sessions and Compute material.
 Known closing sessions block same-revision replacement, including Compute repair,
 with retryable `REPOSITORY_CLEANUP_PENDING` until confirmed `DISPOSED`. Existing
 Work bounds and the original revision deadline still apply. Missing exposed
 sessions remain irrecoverable: `REPOSITORY_SESSION_RECOVERY_UNSAFE` fails the
-revision and queues runtime retirement while retaining cleanup. Never-delivered openings
-without a recorded session ID remain recoverable; known sessions require disposal
-before replacement. Users may explicitly deploy a new authorized revision. This
+revision and queues runtime retirement while retaining cleanup. Never-delivered
+openings without a recorded session ID remain recoverable; known sessions require
+disposal before replacement. Users may deploy a new authorized revision. This
 neither settles old cleanup nor replays Git/API mutations; credential disposal
 does not establish their outcomes.
 
@@ -112,11 +118,10 @@ Namespace policies per repository and 4,096 policies overall. References, numeri
 repository IDs and canonical names must be unique.
 
 The resolved grant fingerprint covers provider/App/installation identity,
-repository identity, maximum duration, Namespace, its complete allowed-profile
-set, optional push-ref policy, selected profile and exact permission contract.
-The service independently resolves and compares
-that fingerprint before admission. A changed policy cannot preserve an older
-grant merely by keeping the same reference.
+repository identity, maximum duration, Namespace, allowed profiles, optional
+push-ref policy, selected profile and exact permission contract. The service
+independently resolves and compares that fingerprint before admission. A changed
+policy cannot preserve an older grant merely by keeping the same reference.
 
 Each Namespace policy may set an optional
 [`pushRefAllowlist`](repository-credentials/push-ref-guardrail.md) to prevent
@@ -234,25 +239,24 @@ no admission or close endpoint.
 
 `X-Admission-Id` combines a 13-digit Unix-millisecond timestamp, hyphen and
 lowercase UUIDv4. The CLI prints this nonsecret ID before dispatch. HTTP 201
-returns the bearer once; matching ID/duration/profile returns HTTP 200 with
-status only. Conflicts fail. Follow
+returns the bearer once; matching ID/duration/profile returns HTTP 200 status.
+Conflicts fail. Follow
 [lost-response recovery](../guides/repository-credentials.md#recover-an-admission)
 before explicitly requesting replacement material.
 
-Platform admission additionally requires `namespaceId`, `repositoryRef`,
-normalized `profile`, `expectedBinding` and `deadlineWallMs`. Replays must match
-all original fields. `recoverOnly: true` may return status or
-`admission-missing`, never create a session. A missing lookup fences a delayed
-first-open using that still-fresh ID. Capacity or transport failure remains an
-error, not evidence of absence.
+Platform admission also requires `namespaceId`, `repositoryRef`, normalized
+`profile`, `expectedBinding` and `deadlineWallMs`. Replays must match. `recoverOnly:
+true` may return status or `admission-missing`, never create a session. A missing
+lookup fences a delayed first-open using that still-fresh ID. Capacity or
+transport failure remains an error, not evidence of absence.
 
 Unseen IDs must be less than 60 seconds old, never future-dated. Process-local
-correlations, including tombstones, are bounded to twice the session limit;
-churn can return `overloaded`. Existing correlations retain status beyond that
-window and session deadline while cleanup is unresolved. Disposal or authoritative
-absence permits reclamation. Unknown stale IDs cannot create sessions:
-lookup returns `admission-missing`; absent-session status returns `not-found`.
-Correlations retain no recoverable bearer and do not survive restart.
+correlations, including tombstones, are bounded to twice the session limit; churn
+can return `overloaded`. Existing correlations retain status past that window
+while cleanup is unresolved. Disposal or authoritative absence permits
+reclamation. Unknown stale IDs cannot create sessions: lookup returns
+`admission-missing`; absent-session status returns `not-found`. Correlations
+retain no recoverable bearer and do not survive restart.
 
 Session duration is independent of token lifetime. On-demand replacement uses
 the original grant and requires validity through the remaining exchange budget
@@ -260,19 +264,19 @@ plus safety margin. Idle sessions need no periodic mint. The original bearer
 works throughout the session while its process and upstream authorization survive.
 
 Authentication eligibility and terminal cleanup expiry are separate deadlines.
-Both use elapsed monotonic time from the original capture; delayed acquisition
-settlement cannot extend either. The GitHub adapter allows 60 seconds of provider
-clock skew and conservatively stops authentication before the reported expiry.
-Cleanup retains the one-hour bound from local receipt. A forward wall-clock
-change can deny authentication but cannot establish remote expiration.
+Both use elapsed monotonic time from original capture; delayed settlement cannot
+extend either. The GitHub adapter allows 60 seconds of provider clock skew and
+stops authentication before reported expiry. Cleanup keeps the one-hour local
+receipt bound. A forward wall-clock change can deny authentication but cannot
+establish remote expiration.
 
 Closing or expiring a session prevents new use immediately and cancels owned
 exchanges. `CLOSED` does not imply confirmed revocation. Private control status
-distinguishes pending, revoked, expired and uncertain credentials, plus auxiliary cleanup.
-`DISPOSED` requires settled actions, resolved access-token obligations and
-completed auxiliary finalization; historical revoked/expired counters may remain
-nonzero. An uncertain issuance blocks automatic minting.
-An uncertain push or API mutation is never automatically replayed.
+distinguishes pending, revoked, expired and uncertain credentials, plus auxiliary
+cleanup. `DISPOSED` requires settled actions, resolved access-token obligations
+and completed auxiliary finalization; historical counters may remain nonzero.
+Uncertain issuance blocks automatic minting. Uncertain push or API mutation is
+never automatically replayed.
 
 Failed admission can also retain cleanup work. If session construction fails,
 renewal access closes immediately; retained material remains counted against
@@ -284,9 +288,9 @@ finish and their material is disposed.
 Bounded REST JSON responses omit the provider's `temp_clone_token` from the
 repository object, its `parent` and `source` repository relationships, and
 pull-request `head.repo` and `base.repo` objects. Human text and unrelated
-metadata remain unchanged. Qualified machine links still pass through the
-existing origin, repository, route, and profile checks before gateway rewriting;
-other informational links remain data.
+metadata remain unchanged. Qualified machine links still pass through origin,
+repository, route and profile checks before gateway rewriting; other
+informational links remain data.
 
 ## Client routing and limits
 
@@ -298,9 +302,8 @@ For each generation, native preparation validates public manifest/session metada
 identities, paths and file custody, then writes private aggregate `gitconfig`.
 Kubernetes invokes it through the private subPath after material copying; both
 init steps gate startup. It neither reads bearers nor admits sessions. Each
-canonical HTTPS host maps to one gateway origin; conflicting origins fail
-preparation. Pins cannot change an already-chosen connection origin. Same-origin
-public CA inputs must agree.
+canonical HTTPS host maps to one gateway origin; conflicting origins fail. Pins
+cannot change a chosen origin. Same-origin public CA inputs must agree.
 
 A host-prefix rewrite preserves owner/repository casing and an optional terminal
 `.git`. It also routes unadmitted repositories on that host to the gateway, where
@@ -319,11 +322,11 @@ It never chooses a first, stronger or unexpired alternate grant.
 Duplicate repository bindings remain valid. Select one with `OCE_REPOSITORY_REF`;
 gh also propagates `OCE_REPOSITORY_SELECTION` containing generation, repository
 reference and session ID. Conflicting or stale pins fail remote authentication.
-The helper command embeds the prepared generation and refuses material from a
-new generation. It validates the selected original deadline before reading its
-bearer; gateway closure can deny use earlier. Local commands continue after
-expiry or with stale pins because they do not consult the helper. Generation
-pinning does not promise a command-wide snapshot across arbitrary subprocesses.
+The helper command embeds the prepared generation and refuses material from a new
+generation. It validates the selected original deadline before reading its bearer;
+gateway closure can deny use earlier. Local commands continue after expiry or
+with stale pins because they do not consult the helper. Generation pinning is not
+a command-wide snapshot across arbitrary subprocesses.
 
 Native user configuration can override these defaults, and caller-added helpers
 or credential stores can retain credentials. The feature installs no cache/store
@@ -352,20 +355,21 @@ Routing configuration is not network egress confinement.
 
 Default service bounds are 16 sessions including pending cleanup, two credential
 slots per session, one provider action and 64 queued actions, 64 sockets per
-listener, and 32 exchanges total and four per session. Headers are limited to 32 KiB/64 pairs;
-request targets to 8 KiB. Git fetch input is 1 MiB; push input and Git output are
+listener, and 32 exchanges total and four per session. Headers are 32 KiB/64 pairs;
+request targets are 8 KiB. Git fetch input is 1 MiB; push input and Git output are
 256 MiB. API input is 1 MiB and response data 8 MiB. Git gzip input has independent
 wire and decoded limits. Exchanges have a five-minute total bound and 60-second
-credential margin. HTTPS client header timing begins on the TLS socket after
-the handshake and ends when an authenticated request reserves exchange capacity;
-the exchange deadline bounds acquisition and forwarding. The upstream
-response-header deadline starts after upload finishes, unless the response
-headers already arrived. Connection, input and stall deadlines remain independent.
+credential margin. HTTPS client header timing begins after TLS and ends when an
+authenticated request reserves exchange capacity; the exchange deadline bounds
+acquisition and forwarding. The upstream response-header deadline starts after
+upload, unless headers already arrived. Connection, input and stall deadlines
+remain independent.
 Provider actions have at most 30 seconds. Shutdown allows
 60 seconds for cleanup before reporting unresolved obligations and terminating.
 Unsettled actions retain capacity until exit; grace expiry does not establish
 `DISPOSED` or confirmed revocation. Restart cannot recover the lost provider
-cleanup inventory. Overrides remain positive and finite.
+cleanup inventory, and grace expiry never creates an abandonment. Overrides
+remain positive and finite.
 
 The [testing guide](../testing/repository-credentials.md) separates source,
 artifact, container and live-provider proof. Local fixtures establish neither
