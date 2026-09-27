@@ -291,7 +291,7 @@ if (command === "inputs") {
       {
         source: "https://github.com/openclaw/openclaw",
         commit: process.env.GIT_COMMIT,
-        sourceArchiveSha256: "baca838f3cb122771477ca18726ec934428082c76f77323c310ae960eb8e0e27",
+        sourceArchiveSha256: "ede242963ad512c910cc32a87036cb0af34ae595c29bb3449cce30bb9c2b4c6d",
         artifactKind: "assembled-runtime-root",
         runtimeContentsSha256: hash(contents),
         lockfileSha256: hash(await readFile(join(root, "pnpm-lock.yaml"))),
