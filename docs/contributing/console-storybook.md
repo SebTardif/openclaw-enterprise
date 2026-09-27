@@ -76,19 +76,15 @@ through real controls after loading fixture data.
 | Stop Agent              | Confirmation, stopped requested state, permission denial, unknown outcome requiring refresh.                                                                                                                                                                                                                                                                                          |
 | Deletion                | Confirmation, pending cleanup, permission denial, conflict, unknown outcome.                                                                                                                                                                                                                                                                                                          |
 
-The production UI supplies buttons, forms, tables, badges, notices, JSON views,
-revision controls, and dialogs in these stories; Storybook does not duplicate them.
-Pending-read stories use the real client's 15-second timeout; reset them to replay
-loading.
+Stories use production UI controls. Pending reads use the real client's 15-second
+timeout; reset them to replay loading.
 
 ## Agent flows and UI gaps
 
-In **Components → Navigation → Namespace switcher**, use the header selector to
-switch between Engineering and Research. Check the URL, collection, and browser
-Back behavior; confirm the Namespaces page omits the selector. **Mobile Namespace
-selector** checks long-name truncation before the chevron and switching without the
-drawer. Existing no-readable, unavailable, loading, and denied stories cover
-restricted selector states.
+In **Components → Navigation → Namespace switcher**, switch between Engineering
+and Research. Check the URL, collection, Back behavior, and selector omission on
+Namespaces. **Mobile Namespace selector** checks name truncation and switching
+without the drawer. Other stories cover unavailable and restricted states.
 
 Saved simulated UI examples show the [desktop selector](../assets/console-namespace-selector/desktop.png),
 [mobile empty collection](../assets/console-namespace-selector/mobile.png),

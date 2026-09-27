@@ -174,13 +174,11 @@ Preset Secret takes precedence over an entered token. OCC reads the
 Secret server-side. Pagination is upstream; filtering is local. Selecting a plugin loads tools.
 Credential, provider, and Harness changes clear results and invalidate pending reads.
 
-`create.mjs:MODEL_CHOICES` supplies static provider lists without credential
-verification; manual entry remains available. Credential and model edits preserve
-selection and unrelated JSON; Provider or Harness changes reset incompatible choices.
-`configurationTemplate` enables loopback Control UI; Compute supplies gateway
-authentication. [Native admin access](agent-native-admin.md) owns HTTPS isolation.
-[Agent editing](platform-console/agent-editing.md#4-render-draft-revision-or-channels)
-traces Slack settings, staged bindings, grants, and cancellation effects.
+`create.mjs:MODEL_CHOICES` supplies static, unverified provider lists and manual
+entry. Credential and model edits preserve selection and unrelated JSON; Provider
+or Harness changes reset incompatible choices. `configurationTemplate` enables
+loopback Control UI; Compute supplies gateway authentication. [Native admin
+access](agent-native-admin.md) owns HTTPS isolation.
 
 `GET /namespaces/:namespaceId/agents/repository-options` discovers approved choices.
 Console submits opaque references and an explicit common profile. Read-only and
@@ -211,9 +209,8 @@ without fetching values.
 ### 4–6. Edit the Agent and access runtime files
 
 [Console Agent editing and runtime requests](platform-console/agent-editing.md)
-traces draft/revision rendering, channel changes, credential provisioning,
-workspace reads/writes, stopping, and deletion. Each request returns through the
-response-ordering checks below.
+traces rendering, channel and credential changes, workspace access, and lifecycle
+actions. Responses use the ordering checks below.
 
 `apps/controller/src/console/channels/slack.mjs:supportSlack` rejects shapes the
 editor cannot preserve; [Agent editing](platform-console/agent-editing.md#4-render-draft-revision-or-channels)
@@ -234,12 +231,11 @@ mounted. Configuration and revision reads are shared within that detail view;
 a direct Workspace files URL does not start them. Refresh, revision changes,
 and successful edits use the full page read path.
 
-Panel callbacks stay current while their Agent view is current, so a pending read
-can finish in a hidden tab without replacing the selected tab. Password values
-clear on leaving a tab; other editor state stays mounted. A completed mutation
-in a hidden tab requests a fresh view on the next tab navigation. Plugin catalog
-Available and Configured tabs retain their separate filters and selections.
-Session expiry clears the whole private view.
+Pending reads can finish in hidden tabs without replacing the selected tab.
+Password values clear on leaving; other editor state stays mounted. A mutation
+completed in a hidden tab requests a fresh view on the next tab navigation. Plugin
+catalog tabs retain separate filters and selections. Session expiry clears the
+private view.
 
 ### 7. Commit only the current response, or clear the view
 
@@ -250,14 +246,16 @@ Generation checks reject late responses. Previews remain during session, Namespa
 and exact page reads until fresh results arrive. Drafts restore edits with their
 original save baselines. Namespace selection never reuses another scope's rows.
 
-On browser focus or visibility restoration, `revalidateVisiblePage` checks the
-session and readable Namespaces before rereading resources observed by the current
-view. An identity change clears private views and drafts. Unchanged results leave
-mounted controls intact. Native admin, deployment status, and workspace files
-apply changed results in place; workspace drafts stay intact when a file changes,
-while denied or missing files clear the affected editor. Other changed reads use
-the full page read path. The API client still clears private state on a current
-`401`; protected reads recheck their exact API authorization.
+On focus or visibility restoration, `revalidateVisiblePage` checks the session,
+readable Namespaces, and observed resources. Identity changes clear private views
+and drafts; unchanged results preserve controls. Native admin, deployment status,
+and workspace files apply changes in place. Workspace drafts survive file changes;
+denied or missing files clear the editor. Other changes reload the page. During a
+Slack Configuration save and Secret grants, successful changes defer reload until
+later revalidation; read failures and session or Namespace changes remain immediate.
+The saved Configuration updates its observed baseline; grant lookup reads are not
+tracked as displayed data, preserving partial-grant warnings for retry. A current
+`401` clears private state; protected reads recheck exact API authorization.
 
 Authorization and dependency failures clear affected content and expose recovery;
 a current protected `401` clears all private state immediately. `pagehide` clears

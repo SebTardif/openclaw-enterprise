@@ -26,6 +26,7 @@ const { route, pageUrl, safeReturn, navigate } = navigation;
 const shellUI = createShell({ app, pages, route, pageUrl, navigate, loadPage, logout });
 const { publicPanel, renderRows, switchNamespace } = shellUI;
 const observedReads = new Map();
+const backgroundRefreshHolds = new Set();
 let backgroundRefresh = null;
 const request = createApiClient({
   lifetime,
@@ -163,6 +164,7 @@ function markMountedRoute(current) {
 
 function resetReads({ retainView = false } = {}) {
   observedReads.clear();
+  backgroundRefreshHolds.clear();
   drafts.flush();
   navigateAgentTab = null;
   clearPasswordInputs();
@@ -468,6 +470,17 @@ async function loadPage({ fromNavigation = false } = {}) {
       view: shell.view,
       namespaceId,
       request,
+      holdBackgroundRefresh() {
+        const hold = Symbol();
+        backgroundRefreshHolds.add(hold);
+        return () => backgroundRefreshHolds.delete(hold);
+      },
+      acknowledgeRead(path, data) {
+        const previous = observedReads.get(path);
+        if (lifetime.isCurrent(active) && previous) {
+          observedReads.set(path, { ...previous, snapshot: JSON.stringify({ data }) });
+        }
+      },
       navigate,
       pageUrl,
       isCurrent: () => lifetime.isCurrent(active),
@@ -716,10 +729,18 @@ async function revalidateVisiblePage() {
             }
             return false;
           }
-          return true;
+          return { path, previous, error };
         }),
       );
-      if (lifetime.isCurrent(active) && results.some(Boolean)) {
+      if (
+        lifetime.isCurrent(active) &&
+        results.some(
+          (result) =>
+            result &&
+            observedReads.get(result.path) === result.previous &&
+            (result.error || backgroundRefreshHolds.size === 0),
+        )
+      ) {
         void loadPage();
       }
     } catch (error) {

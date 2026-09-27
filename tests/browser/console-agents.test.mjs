@@ -5495,10 +5495,32 @@ test("Agent credentials finish Slack Secret grants after navigating away from sa
   await patchPersisted;
   await page.getByRole("button", { name: "Channels", exact: true }).click();
   await page.getByRole("button", { name: "Edit Slack", exact: true }).waitFor();
+  // The PATCH is committed but its response is delayed: focus must not discard
+  // the transaction before it can grant access to the saved Secrets.
+  await page.evaluate(() => {
+    globalThis.savedAgentView = globalThis.document.querySelector('.content [aria-live="polite"]');
+  });
+  const checkFocus = async () => {
+    const refreshed = page.waitForResponse(
+      (response) =>
+        response.url().endsWith(`/configurations/${agent.configurationId}`) &&
+        response.request().method() === "GET",
+    );
+    await page.evaluate(() => globalThis.dispatchEvent(new Event("focus")));
+    await refreshed;
+    await page.waitForTimeout(300);
+    assert.equal(await page.evaluate(() => globalThis.savedAgentView.isConnected), true);
+  };
+  t.after(() => {
+    releasePatch();
+    releaseGrantRead();
+  });
+  await checkFocus();
   releasePatch();
-  // Switching again while the post-save grant is pending must not abort it.
+  // Focus and tab changes while the post-save grants are pending must not abort them.
   await grantReadStarted;
   await page.getByRole("button", { name: "Configuration", exact: true }).click();
+  await checkFocus();
   releaseGrantRead();
   await waitForCondition(
     () => accessBindingPostRequests(requests, namespace.id).length === 2,
@@ -5603,6 +5625,18 @@ test("Agent credentials retry outstanding Slack Secret grants after changing one
   await selectSecret(page, "Slack app token", firstAppSecret);
   await selectSecret(page, "Slack bot token", botSecret);
   await page.getByRole("button", { name: "Save channel Secrets" }).click();
+  await page.getByText("Resolve the saved Secret access grant before deploying.").waitFor();
+  assert.equal(await page.getByRole("button", { name: "Deploy new revision" }).isDisabled(), true);
+
+  // Revalidation after a partial grant must retain the warning and retry state.
+  const revalidated = page.waitForResponse(
+    (response) =>
+      response.url().endsWith(`/configurations/${agent.configurationId}`) &&
+      response.request().method() === "GET",
+  );
+  await page.evaluate(() => globalThis.dispatchEvent(new Event("focus")));
+  await revalidated;
+  await page.waitForTimeout(300);
   await page.getByText("Resolve the saved Secret access grant before deploying.").waitFor();
   assert.equal(await page.getByRole("button", { name: "Deploy new revision" }).isDisabled(), true);
 
