@@ -141,6 +141,7 @@ import type {
   AgentProvisioningCheckpoint,
   AgentProvisioningRecord,
 } from "./state/agent-provisioning.ts";
+import type { RepositorySessionAttempt as RepositoryCleanupAttempt } from "./ports/repository-sessions.ts";
 
 export {
   AgentDeletingError,
@@ -3448,7 +3449,7 @@ export class OpenClawController {
   async abandonAgentRepositoryCleanup(
     principalId: string,
     input: AbandonAgentRepositoryCleanupInput,
-  ): Promise<readonly Readonly<RepositorySessionAttempt>[]> {
+  ): Promise<readonly Readonly<RepositoryCleanupAttempt>[]> {
     if (!isNonEmptyString(input.namespaceId)) {
       throw new ScopeViolationError("The exact Namespace identity is missing.");
     }
