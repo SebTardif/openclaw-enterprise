@@ -1,7 +1,7 @@
 ---
 created: 2026-09-02
 updated: 2026-09-25
-last_updated_session: 01a0d57b-51eb-7551-874e-38c5b633af76
+last_updated_session: codex/01a0d57b-51eb-7551-874e-38c5b633af76
 ---
 
 # Common Operational Logging Flow
@@ -145,10 +145,12 @@ The bundled Collector keeps transport-derived identity before parsing untrusted
 JSON. It classifies fixed OCC event names, `gateway` subsystem records, and Codex
 stderr records from `codex_app_server`. For retained records it keeps allowlisted
 attributes and replaces the body with the event name, stripping arbitrary content.
-It drops malformed, oversized, unclassified, unspecified-severity, and Codex protocol
-stdout records. Collector-only configuration holds exporter credentials and TLS
-settings. Finite queues and retries make logs best-effort; outage or overflow
-cannot block API service, worker reconciliation, or PostgreSQL audit persistence.
+OCC `compute.preflight-warning` records retain WARN severity and bounded `occ.code`;
+the local diagnostic message is excluded from remote export. It drops malformed,
+oversized, unclassified, unspecified-severity, and Codex protocol stdout records.
+Collector-only configuration holds exporter credentials and TLS settings. Finite
+queues and retries make logs best-effort; outage or overflow cannot block API
+service, worker reconciliation, or PostgreSQL audit persistence.
 
 ### 8. The demo dashboard presents existing metadata
 
@@ -188,6 +190,8 @@ for panels, correlation, and authorization limits.
 ## Changelog
 
 - 2026-09-25 11:31: Documented query-time operational summaries and filtering in the accompanying demo dashboard change. (01a0d57b-51eb-7551-874e-38c5b633af76 - 1a458b227585c572ec0ac70fd10efc3834165075)
+
+- 2026-09-25 09:53: Documented preflight warning export and message exclusion with the accompanying Collector allowlist repair. (codex/01a0d57b-51eb-7551-874e-38c5b633af76 - 939ae63ac2be06d424cdbd5c626cfa675561d127)
 
 - 2026-09-23 17:40: Documented private Collector scraping and selected in-cluster export in the accompanying observability change. (authoring-run/8fb2b0ce-9ad1-401c-a9b9-4e3919b5f573 - faf0b0ae467a3bebfd5b5ed0a92f259248e5da74)
 

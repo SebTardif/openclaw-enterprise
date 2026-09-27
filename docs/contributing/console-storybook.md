@@ -124,9 +124,9 @@ Installation YAML.
 Use the [DevDay storyboard](../../scripts/console-storybook/devday-storyboard.md)
 for presenter actions, expected visible states, and fallbacks.
 
-**Choose provider and harness** walks through the OpenAI Codex default, OpenClaw
-selection, Anthropic's OpenClaw-only choice, and switching from an unsaved service account
-token to API-key authentication. Model choices are hardcoded in the Console and
+**Choose provider, harness, and authentication** checks dropdown arrows and walks
+through OpenAI Codex, OpenClaw, Anthropic, and switching an unsaved service
+account token to API-key authentication. Model choices are hardcoded in the Console and
 available before credential entry; **Enter another model ID** covers manual entry.
 These choices do not establish whether a credential can access a model. Execution mode follows the harness. The saved-token
 Preset story shows why its harness is fixed to Codex.
@@ -170,6 +170,9 @@ or Namespaces, and return with Back/Forward. Check empty and invalid text, then
 explicit Cancel or Reload. The Configuration story keeps deployment disabled;
 workspace Save changes only the selected simulated file.
 
+Use **Flows → Restart Agent creation** to enter a no-Preset form, leave it, and
+confirm re-entry shows the initial choices with an empty new form.
+
 Use **Pages/Create Agent → Keep Preset variables** before applying a Preset and
 **Keep an unsaved Preset draft** afterward. Ordinary fields survive while token
 inputs clear. Revisit the Agents list to check its search filter. Existing denied,
@@ -179,20 +182,17 @@ not backend persistence or live gateway proof.
 
 ### Choose and switch revision Secrets
 
-In **Components / Credentials / Slack tokens stored**, inspect all three Secret
-references. Cancel **Create new Secret...** without writing; select an existing
-Secret, then Save. Switching app tokens preserves the bot binding. The API-key
-switch story provides a second model Secret.
+In **Components / Credentials / Slack tokens stored**, inspect references,
+cancel creation, then switch app tokens; the bot binding stays unchanged.
+The API-key switch offers another model Secret.
 
-**Secret list denied** retains bound IDs. **Slack grant denied** preserves the
-saved reference but requires Agent access recovery before deployment.
+**Secret list denied** retains IDs. **Slack grant denied** preserves the
+reference but requires access recovery before deployment.
 
-Review the [bound model Secret](../assets/revision-secret-picker/harness-bound.png),
-[staged Slack switch](../assets/revision-secret-picker/slack-switch.png),
-[creation dialog](../assets/revision-secret-picker/create-secret.png),
-[denied list](../assets/revision-secret-picker/list-denied.png),
-[denied grant](../assets/revision-secret-picker/grant-denied.png), and
-[walkthrough](../assets/revision-secret-picker/walkthrough.mp4) using simulated data.
+In **Components/Channels → Slack Secret menu**, search names/IDs; select with
+arrows and Enter. **Slack create Secret modal** shows Name and masked value.
+In **Slack duplicate Secret name**, rename and retry without reentering the value.
+Browser tests cover controller rejection.
 
 ### Inspect bound Secrets in revisions
 
@@ -206,18 +206,18 @@ switch to **Configuration** for Harness authentication. Values never appear.
 ### Discover and configure plugins
 
 **Create Agent / Discover plugins with a service account token** uses a dummy
-token and simulated OCC discovery routes. Open **Configure plugins**, browse, and
-select Calendar to load its details. **Add Calendar** exposes plugin policies;
-expand a tool row to edit an override. **Done** returns to the form, where **Plugin
-selections JSON** shows the draft. **Filter this page** searches only the current
-page. Replacing the token or switching authentication, provider, or Harness clears
-the catalog while preserving selections. Companion stories cover empty results,
-pending reads, rejected tokens, service failures, tool lookup errors, and the next page.
+token and simulated OCC discovery. Open **Configure plugins** and select Calendar
+to load its details. **Add Calendar** exposes policies; expand a tool to edit an
+override. **Done** returns to the form; **Plugin selections JSON** shows the draft.
+**Filter this page** searches the current page. Credential, provider, or Harness
+changes clear the catalog but preserve selections. Companion stories cover empty,
+loading, rejection, failure, and pagination states.
 
-Discovery requires an entered Service Accounts token with the Codex Harness;
-saved Preset credentials and API keys do not enable it. Fixtures provide the
-capability descriptor used by the editor. Catalog visibility does not establish
-that a plugin or tool can be invoked.
+**Create Agent / Discover plugins with a selected PAT Secret** uses simulated
+Secret metadata and discovery responses. Choose Calendar to inspect details, then
+change the selected Secret to clear the catalog. **Selected PAT Secret discovery
+denied** shows a simulated permission failure. Preset PAT Secrets enable discovery;
+API keys do not. Catalog visibility does not prove a plugin can be invoked.
 
 **Components/Plugins** covers the modal with simulated catalogs and capabilities:
 available plugins, selected overrides, unknown tools, and empty, loading, denied,

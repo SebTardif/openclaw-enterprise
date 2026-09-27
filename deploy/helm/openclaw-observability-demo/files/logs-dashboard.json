@@ -55,7 +55,7 @@
         "name": "event",
         "label": "Event",
         "type": "custom",
-        "query": "http.completed,http.unexpected_error,worker.completed,worker.error,worker.health,worker.started,worker.stopped,worker.startup-error,listening,startup-error,installation.bootstrapped,installation.already-bootstrapped,installation.bootstrap-failed,migration.completed,migration.failed,gateway.operational,codex.operational",
+        "query": "http.completed,http.unexpected_error,worker.completed,worker.error,worker.health,worker.started,worker.stopped,worker.startup-error,listening,startup-error,installation.bootstrapped,installation.already-bootstrapped,installation.bootstrap-failed,migration.completed,migration.failed,compute.preflight-warning,gateway.operational,codex.operational",
         "includeAll": true,
         "allValue": ".*",
         "multi": false,
@@ -142,6 +142,11 @@
           {
             "text": "migration.failed",
             "value": "migration.failed",
+            "selected": false
+          },
+          {
+            "text": "compute.preflight-warning",
+            "value": "compute.preflight-warning",
             "selected": false
           },
           {

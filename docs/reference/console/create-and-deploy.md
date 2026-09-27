@@ -8,8 +8,7 @@ Secret creation permission. First-time provisioning grants access to accepted
 Secret references; ordinary draft creation also requires permission to grant
 Agent key access. After deployment, [verify this same
 Agent and revision](../../guides/deploy/production-agents.md#verify-production-workloads).
-The [local first-Agent walkthrough](../../guides/first-agent.md) creates a separate
-Agent; it does not verify your Console Agent.
+The [local walkthrough](../../guides/first-agent.md) creates a separate Agent.
 
 ## Create an Agent
 
@@ -40,9 +39,9 @@ Presets and edited Configuration JSON retain their settings.
    Choose an existing model credential Secret or **Create new Secret...**.
    Creating saves it immediately, even if you cancel Agent creation.
    Choose a model from the starter list or select **Enter model ID manually**.
-   The hardcoded list has no preselected model and appears before credential entry;
-   confirm credential and runtime support. The form updates native model
-   configuration; credentials stay separate.
+   The static list appears before credential entry without a preselected model.
+   Confirm credential and runtime support. The form updates native model configuration;
+   credentials stay separate.
 4. Confirm your Installation has access to the chosen model. Primary and fallback
    models must use the same supported provider and Harness. For custom settings,
    open **Advanced settings**. Selection changes preserve unrelated JSON edits;
@@ -50,9 +49,8 @@ Presets and edited Configuration JSON retain their settings.
 5. Optional: under **Repository access**, select up to 16 repositories approved
    for this Namespace. Select one authorization level shared by every chosen
    repository. Kubernetes supports Codex (Dedicated) or OpenClaw (Embedded),
-   without a Sandbox Driver. Use Codex when this Agent needs Slack. Leave every
-   repository unselected for an ordinary Agent without
-   repository access.
+   without a Sandbox Driver. Use Codex for Slack. Leave repositories unselected
+   for an Agent without repository access.
 
 6. If you need Slack, use OpenAI with the **Codex** harness and its channel card.
    Each token menu lets you select a readable Namespace Secret or **Create new Secret...**.
@@ -77,26 +75,27 @@ Presets and edited Configuration JSON retain their settings.
    [workspace editor](../console.md#edit-workspace-files). Pending inputs have no
    update API; see [workspace recovery](../../guides/topics/workspace-files.md#set-files-when-creating-an-agent).
 
-Before saving, Preset variables and one Agent draft per Namespace survive navigation,
-including Back/Forward. Reopen **Create Agent** to resume edits; reenter new
-credentials because password fields clear on navigation. **Start over** confirms
-discard. Reload, page exit, and sign-out clear local drafts. Once saving begins,
-navigation does not retain partial-save or uncertain-outcome form state; follow
-save recovery below.
+Before saving, Preset variables and forms survive navigation, including Back/Forward;
+passwords clear. Leaving a form started without a Preset discards its unsaved state;
+the next visit shows the initial choices. Saved Agents and Secrets remain. **Start
+over** confirms discard. Reload, page exit, and sign-out clear local drafts. Once
+saving begins, navigation does not retain partial-save or uncertain-outcome form
+state; follow save recovery below.
 
-For Codex plugins, select **Service Accounts** with **Codex**, expand
-**Plugin discovery token (optional)**, enter a token, and open **Configure plugins**. **Previous page** and **Next page** fetch
+For Codex plugins, select **Service Accounts** with **Codex**, choose a PAT Secret,
+and open **Configure plugins**. Without a selected Secret, enter a token under
+**Plugin discovery token (optional)**. **Previous page** and **Next page** fetch
 upstream pages; **Filter this page** filters locally. PAT catalog search is unavailable.
-Select a plugin to load tools, then **Add**. Use toggles for enablement and
-**Tool policy** for overrides. **Configured plugins** includes other pages'
-selections. **Done** closes the modal; **Create Agent** saves changes.
+Select a plugin to load tools, then **Add**. Use toggles and **Tool policy** for
+overrides. **Configured plugins** includes selections from other pages. **Done**
+closes the modal; **Create Agent** saves changes.
 
-[Discovery](../../flows/agent-plugins.md#credential-scoped-discovery) uses the entered
-token transiently; saved Secret values are never read back. Credential/provider/Harness
-changes clear results; **Plugin selections JSON** preserves selections separately
-from Configuration. Check permissions for rejection or outbound access for service
-failure, then retry. Editing follows installation capabilities and the
-[policy contract](../agent-plugins.md); browsing proves no runtime permission.
+[Discovery](../../flows/agent-plugins.md#credential-scoped-discovery) requires
+permission to use the selected Secret. The server reads its value without returning
+it to the browser. Credential, provider, and Harness changes clear results; **Plugin
+selections JSON** preserves selections separately from Configuration. Check permissions
+or outbound access on failure, then retry. Editing follows installation capabilities
+and the [policy contract](../agent-plugins.md); browsing proves no runtime permission.
 
 Credentials are masked Namespace Secrets, excluded from Configuration JSON, Agent
 responses, and browser storage. Provisioning creates exact grants; ordinary drafts
@@ -115,9 +114,9 @@ and clears token/model. API-key Harness changes preserve both. Credential edits
 preserve model selection. Select or enter a model before saving; the starter list
 does not prove runtime compatibility or provider acceptance.
 
-The optional model-discovery API requires Namespace Agent `create`; it sends
-credentials upstream without saving them and lists Codex models for `codex_pat`.
-Console model selection does not require discovery.
+The optional model-discovery API requires Namespace Agent `create`, sends
+credentials upstream without saving them, and lists Codex models for `codex_pat`.
+Console selection needs no discovery.
 
 Configure Helm `api.modelDiscoveryCidrs` with provider IPv4 `/32` hosts, then
 upgrade. This grants only API Pods TCP 443 egress; Harness rules are unchanged.
@@ -172,7 +171,8 @@ all of them and always submits the chosen level explicitly. The server rechecks
 current Namespace policy when it creates the Agent and again when it admits a
 deployment.
 
-Failed rediscovery retains unsaved repository choices across navigation and retry.
+Failed rediscovery retains unsaved repository choices for retry. Preset forms also
+retain them across navigation.
 **Create Agent** stays blocked until discovery succeeds and filters choices against
 current policy. **Start over** discards selections.
 

@@ -104,6 +104,14 @@ test(
         line: "codex-app-server | codex.operational",
         attention: true,
       },
+      {
+        event: "compute.preflight-warning",
+        service: "occ-worker",
+        severity: "WARN",
+        attributes: { "occ.code": "KUBERNETES_VERSION_BELOW_MINIMUM" },
+        line: "occ-worker | compute.preflight-warning code=KUBERNETES_VERSION_BELOW_MINIMUM",
+        attention: true,
+      },
     ];
     for (const { event, service, severity, attributes } of records) {
       await demo.exportLog(event, {
@@ -237,6 +245,15 @@ test(
         path: join(demo.artifacts, "logs-worker-filter.png"),
         fullPage: true,
       });
+
+      // The warning must be selectable in Grafana and narrow both panels to the
+      // post-Collector warning, including its bounded code and WARN severity.
+      queries.length = 0;
+      await page.getByRole("combobox", { name: "Event", exact: true }).click();
+      await page.getByRole("option", { name: "compute.preflight-warning", exact: true }).click();
+      await assertQueries(records.filter(({ event }) => event === "compute.preflight-warning"));
+      await allPanel.getByText(records.at(-1).line, { exact: true }).waitFor();
+      await attentionPanel.getByText(records.at(-1).line, { exact: true }).waitFor();
     } catch (error) {
       // Only this disposable dashboard and synthetic datasource evidence are
       // retained; never capture request headers, cookies or browser storage.
