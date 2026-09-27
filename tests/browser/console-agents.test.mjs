@@ -3843,6 +3843,31 @@ test("Agent detail saves plugin changes for the next revision without changing a
   );
   assert.equal(await page.getByRole("button", { name: "Deploy new version" }).isDisabled(), false);
 
+  const retainedAfterNoop = {
+    ...editedPlugins,
+    [pluginId]: { ...editedPlugins[pluginId], enabled: true },
+  };
+  await json.fill(JSON.stringify(retainedAfterNoop, null, 2));
+  await page.getByRole("button", { name: "Channels", exact: true }).click();
+  await page.getByRole("heading", { name: "Channels", exact: true }).waitFor();
+  await page.getByRole("button", { name: "Plugins", exact: true }).click();
+  await page.getByRole("heading", { name: "Plugins", exact: true }).waitFor();
+  assert.deepEqual(
+    JSON.parse(await page.getByLabel("Plugin selections JSON").inputValue()),
+    retainedAfterNoop,
+  );
+  await page.locator("summary").filter({ hasText: "Plugin selections JSON" }).click();
+  await page
+    .getByLabel("Plugin selections JSON")
+    .fill(`\n${JSON.stringify(editedPlugins, null, 2)}\n`);
+  await page.getByRole("button", { name: "Save plugin selections", exact: true }).click();
+  await page.getByText("No plugin changes to save.").waitFor();
+  assert.equal(
+    pathRequests(requests, "PATCH", `/namespaces/${namespace.id}/agents/${agent.id}`).length,
+    lostResponseRequestCount + 1,
+  );
+  assert.equal(await page.getByRole("button", { name: "Deploy new version" }).isDisabled(), false);
+
   assert.deepEqual(
     pathRequests(requests, "PATCH", `/namespaces/${namespace.id}/agents/${agent.id}`).map(
       ({ body }) => body.plugins,

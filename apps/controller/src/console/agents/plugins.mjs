@@ -148,7 +148,6 @@ export function renderAgentPlugins(
     if (JSON.stringify(plugins) === JSON.stringify(baseline.plugins ?? {})) {
       input.value = initialText;
       input.setCustomValidity("");
-      context.drafts.forget("plugins");
       updateState();
       feedback.textContent = "No plugin changes to save.";
       return;
