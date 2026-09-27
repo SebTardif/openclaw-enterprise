@@ -3,6 +3,7 @@
 Use this guide to change OpenClaw Enterprise: the control plane, console, CLI,
 Drivers, deployment packaging, or documentation. For a first code change, start
 with [Local development](local-development.md) and the [first-change walkthrough](first-change.md).
+For a documentation-only change, start with the [writing guide](documentation.md).
 To use or administer an installation, start with [Getting Started](../README.md).
 
 ## Find the code and its design
