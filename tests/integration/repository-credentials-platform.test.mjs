@@ -513,7 +513,8 @@ test(
     async function revisionWork(currentRevision) {
       return (
         await fixture.pool.query(
-          `SELECT idempotency_key, namespace_id, agent_id, revision_id, actor_id, state, reason_code
+          `SELECT idempotency_key, namespace_id, agent_id, revision_id, actor_id, state, reason_code,
+                  EXTRACT(EPOCH FROM (available_at - updated_at)) * 1000 AS delay_ms
          FROM occ.controller_work WHERE namespace_id=$1 AND agent_id=$2 AND revision_id=$3`,
           [namespace.id, agent.id, currentRevision.id],
         )
@@ -534,18 +535,18 @@ test(
         .digest("hex")}`;
       const retirement = await kube.waitFor("exact unresolved retirement Work owner", async () =>
         (await revisionWork(currentRevision)).find(
-          (work) =>
-            work.idempotency_key === retirementKey &&
-            work.state === "queued" &&
-            work.reason_code === null,
+          (work) => work.idempotency_key === retirementKey && work.state === "queued",
         ),
       );
       assert.equal(retirement.namespace_id, namespace.id);
       assert.equal(retirement.agent_id, agent.id);
       assert.equal(retirement.revision_id, currentRevision.id);
       assert.equal(retirement.actor_id, failed.actor_id);
-      // Queued Work has no terminal reason; the worker reports pending cleanup separately.
-      await kube.waitFor("exact retirement Work pending cleanup event", () =>
+      // Missing credential-service inventory leaves provider state unknown. The
+      // worker must preserve workload/material retirement but require explicit
+      // operator recovery before treating provider cleanup as settled.
+      const operatorAction = "REPOSITORY_CLEANUP_OPERATOR_ACTION_REQUIRED";
+      await kube.waitFor("exact retirement Work operator action event", () =>
         fixture.events.some(
           (event) =>
             event.event === "worker.completed" &&
@@ -554,8 +555,31 @@ test(
             event.agentId === agent.id &&
             event.revisionId === currentRevision.id &&
             event.outcome === "pending" &&
-            event.code === "REPOSITORY_CLEANUP_PENDING",
+            event.code === operatorAction,
         ),
+      );
+      const deferred = await kube.waitFor(
+        "exact retirement Work operator action backoff",
+        async () =>
+          (await revisionWork(currentRevision)).find(
+            (work) =>
+              work.idempotency_key === retirementKey &&
+              work.state === "queued" &&
+              Number(work.delay_ms) >= 299_000,
+          ),
+      );
+      assert.equal(deferred.namespace_id, namespace.id);
+      assert.equal(deferred.agent_id, agent.id);
+      assert.equal(deferred.revision_id, currentRevision.id);
+      assert.equal(deferred.actor_id, failed.actor_id);
+      assert.ok(
+        (
+          await fixture.pool.query(
+            `SELECT 1 FROM occ.audit_events
+             WHERE resource_id = $1 AND details->>'reasonCode' = $2`,
+            [currentRevision.id, operatorAction],
+          )
+        ).rowCount >= 1,
       );
       await kube.waitFor(
         "refused revision's actual Pod, process and Secret retirement",
