@@ -1851,6 +1851,11 @@ export async function renderAgentDetail(context, { agent: preloadedAgent = null 
         return;
       }
       if (JSON.stringify(desiredPlugins) === JSON.stringify(baseline.plugins ?? {})) {
+        plugins.value = initialText;
+        plugins.setCustomValidity("");
+        context.drafts.forget("plugins");
+        feedbackLocked = false;
+        updateState();
         feedback.textContent = "No Plugin changes to save.";
         feedbackLocked = true;
         return;

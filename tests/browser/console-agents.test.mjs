@@ -3916,6 +3916,26 @@ test("Agent detail saves plugin policies for a future deployment without changin
     [],
   );
 
+  await page.locator("summary").filter({ hasText: "Plugin selections JSON" }).click();
+  await json.fill(`\n${JSON.stringify(expectedPlugins, null, 2)}\n`);
+  await page.getByText("Save or cancel Plugin edits before deploying.").waitFor();
+  assert.equal(
+    await page.getByRole("button", { name: "Deploy new version", exact: true }).isDisabled(),
+    true,
+  );
+  requests.length = 0;
+  await page.getByRole("button", { name: "Save Plugin settings", exact: true }).click();
+  await page.getByText("No Plugin changes to save.").waitFor();
+  assert.equal(await json.inputValue(), JSON.stringify(expectedPlugins, null, 2));
+  assert.deepEqual(
+    pathRequests(requests, "PATCH", `/namespaces/${namespace.id}/agents/${agent.id}`),
+    [],
+  );
+  assert.equal(
+    await page.getByRole("button", { name: "Deploy new version", exact: true }).isDisabled(),
+    false,
+  );
+
   await page.screenshot({ path: join(artifacts, "agent-plugin-policy-saved.png"), fullPage: true });
   requests.length = 0;
   const deployed = page.waitForResponse(
