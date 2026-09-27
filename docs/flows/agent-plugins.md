@@ -1,7 +1,7 @@
 ---
 created: 2026-09-08
 updated: 2026-09-27
-last_updated_session: 01a0e176-b1ee-7641-85e8-c167f10c6a66
+last_updated_session: authoring-run/4552e8d0-e9b9-41f5-8eea-0f75ec9e1051
 ---
 
 # Agent Plugin Deployment Flow
@@ -73,9 +73,10 @@ or credential is stored.
 
 The [Codex Plugin Driver](../../apps/controller/src/drivers/plugin/index.ts)
 selects its configured catalog. Hosted discovery hydrates identity, pages 20
-GLOBAL entries, and loads tools (`null`: unknown). The hardcoded catalog returns
-entries without provider I/O or known tools and account access. Console permits
-supported entries after reading details; unsupported releases remain unavailable.
+GLOBAL entries, and loads tools (`null`: unknown). The hardcoded catalog avoids
+provider I/O, lists Linear tools, and leaves unverified tools unknown. Console
+permits supported entries after reading details; unsupported releases remain
+unavailable.
 Hosted reads are bounded and redirect-free. OCC returns `no-store` metadata,
 rejects results echoing credentials, and suppresses artifacts and upstream errors.
 Driver-owned links and [setup guidance](../reference/drivers/plugin-bundled.md#selection-and-catalogs)
@@ -290,6 +291,8 @@ completed deployment attempt rather than ongoing runtime health.
 [keep this for the user to add notes. do not change between edits]
 
 ## Changelog
+
+- 2026-09-27 01:10: Added Linear tools; startup validation remains authoritative. (authoring-run/4552e8d0-e9b9-41f5-8eea-0f75ec9e1051 - 7c3ecbfce4fa38b19cdd7fbffd179d496cc52e29)
 
 - 2026-09-27 06:07: Expanded the curated catalog and marked unsupported releases unavailable. (01a0e176-b1ee-7641-85e8-c167f10c6a66 - eb3d6c4c0b8881e5f7efe17c03cc05357e7c7734)
 

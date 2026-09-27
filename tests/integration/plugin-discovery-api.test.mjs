@@ -666,8 +666,21 @@ test("Curated discovery admits Linear without provider I/O and saves its selecti
   );
   assert.ok(linear);
   assert.equal(linear.remoteId, "plugin_asdk_app_69a089a326dc8191b32a3f2553f5be2c");
-  assert.equal(linear.tools, null);
-  assert.equal(linear.selectableWithoutTools, true);
+  assert.equal(linear.selectableWithoutTools, undefined);
+  assert.equal(linear.tools.length, 42);
+  const linearTools = new Map(linear.tools.map((tool) => [tool.id, tool]));
+  assert.equal(
+    linearTools.get("asdk_app_69a089a326dc8191b32a3f2553f5be2c/linear.fetch")?.writes,
+    false,
+  );
+  assert.equal(
+    linearTools.get("asdk_app_69a089a326dc8191b32a3f2553f5be2c/linear.save_issue")?.writes,
+    true,
+  );
+  assert.equal(
+    linearTools.get("asdk_app_69a089a326dc8191b32a3f2553f5be2c/linear.save_issue")?.destructive,
+    true,
+  );
   const details = await fixture.request("POST", `${path}/details`, {
     body: { pluginId: linear.remoteId },
   });
@@ -700,7 +713,20 @@ test("Curated discovery admits Linear without provider I/O and saves its selecti
     { executionMode: "dedicated" },
   );
   const plugins = {
-    [linear.id]: { enabled: true, toolDefaults: { reviewer: "auto" } },
+    [linear.id]: {
+      enabled: true,
+      toolDefaults: { enabled: false, approval: "prompt", reviewer: "human" },
+      tools: {
+        "asdk_app_69a089a326dc8191b32a3f2553f5be2c/linear.fetch": {
+          enabled: true,
+          approval: "approve",
+        },
+        "asdk_app_69a089a326dc8191b32a3f2553f5be2c/linear.save_issue": {
+          enabled: true,
+          approval: "prompt",
+        },
+      },
+    },
     [slack.id]: { enabled: true, toolDefaults: { reviewer: "auto" } },
   };
   const updated = await fixture.updateAgent(namespace.id, agent.id, {
