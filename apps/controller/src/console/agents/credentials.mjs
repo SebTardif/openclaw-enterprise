@@ -144,6 +144,7 @@ export function createRuntimeCredentialsPanel({
   revisionsLoaded,
   revisionCount,
   onConfigurationChange,
+  onConfigurationSettled,
   onStatusChange,
 }) {
   const endpoint = `${path}/runtime-credentials`;
@@ -491,6 +492,9 @@ export function createRuntimeCredentialsPanel({
           updateControls();
           render();
           onStatusChange();
+          if (configurationSaved) {
+            onConfigurationSettled?.();
+          }
         }
       }
     });

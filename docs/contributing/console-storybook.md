@@ -109,18 +109,11 @@ OpenClaw and unsupported-runtime stories retain the draft workflow: provision
 credentials and deploy from Agent detail. These transitions demonstrate
 presentation only; they do not prove a worker ran.
 
-The DevDay segment offers SWE, Community, Q&A, Oncall, and both standard presets.
-DevDay presets supply model defaults, templated workspace files, and four Slack
-channels. Choose or create a model Secret; configure Linear from the simulated
-curated catalog and select `openclaw/openclaw-enterprise` or `openclaw/openclaw`.
-The catalog works with any Preset, either Secret option, or no Preset. Production
-discovery requires an eligible Codex service-account token.
-The workspace story demonstrates variable-rendered and intentionally empty files.
-The Standard OpenClaw preset story previews its native harness settings.
-Preset Secret stories cover existing selection, pending metadata, denied reads,
-and an empty catalog; each leaves new-token entry available explicitly.
-Community Agent, Q&A Agent, and Oncall Agent remain disabled in the example
-Installation YAML.
+DevDay stories cover preset workspace files, Slack channels, model Secrets, and
+simulated Linear catalog selection. Production discovery requires an eligible Codex
+service-account token. Preset Secret stories cover selection, pending or denied
+metadata, and an empty catalog; new-token entry remains available. Community Agent,
+Q&A Agent, and Oncall Agent remain disabled in the example Installation YAML.
 
 Use the [DevDay storyboard](../../scripts/console-storybook/devday-storyboard.md)
 for presenter actions, expected visible states, and fallbacks.
@@ -163,6 +156,12 @@ content when the response arrives. These fixtures prove presentation; the
 Reset story clears retained state.
 
 ### Keep edits while navigating
+
+In **Components/Native admin → Available**, switch Agent tabs and return from a
+browser tab. The card remains mounted while access is checked; **Refresh access**
+explicitly rereads it. The launch target and access responses are simulated.
+In **Components/Plugins → Available catalog**, filter and select a plugin, switch
+between Available and Configured, and return to the filter and selected detail.
 
 Use **Pages/Agent detail → Keep Configuration edits**, **Components/Workspace →
 Keep unsaved files**, **Components/Credentials → Keep authentication choices**,
