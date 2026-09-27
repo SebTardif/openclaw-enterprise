@@ -9,6 +9,7 @@ import { chromium } from "playwright";
 import { createConsoleAppFixture } from "../helpers/console-app.mjs";
 
 const routeHoldTimeoutMs = 30_000;
+const themeStorageKey = "openclaw.console.theme";
 
 async function artifactDirectory(t) {
   const configured = process.env.OCC_TEST_CONSOLE_ARTIFACT_DIR;
@@ -33,7 +34,7 @@ async function launchBrowser() {
   return browser;
 }
 
-async function newPage(t, fixture) {
+async function newPage(t, fixture, { contextOptions = {}, initScript = null } = {}) {
   const artifacts = await artifactDirectory(t);
   const browser = await launchBrowser();
   let context;
@@ -54,7 +55,10 @@ async function newPage(t, fixture) {
       throw cleanupError;
     }
   });
-  context = await browser.newContext();
+  context = await browser.newContext(contextOptions);
+  if (initScript !== null) {
+    await context.addInitScript(initScript);
+  }
   return { page: await context.newPage(), artifacts };
 }
 
@@ -315,6 +319,79 @@ test("console browser flow keeps Namespace URL state across global pages and log
     requests.some((request) => /\/deploy|\/agents\/agt_/.test(request.path)),
     false,
   );
+});
+
+test("console appearance follows system preference and persists explicit choices", async (t) => {
+  const fixture = await createConsoleAppFixture(t);
+  await fixture.bootstrap();
+  await fixture.createNamespace("Theme", { ready: true });
+
+  const { page: systemPage } = await newPage(t, fixture, {
+    contextOptions: { colorScheme: "dark" },
+  });
+  await systemPage.goto(`${fixture.origin}/console/login`);
+  assert.equal(
+    await systemPage.evaluate(() => globalThis.document.documentElement.dataset.theme),
+    "dark",
+  );
+  assert.equal(
+    await systemPage.evaluate((key) => localStorage.getItem(key), themeStorageKey),
+    null,
+  );
+
+  const { page: persistedPage } = await newPage(t, fixture, {
+    initScript: `localStorage.setItem(${JSON.stringify(themeStorageKey)}, "dark")`,
+  });
+  await persistedPage.route("**/console/console.mjs", (route) =>
+    route.fulfill({ status: 204, contentType: "text/javascript", body: "" }),
+  );
+  await persistedPage.goto(`${fixture.origin}/console/login`, { waitUntil: "domcontentloaded" });
+  assert.equal(
+    await persistedPage.evaluate(() => globalThis.document.documentElement.dataset.theme),
+    "dark",
+  );
+  await persistedPage.unroute("**/console/console.mjs");
+
+  const { page } = await newPage(t, fixture);
+  await login(page, fixture, "/console/settings");
+  await openShellMenu(page);
+  assert.equal(
+    await page.getByRole("menuitemradio", { name: "System" }).getAttribute("aria-checked"),
+    "true",
+  );
+
+  await page.getByRole("menuitemradio", { name: "Dark" }).click();
+  assert.equal(
+    await page.evaluate(() => globalThis.document.documentElement.dataset.theme),
+    "dark",
+  );
+  assert.equal(await page.evaluate((key) => localStorage.getItem(key), themeStorageKey), "dark");
+  assert.equal(
+    await page.getByRole("menuitemradio", { name: "Dark" }).getAttribute("aria-checked"),
+    "true",
+  );
+
+  await page.getByRole("menuitemradio", { name: "Light" }).click();
+  assert.equal(
+    await page.evaluate(() => globalThis.document.documentElement.dataset.theme),
+    "light",
+  );
+  assert.equal(await page.evaluate((key) => localStorage.getItem(key), themeStorageKey), "light");
+  await page.reload();
+  await page.getByRole("heading", { name: "Settings" }).waitFor();
+  assert.equal(
+    await page.evaluate(() => globalThis.document.documentElement.dataset.theme),
+    "light",
+  );
+
+  await openShellMenu(page);
+  await page.getByRole("menuitemradio", { name: "Dark" }).click();
+  await page.getByRole("menuitem", { name: "Logout" }).click();
+  await page.waitForURL(/\/console\/login$/);
+  assert.deepEqual(await page.evaluate(() => ({ ...localStorage })), {
+    [themeStorageKey]: "dark",
+  });
+  assert.deepEqual(await page.evaluate(() => ({ ...sessionStorage })), {});
 });
 
 test("console ignores stale collection successes and errors while switching Namespaces", async (t) => {

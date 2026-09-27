@@ -14,6 +14,8 @@ const CONSOLE_ASSETS = new Map([
     "image/vnd.microsoft.icon": ["favicon.ico"],
     "text/javascript; charset=utf-8": [
       "api-client.mjs",
+      "theme-bootstrap.mjs",
+      "theme.mjs",
       "view-lifetime.mjs",
       "navigation.mjs",
       "shell.mjs",

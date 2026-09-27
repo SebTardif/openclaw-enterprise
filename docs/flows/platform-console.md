@@ -14,8 +14,9 @@ API and IAM authorize resources.
 
 ## Entry Points
 
-- Browser entry: `apps/controller/src/console/console.mjs` composes the session,
-  request client, view lifetime, navigation, and shell.
+- Browser entry: `apps/controller/src/console/theme-bootstrap.mjs` applies
+  appearance before styles load. `apps/controller/src/console/console.mjs`
+  composes session, requests, navigation, and shell.
 - `api-client.mjs` owns cancellation and session expiry; `view-lifetime.mjs`
   owns generation and abort state; `navigation.mjs` owns return paths and history;
   `shell.mjs` owns navigation and collections.

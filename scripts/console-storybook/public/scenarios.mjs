@@ -609,7 +609,46 @@ export const scenarios = {
     group: "Pages/Settings",
     name: "Account",
     path: "/console/settings",
-    description: "Signed-in name and email. There are no editable settings in this release.",
+    description:
+      "Signed-in name and email. Appearance choices live in the account menu and persist in the browser.",
+  },
+  appearanceDarkLogin: {
+    group: "Pages/Appearance",
+    name: "Dark signed out",
+    path: "/console/login",
+    signedOut: true,
+    theme: "dark",
+    description: "The signed-out form uses the persisted dark appearance before login.",
+  },
+  appearanceDarkShell: {
+    group: "Pages/Appearance",
+    name: "Dark shell and status",
+    path: "/console/agents?debug=true",
+    theme: "dark",
+    buildRevision: "abcdef1234567890abcdef1234567890abcdef12",
+    rules: [{ path: "/namespaces/ns_00000000-0000-4000-8000-000000000001/agents", status: 503 }],
+    description:
+      "The dark shell covers sidebar navigation, account appearance choices, and a failed collection state.",
+    actions: account,
+  },
+  appearanceDarkChannelDrawer: {
+    group: "Pages/Appearance",
+    name: "Dark channel drawer",
+    path: `${draft}&tab=channels`,
+    theme: "dark",
+    slack: true,
+    actions: [click("Edit Slack")],
+    description: "The Slack channel drawer, Secret controls, and modal backdrop use dark tokens.",
+  },
+  appearanceDarkStopDialog: {
+    group: "Pages/Appearance",
+    name: "Dark stop dialog",
+    path: revision,
+    theme: "dark",
+    deployed: true,
+    actions: [click("Stop Agent")],
+    description:
+      "The Agent stop confirmation dialog keeps warning and destructive controls legible.",
   },
   notFound: {
     group: "Pages/Navigation",

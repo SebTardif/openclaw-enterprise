@@ -42,8 +42,7 @@ tab is hidden. Namespace rows are read-only.
 | Agents     | Selected Namespace; Namespace `read`, then exact Agent `read` filtering. |
 | Namespaces | Installation-wide collection filtered by exact Namespace `read`.         |
 
-The console uses a light appearance and OCC-served fonts; no external font
-service is required.
+The console uses OCC-served fonts; no external font service is required.
 
 Returning pages retain content during access checks; controls await authorization.
 Agent detail keeps its mounted editor on refocus while access remains available.
@@ -55,8 +54,10 @@ denial clears all previews.
 Use the **Namespace** selector in the page header to switch scope on desktop or
 mobile. It lists readable Namespaces and shows the current selection. The
 Installation-wide Namespaces page omits the selector. The bottom
-**OpenClaw Enterprise** menu contains **Settings** and **Logout**. Settings shows
-the signed-in account and no configurable settings.
+**OpenClaw Enterprise** menu contains **Settings**, **Logout**, and local
+**Appearance** choices for **System**, **Light**, or **Dark**. The appearance
+choice stays in browser storage for this origin, applies before paint, and
+survives logout.
 
 The selected Namespace stays in `?namespace=<id>` across pages, reload, and Back.
 An unreadable explicit ID shows **Namespace unavailable** and requires another

@@ -151,6 +151,8 @@ test("console static routes expose only public assets and preserve API JSON fail
     ["/console/preset-variables.mjs", /javascript/i],
     ["/console/console.css", /text\/css/i],
     ["/console/fonts/instrument-sans-latin.woff2", /font\/woff2/i],
+    ["/console/theme-bootstrap.mjs", /javascript/i],
+    ["/console/theme.mjs", /javascript/i],
     ["/console/console.mjs", /javascript/i],
     ["/console/agents.mjs", /javascript/i],
     ["/console/agents/harness-auth.mjs", /javascript/i],
