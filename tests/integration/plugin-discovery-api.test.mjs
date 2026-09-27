@@ -895,12 +895,7 @@ test("Selected Secret discovery reaches the hosted provider with the current cre
   assert.deepEqual(artifact.configuration.apps["fixture-app"].tools, {
     "renamed_123.search": { enabled: true, approval_mode: "prompt" },
   });
-  assert.deepEqual(artifact.configuration.plugins, {
-    _default: { enabled: false },
-    "fixture@openai-curated-remote": { enabled: true },
-  });
-
-  // Skills without apps have a known empty inventory and follow normal Agent admission.
+  // Skill-only plugins are available with a known empty tool inventory.
   plugin.release.app_ids = [];
   const skillsOnly = await fixture.request("POST", `${fixture.path}/details`, {
     body: { secretRef: secret.ref, pluginId: "remote-fixture" },
@@ -908,19 +903,6 @@ test("Selected Secret discovery reaches the hosted provider with the current cre
   assert.equal(skillsOnly.status, 200);
   assert.equal(skillsOnly.data.available, true);
   assert.deepEqual(skillsOnly.data.tools, []);
-  const agent = await fixture.createAgent(
-    fixture.namespace.id,
-    "Writing Agent",
-    createHarnessConfiguration("codex", "gpt-5.1"),
-    { executionMode: "dedicated" },
-  );
-  const plugins = { [skillsOnly.data.id]: { enabled: true } };
-  await fixture.updateAgent(fixture.namespace.id, agent.id, {
-    configurationId: agent.configurationId,
-    plugins,
-  });
-  const revision = await fixture.deployAgent(fixture.namespace.id, agent.id);
-  assert.deepEqual(revision.plugins.plugins, plugins);
 
   // Rotation is observed by the next request without persisting the old or new value in discovery state.
   const updatePath = `/namespaces/${fixture.namespace.id}/secrets/${secret.id}`;

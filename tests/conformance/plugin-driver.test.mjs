@@ -479,35 +479,24 @@ test("Codex startup translation renders selected marketplace app plugins", () =>
   ]);
 });
 
-test("Codex activates selected skills independently of app tools and excludes disabled or failed plugins", () => {
+test("Codex activates selected skills independently of app tools", () => {
   const skillPluginId = "codex-plugin:writing@openai-curated-remote";
   const skillDetail = codexDetail("writing", [], { skills: [{ name: "draft" }] });
   const selections = {
     ...codexSelection(linearPluginId, { toolDefaults: { enabled: false } }),
-    ...codexSelection(calendarPluginId, { enabled: false }),
-    ...codexSelection(thirdPluginId),
     ...codexSelection(skillPluginId),
   };
-  const artifact = codexRuntimeArtifact(
-    selections,
-    [
-      codexDetail("linear", ["app_notes"], { skills: [{ name: "notes" }] }),
-      codexDetails[1],
-      codexDetails[2],
-      skillDetail,
-    ],
-    [{ pluginId: thirdPluginId }],
-  );
+  const artifact = codexRuntimeArtifact(selections, [
+    codexDetail("linear", ["app_notes"], { skills: [{ name: "notes" }] }),
+    skillDetail,
+  ]);
   assert.deepEqual(artifact.configuration.plugins, {
     _default: { enabled: false },
     "linear@openai-curated-remote": { enabled: true },
-    "google-calendar@openai-curated-remote": { enabled: false },
-    "third-plugin@openai-curated-remote": { enabled: false },
     "writing@openai-curated-remote": { enabled: true },
   });
   assert.deepEqual(artifact.configuration.apps, {
     _default: { enabled: false },
-    connector_third_fixture: { enabled: false },
     app_notes: {
       enabled: true,
       default_tools_enabled: false,

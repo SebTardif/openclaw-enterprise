@@ -1145,7 +1145,7 @@ function codexPluginConfigEdits(configuration) {
       mergeStrategy: "replace",
       value: configuration.features?.[feature] === true,
     })),
-    // Replace owned tables so a removed selection cannot retain a user-layer grant.
+    // Project the complete OCE-owned policy without retaining native table entries.
     ...["apps", "plugins"].map((keyPath) => ({
       keyPath,
       mergeStrategy: "replace",
@@ -1256,9 +1256,9 @@ function codexSummaryMatchesInstall(summary, plugin) {
   return summary?.id === plugin.nativeId || summary?.id === slug || summary?.name === slug;
 }
 
-function verifyCodexPluginDetail(plugin, readParams, detail, requireEnabled) {
+function verifyCodexPluginDetail(plugin, readParams, detail) {
   const summary = detail?.plugin?.summary;
-  if (summary?.installed !== true || (requireEnabled && summary?.enabled !== true)) {
+  if (summary?.installed !== true || summary?.enabled !== true) {
     throw new Error("Codex plugin was not installed and enabled before runtime readiness.");
   }
   if (detail.plugin.marketplaceName !== undefined && detail.plugin.marketplaceName !== plugin.registry) {
@@ -1306,12 +1306,10 @@ async function readCodexToolStatuses() {
 }
 
 async function installCodexSelectionSet(selections, failures = []) {
+  if (Object.keys(selections).length === 0) return { successfulPluginIds: [], failures: [] };
   const enabledPluginIds = enabledCodexSelectionIds(selections);
-  const readParamsList = Object.keys(selections).length === 0
-    ? []
-    : pluginRuntimeTranslator.codexReadParamsForSelections(
-        selections, await codexAppServerRequest("plugin/list", {}),
-      );
+  const listed = await codexAppServerRequest("plugin/list", {});
+  const readParamsList = pluginRuntimeTranslator.codexReadParamsForSelections(selections, listed);
   const resolvedDetails = [];
   for (const readParams of readParamsList) {
     resolvedDetails.push(await codexAppServerRequest("plugin/read", readParams));
@@ -1396,9 +1394,7 @@ async function installCodexSelectionSet(selections, failures = []) {
     ) {
       installedDetails.push(resolvedDetails[readParamsList.indexOf(readParams)]);
     } else {
-      const detail = await codexAppServerRequest("plugin/read", readParams);
-      verifyCodexPluginDetail(selectedPlugin, readParams, detail, false);
-      installedDetails.push(detail);
+      installedDetails.push(await codexAppServerRequest("plugin/read", readParams));
     }
   }
   const installedArtifact = pluginRuntimeTranslator.codexRuntimeArtifact(selections, installedDetails, failed, toolStatuses);
@@ -1418,7 +1414,7 @@ async function installCodexSelectionSet(selections, failures = []) {
       throw new Error("Codex plugin installed identity does not match the selected catalog entry.");
     }
     const detail = await codexAppServerRequest("plugin/read", readParams);
-    verifyCodexPluginDetail(plugin, readParams, detail, true);
+    verifyCodexPluginDetail(plugin, readParams, detail);
   }
   const effectiveConfiguration = await readCodexPluginConfiguration();
   await verifyCodexReviewerConfiguration(effectiveResolvedArtifact.configuration, effectiveConfiguration);

@@ -202,11 +202,12 @@ reviewer checks, and real Agent enforcement remain draft acceptance gates; see
 
 Dedicated Codex writes `apps._default.enabled=false` and
 `plugins._default.enabled=false` into its isolated `CODEX_HOME` before starting
-app-server. Empty selections also disable the Apps and Plugins features.
+app-server. This bootstrap replaces the previous user config on every restart.
+Empty selections disable the Apps and Plugins features and need no plugin RPCs.
 After installation, startup replaces the owned app and plugin tables with the
 current selection: exact `name@marketplace` plugin IDs, concrete app IDs, and
-explicit disabled entries for disabled or failed selections. Removed selections
-lose their user-layer grants. Inherited unselected entries that enable a plugin
+explicit disabled entries for disabled or failed selections. With active selections,
+inherited unselected entries that enable a plugin
 or app, even by omitting `enabled`, prevent readiness. Source/account-disabled
 plugins remain disabled.
 

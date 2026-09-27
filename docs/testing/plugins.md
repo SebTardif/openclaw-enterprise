@@ -27,17 +27,6 @@ commit, selected suite, nonsecret image references, native runtime versions,
 model, pass/fail/skip counts, and relevant sanitized log path for every claimed
 proof.
 
-For the local Codex configuration boundary, set `OCC_TEST_CODEX_APP_SERVER_BIN`
-to a standalone app-server binary supporting `plugins._default.enabled`, then run
-`node --test tests/integration/codex-plugin-policy-runtime.test.mjs`. This opt-in
-`codex-plugin-policy` lane is excluded from the `ci` and `full` groups and has no
-GitHub workflow entrypoint. It runs the production policy writer over authenticated
-WebSockets in temporary homes and workspaces, verifying that an empty selection
-removes persisted grants and rejects conflicting higher-priority grants. It uses
-synthetic transport credentials and no model account. Record the binary version
-and digest; this proves native config write/reload/verification, not plugin
-discovery, tool invocation, or a full Agent turn.
-
 Plugin warning proof has three layers. Conformance verifies native operation
 classification and effective disabled configuration. PostgreSQL worker tests
 verify successful deployment warnings and live-claim fencing. Real native proof

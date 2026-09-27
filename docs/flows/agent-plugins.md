@@ -182,12 +182,12 @@ maps to `destructive_enabled` independently. `toolDefaults.reviewer` maps
 omission inherits the Harness reviewer. Unsupported reviewer scopes fail before save.
 After installation, startup rechecks catalog identity, version, app mapping, and
 reported components. Remote `plugin/read` does not inspect bundles.
-`writeCodexPluginConfiguration` replaces both tables, clearing stale grants:
+`writeCodexPluginConfiguration` replaces both owned tables:
 successful enabled selections get true; disabled/failed selections get false.
 Final `plugin/read` verifies enablement. Failed-only app bindings are disabled.
 Disabled selections are neither installed nor reported.
-Even empty selections undergo `config/read` verification. Unselected entries must
-be explicitly false. Selected app tool/account policies must match requested
+With active selections, `config/read` verifies unselected entries are explicitly
+false. Selected app tool/account policies must match requested
 settings; absent/null fields inherit. Explicit tool enables cannot bypass omitted
 defaults.
 
@@ -297,7 +297,7 @@ completed deployment attempt rather than ongoing runtime health.
 
 ## Changelog
 
-- 2026-09-27 15:10: Added native plugin defaults, stale-grant reconciliation, skill admission, and catalog verification before activation. (codex/01a0d755-b86e-7d33-bddc-c21ba03a3276 - ab9527bb)
+- 2026-09-27 15:10: Added native plugin defaults, selected activation, skill admission, and catalog verification before activation. (codex/01a0d755-b86e-7d33-bddc-c21ba03a3276 - ab9527bb)
 
 - 2026-09-27 21:52: Debounced catalog searches and canceled obsolete requests. (01a0e4d2-4f51-7780-b0fc-2352cb99078f - a599db7e)
 
