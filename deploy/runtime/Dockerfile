@@ -1,4 +1,4 @@
-ARG OPENCLAW_COMMIT=29fe7bd8da2c5cce125c8b21b0238673c81feeb2
+ARG OPENCLAW_COMMIT=ef2f575ec382cea3ed58a49e858c96425c8ad586
 ARG NODE_BASE_IMAGE=docker.io/library/node:24-bookworm@sha256:934240a162082fd8b8a2f90cd5114446443f1eba1c5378f6687167ca405e6584
 ARG NODE_RUNTIME_BASE_IMAGE=docker.io/library/node:24-bookworm-slim@sha256:3638d9a6fe4030bd716be989438248074489337ba3275657f93595428be4fc03
 
@@ -36,7 +36,7 @@ RUN --mount=type=secret,id=build-ca,required=false \
     if [ -f /run/secrets/build-ca ]; then export CURL_CA_BUNDLE=/run/secrets/build-ca; fi; \
     curl --fail --location --silent --show-error \
       "https://codeload.github.com/openclaw/openclaw/tar.gz/${GIT_COMMIT}" -o /tmp/openclaw-source.tar.gz; \
-    echo 'baca838f3cb122771477ca18726ec934428082c76f77323c310ae960eb8e0e27  /tmp/openclaw-source.tar.gz' | sha256sum --check --strict; \
+    echo 'ff9c3e4f392be42b75ab6bf256fdfa6799db17933ac22e5b9eea2a0e49d4bcd1  /tmp/openclaw-source.tar.gz' | sha256sum --check --strict; \
     tar -xzf /tmp/openclaw-source.tar.gz --strip-components=1; \
     rm /tmp/openclaw-source.tar.gz
 # Pin the stock Codex package used by the bundled upstream OpenClaw extension.
