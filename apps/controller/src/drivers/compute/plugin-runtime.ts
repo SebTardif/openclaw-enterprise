@@ -2,6 +2,7 @@ import {
   type AgentRevision,
   type PluginDesiredState,
   validPluginRevisionState,
+  validPluginApprovers,
 } from "@openclaw-enterprise/contracts";
 
 export const PLUGIN_RUNTIME_DIRECTORY = "/etc/openclaw/plugin-runtime";
@@ -43,10 +44,15 @@ export interface CodexRepositoryBrokerNetworkPolicy {
 }
 
 export type PluginRuntimeSpec =
-  | { readonly kind: "openclaw"; readonly selections: PluginDesiredState }
+  | {
+      readonly kind: "openclaw";
+      readonly selections: PluginDesiredState;
+      readonly pluginApprovers?: AgentRevision["pluginApprovers"];
+    }
   | {
       readonly kind: "codex";
       readonly selections: PluginDesiredState;
+      readonly pluginApprovers?: AgentRevision["pluginApprovers"];
       readonly repositoryBrokerNetworkPolicy?: CodexRepositoryBrokerNetworkPolicy;
     };
 
@@ -80,13 +86,28 @@ function pluginFreeRuntimeForRevision(
   revision: Readonly<AgentRevision>,
   repositoryBrokerNetworkPolicy?: CodexRepositoryBrokerNetworkPolicy,
 ): PluginRuntimeSpec | undefined {
+  if (!validPluginApprovers(revision.pluginApprovers)) {
+    throw new Error("AgentRevision plugin approvers are invalid.");
+  }
   if (revision.harness.id === "codex" && revision.harness.mode === "dedicated") {
-    return repositoryBrokerNetworkPolicy === undefined
-      ? { kind: "codex", selections: {} }
-      : { kind: "codex", selections: {}, repositoryBrokerNetworkPolicy };
+    return {
+      kind: "codex",
+      selections: {},
+      ...(revision.pluginApprovers === undefined
+        ? {}
+        : { pluginApprovers: revision.pluginApprovers }),
+      ...(repositoryBrokerNetworkPolicy === undefined ? {} : { repositoryBrokerNetworkPolicy }),
+    };
   }
   if (repositoryBrokerNetworkPolicy !== undefined) {
     throw new Error("Repository credential broker network policy requires Codex plugin runtime.");
+  }
+  if (
+    revision.pluginApprovers !== undefined &&
+    revision.harness.id === "openclaw" &&
+    revision.harness.mode === "embedded"
+  ) {
+    return { kind: "openclaw", selections: {}, pluginApprovers: revision.pluginApprovers };
   }
   return undefined;
 }
@@ -99,7 +120,7 @@ export function pluginRuntimeSpecForRevision(
   if (state === undefined) {
     return pluginFreeRuntimeForRevision(revision, repositoryBrokerNetworkPolicy);
   }
-  if (!validPluginRevisionState(state)) {
+  if (!validPluginRevisionState(state) || !validPluginApprovers(revision.pluginApprovers)) {
     throw new Error("AgentRevision plugin selections are invalid.");
   }
   if (
@@ -110,10 +131,13 @@ export function pluginRuntimeSpecForRevision(
   }
   const runtime: PluginRuntimeSpec =
     state.driver.implementation === "occ/codex-plugin"
-      ? repositoryBrokerNetworkPolicy === undefined
-        ? { kind: "codex", selections: state.plugins }
-        : { kind: "codex", selections: state.plugins, repositoryBrokerNetworkPolicy }
-      : { kind: "openclaw", selections: state.plugins };
+      ? {
+          kind: "codex",
+          selections: state.plugins,
+          pluginApprovers: revision.pluginApprovers,
+          ...(repositoryBrokerNetworkPolicy === undefined ? {} : { repositoryBrokerNetworkPolicy }),
+        }
+      : { kind: "openclaw", selections: state.plugins, pluginApprovers: revision.pluginApprovers };
   validateDriverMatchesRuntime(revision, runtime);
   return runtime;
 }
@@ -156,6 +180,7 @@ function runtimeManifest(runtime: PluginRuntimeSpec): Readonly<Record<string, un
   return {
     kind: runtime.kind,
     selections: runtime.selections,
+    ...(runtime.pluginApprovers === undefined ? {} : { pluginApprovers: runtime.pluginApprovers }),
     ...(runtime.kind === "codex" && runtime.repositoryBrokerNetworkPolicy !== undefined
       ? { repositoryBrokerNetworkPolicy: runtime.repositoryBrokerNetworkPolicy }
       : {}),
