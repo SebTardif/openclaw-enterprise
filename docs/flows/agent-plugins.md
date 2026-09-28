@@ -181,16 +181,15 @@ inventory; overrides require observed owned IDs. `driverPolicy.destructiveEnable
 maps to `destructive_enabled` independently. `toolDefaults.reviewer` maps
 `human`/`auto` to app `approvals_reviewer` values `user`/`auto_review`;
 omission inherits the Harness reviewer. Unsupported reviewer scopes fail before save.
-After installation, startup rechecks catalog identity, version, app mapping, and
-reported components. Remote `plugin/read` does not inspect bundles.
+Startup rechecks catalog identity, version, apps, and reported components after
+installation; `plugin/read` cannot inspect bundles.
 `writeCodexPluginConfiguration` replaces both owned tables:
 successful enabled selections get true; disabled/failed selections get false.
-Final `plugin/read` verifies enablement. Failed-only app bindings are disabled.
-Disabled selections are neither installed nor reported.
-With active selections, `config/read` verifies unselected entries are explicitly
-false. Selected app tool/account policies must match requested
-settings; absent/null fields inherit. Explicit tool enables cannot bypass omitted
-defaults.
+Final reads verify source enablement and effective policy. With active selections,
+unselected entries must be explicitly false; selected app tool/account policies
+must match. Absent/null fields inherit; explicit tool enables cannot bypass omitted
+defaults. Failed-only app bindings are disabled; disabled selections are neither
+installed nor reported.
 
 `runtime-entrypoints.ts:verifyCodexReviewerConfiguration` checks explicit app
 reviewers against effective app/link settings and `configRequirements/read`.
@@ -198,9 +197,8 @@ It rejects forbidden reviewers, incompatible automatic-review approval settings,
 and human review conflicting with current-model requirements. These startup
 checks do not establish later session/model routing, strict review, workspace
 configuration, or managed requirements beyond reviewer checks. See the [remaining proof](../testing/plugins.md#current-proof-notes).
-Codex owns cache integrity and runtime health. The runtime must implement
-`plugins._default.enabled`; a config echo cannot distinguish older binaries
-that ignore it. See [runtime prerequisites](../reference/drivers/plugin-bundled.md#native-mappings-and-limits).
+Codex owns cache integrity and runtime health. Older binaries can echo
+`plugins._default.enabled` without enforcement; see [runtime prerequisites](../reference/drivers/plugin-bundled.md#native-mappings-and-limits).
 
 For Compute-owned Kubernetes workloads, a selected OpenClaw install command's
 normal nonzero exit, a matching Codex `plugin/install` error response, or a
@@ -300,7 +298,7 @@ completed deployment attempt rather than ongoing runtime health.
 
 - 2026-09-27 23:40: Catalog prefetch and loading feedback. (01a0e53a-f2be-7bd1-a9c1-36e827b2ee47 - b38554ac)
 
-- 2026-09-27 15:10: Added native plugin defaults, selected activation, skill admission, and catalog verification before activation. (codex/01a0d755-b86e-7d33-bddc-c21ba03a3276 - ab9527bb)
+- 2026-09-27 15:10: Added plugin defaults, selected activation, skills, and catalog checks. (codex/01a0d755-b86e-7d33-bddc-c21ba03a3276 - ab9527bb)
 
 - 2026-09-27 21:52: Debounced catalog searches and canceled obsolete requests. (01a0e4d2-4f51-7780-b0fc-2352cb99078f - a599db7e)
 
