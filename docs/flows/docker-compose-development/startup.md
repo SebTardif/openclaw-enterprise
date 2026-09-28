@@ -55,9 +55,9 @@ graph TD
 The helper requires the checkout-local `bin/occ` from `pnpm cli:build`, accepts
 `--key-output`, and forwards arguments after `--` to Compose. This section traces
 the default `OCC_DEVELOPMENT_COMPUTE_DRIVER=docker`. OpenShell requires
-Kubernetes Compute. Kubernetes Compute also defaults to the Compose control
-plane; explicitly select `OCC_DEVELOPMENT_CONTROL_PLANE=kubernetes` for
-[local Kubernetes-only development](../../guides/deploy/local-kubernetes-development.md).
+Kubernetes Compute. Kubernetes Compute defaults to
+[local Kubernetes-only development](../../guides/deploy/local-kubernetes-development.md);
+select `OCC_DEVELOPMENT_CONTROL_PLANE=compose` for the hybrid profile.
 
 The Docker Compute path first probes a running Docker Engine and the JSON
 configuration capability required from Docker Compose. If that probe fails, it
@@ -227,11 +227,11 @@ Startup waits for the Gateway, certificate, and proxy Pods before reporting
 success. Envoy source addresses must fall inside the selected node's Pod CIDR;
 the tenant ingress policy must still admit only the Gateway's exact proxy peer.
 
-By default the loopback development proxy terminates browser HTTPS using a
-private per-installation CA and a leaf limited to that installation's console
-and Agent hosts. With `OCC_DEVELOPMENT_BROWSER_SCHEME=http`, startup instead
-passes the explicit local HTTP flag through Helm to bootstrap and the API and
-forwards browser HTTP to the API. Its API session readiness request uses the
+By default the loopback development proxy forwards browser HTTP to the API, and
+startup passes the local HTTP flag through Helm to bootstrap and the API. With
+`OCC_DEVELOPMENT_BROWSER_SCHEME=https`, the proxy instead terminates HTTPS using
+a private per-installation CA and a leaf limited to that installation's Console
+and Agent hosts. Its API session readiness request uses the
 configured Console host, as required by the HTTP authentication boundary. The
 API and browser NodePorts are published
 only to host loopback. The bootstrap administrator password, service key, and any
@@ -267,8 +267,7 @@ operator overrides the subnet. Startup and
 cleanup both use that snapshot, so later `.env` edits cannot change the saved
 project configuration.
 
-With `OCC_DEVELOPMENT_CONTROL_PLANE=kubernetes`, Kubernetes Compute branches
-before Compose rendering into
+By default, Kubernetes Compute branches before Compose rendering into
 `internal/occdev/openshell_k3d.go:upK3d`. That profile uses the engine
 only for k3d and image operations, and adds OpenShell only when selected.
 Without OpenShell, the Installation selects the bundled Presets and curated
@@ -282,7 +281,7 @@ exact-host TLS and Kubernetes inputs, upgrades Helm, and verifies authenticated
 discovery. It does not perform Git operations; see the
 [local repository procedure](../../guides/deploy/local-repository-credentials.md).
 
-The default `OCC_DEVELOPMENT_CONTROL_PLANE=compose` continues through the
+Selecting `OCC_DEVELOPMENT_CONTROL_PLANE=compose` continues through the
 Compose snapshot and startup sequence. An unsupported control-plane value fails
 before resource creation. The
 [OpenShell provisioning flow](../openshell-sandbox-provisioning.md#0-create-the-development-control-plane)

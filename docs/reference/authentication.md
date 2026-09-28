@@ -152,7 +152,7 @@ successful sign-in/sign-out responses clear prior host-only `openclaw_occ` and
 `openclaw_occ_shared` session-cookie names without a `Domain` attribute so
 browsers do not choose between duplicate host-only and domain cookies.
 
-The isolated k3d launcher can explicitly select local HTTP. It sets
+The isolated Kubernetes-only launcher defaults to local HTTP without OpenShell. It sets
 `OCC_LOCAL_DEVELOPMENT_HTTP` for bootstrap and the API, and restricts the
 Console and shared cookie parent to its installation-specific `.oce.localhost`
 hosts. That mode omits `Secure` from the shared session cookie but retains

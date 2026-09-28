@@ -16,7 +16,6 @@ Build the CLI and start the Kubernetes profile:
 ```bash
 pnpm cli:build
 export OCC_DEVELOPMENT_COMPUTE_DRIVER=kubernetes
-export OCC_DEVELOPMENT_CONTROL_PLANE=kubernetes
 export OCC_DEVELOPMENT_SANDBOX_DRIVER=none
 ./scripts/dev-up
 ```
@@ -49,7 +48,6 @@ For an OpenShell environment, use the owned launcher:
 ```bash
 pnpm cli:build
 export OCC_DEVELOPMENT_COMPUTE_DRIVER=kubernetes
-export OCC_DEVELOPMENT_CONTROL_PLANE=kubernetes
 export OCC_DEVELOPMENT_SANDBOX_DRIVER=openshell
 ./scripts/dev-up
 ```
@@ -86,8 +84,10 @@ export OCC_DEVELOPMENT_CONTAINER_ENGINE=podman
 
 Use `docker` instead for Docker Engine. The Kubernetes-only profile does not
 require Docker Compose or `podman-compose` and rejects Compose arguments. Keep
-the profile exports for startup and cleanup. Without profile selections,
-startup uses the Compose control-plane preview with Docker Compute.
+the profile exports for startup and cleanup. Kubernetes Compute defaults to the
+Kubernetes-only profile; set `OCC_DEVELOPMENT_CONTROL_PLANE=compose` to keep
+OCC and PostgreSQL in Compose. Without any profile selections, startup uses the
+Compose control-plane preview with Docker Compute.
 
 State and credentials are written to the private
 `/tmp/openclaw-development` directory by default. Set the absolute
@@ -176,12 +176,10 @@ Verify directory search and gateway Socket Mode using the
 
 Startup prints the API URL, kubeconfig, Kubernetes context, and service-key file.
 With Sandbox Driver `none`, it also prints a browser console URL. The default
-HTTPS mode prints a public browser CA; import it as described in
-[Local Setup](../quickstart.md#open-the-platform-console). Set
-`OCC_DEVELOPMENT_BROWSER_SCHEME=http` before a fresh start to use loopback HTTP
-without a browser CA. This option requires the Kubernetes-only profile without
-OpenShell. Its unencrypted browser session is for an isolated local host, not a
-remotely exposed installation. The session cookie uses a per-installation parent
+loopback HTTP session is for an isolated local host, not a remotely exposed
+installation. Set `OCC_DEVELOPMENT_BROWSER_SCHEME=https` before a fresh start to
+use HTTPS, then import the printed public browser CA as described in
+[Local Setup](../quickstart.md#open-the-platform-console). The session cookie uses a per-installation parent
 domain; its matching subdomains are part of the
 [shared session boundary](../../reference/agent-native-admin.md#shared-session-boundary).
 The OpenShell profile does not configure that browser endpoint.

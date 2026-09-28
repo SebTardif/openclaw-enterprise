@@ -632,14 +632,14 @@ test("development entry points default to the Compose profile", async (t) => {
   assert.equal(starts.length, 2);
 });
 
-test("explicit Kubernetes-only profile rejects Compose options before mutation", async (t) => {
+test("default Kubernetes-only profile rejects Compose options before mutation", async (t) => {
   const fixture = await createFixture(t);
   const env = { ...fixture.env };
   env.OCC_DEVELOPMENT_COMPUTE_DRIVER = "kubernetes";
-  env.OCC_DEVELOPMENT_CONTROL_PLANE = "kubernetes";
+  delete env.OCC_DEVELOPMENT_CONTROL_PLANE;
   env.OCC_DEVELOPMENT_STATE_DIRECTORY = join(fixture.directory, "kubernetes-state");
 
-  // Compose options cannot redirect the explicitly selected Kubernetes-only profile.
+  // Compose options cannot redirect the default Kubernetes-only profile.
   for (const result of [
     runDevUp(["--", "--env-file", fixture.emptyEnv], env),
     spawnSync(fixture.cli, ["dev", "up", "--", "--env-file", fixture.emptyEnv], {
@@ -840,11 +840,10 @@ test("Kubernetes dev-up authenticates the Installation and cleanup uses its save
   assert.match(repeated.stderr, /no such file or directory/);
 });
 
-test("Kubernetes Compute defaults to the Compose control plane", async (t) => {
+test("Kubernetes Compute supports an explicitly selected Compose control plane", async (t) => {
   const fixture = await kubernetesFixture(t);
-  delete fixture.env.OCC_DEVELOPMENT_CONTROL_PLANE;
 
-  // Kubernetes Compute remains available while the control plane defaults to Compose.
+  // The hybrid profile remains available when its Compose control plane is selected.
   const result = fixture.start();
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /Control plane: Compose/);
@@ -870,9 +869,9 @@ test("Kubernetes dev-up forwards an explicit K3s image to k3d", async (t) => {
   assert.equal(cleaned.status, 0, cleaned.stderr);
 });
 
-test("Kubernetes dev-up prepares the selected OpenShell Sandbox Driver before reporting readiness", async (t) => {
+test("Kubernetes Compute defaults to a Kubernetes control plane with OpenShell", async (t) => {
   const fixture = await kubernetesFixture(t);
-  fixture.env.OCC_DEVELOPMENT_CONTROL_PLANE = "kubernetes";
+  delete fixture.env.OCC_DEVELOPMENT_CONTROL_PLANE;
   fixture.env.OCC_DEVELOPMENT_SANDBOX_DRIVER = "openshell";
   fixture.env.OCC_DEVELOPMENT_K3S_IMAGE = "rancher/k3s:v1.35.8-k3s1";
   fixture.env.DEV_UP_EXISTING_CONTROLLER_IMAGE = "1";

@@ -94,8 +94,8 @@ credential source's provider profile supplies it.
 
 The environment selects Kubernetes Compute and OpenShell. `scripts/dev-up`
 validates that combination and delegates lifecycle ownership to `occ dev up`.
-The control plane defaults to Compose; `OCC_DEVELOPMENT_CONTROL_PLANE=kubernetes`
-selects the Kubernetes-only profile. Both verify the `v0.1.0` source archive
+The control plane defaults to Kubernetes; `OCC_DEVELOPMENT_CONTROL_PLANE=compose`
+selects the hybrid profile. Both verify the `v0.1.0` source archive
 before packaging its Gateway and Workspace charts, and import the matching
 digest-pinned Gateway, Sandbox, and supervisor images. The launcher supplies v0.1.0's separate
 image registry, repository, and digest values for each component and omits the
@@ -256,7 +256,7 @@ Kubernetes Compute delete the Kubernetes namespace.
   Helm-installed OCE control plane, and the central Gateway share `oce-system`;
   tenant resources remain in OCC-owned Namespaces. `scripts/dev-down` removes
   only the recorded cluster and private state.
-- Use the default `OCC_DEVELOPMENT_CONTROL_PLANE=compose` to keep PostgreSQL
+- Select `OCC_DEVELOPMENT_CONTROL_PLANE=compose` to keep PostgreSQL
   and OCC in Compose while retaining the same k3d Compute, operator Workspace,
   and fail-closed Agent boundaries.
 - `node --test tests/integration/ci-openshell.test.mjs` checks bootstrap safety

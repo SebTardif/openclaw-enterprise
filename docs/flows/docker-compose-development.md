@@ -136,13 +136,12 @@ import, authenticated readiness, and cleanup through the recorded engine.
 `internal/occdev/openshell.go:prepareOpenShell`,
 `apps/controller/src/drivers/sandbox/openshell.ts:ensureNamespace`
 
-With `OCC_DEVELOPMENT_CONTROL_PLANE=kubernetes`, OpenShell uses the
-Kubernetes-only lifecycle before Compose rendering. It pins K3s and OpenShell
+By default, OpenShell uses the Kubernetes-only lifecycle before Compose rendering. It pins K3s and OpenShell
 inputs, installs PostgreSQL, OCE, and one central Gateway in `oce-system`, and
 publishes only an admitted API proxy on host loopback.
 
-By default, the Kubernetes lifecycle starts PostgreSQL, migration, bootstrap,
-the API, and the worker in Compose. It installs the central Gateway in
+With `OCC_DEVELOPMENT_CONTROL_PLANE=compose`, the Kubernetes lifecycle starts
+PostgreSQL, migration, bootstrap, the API, and the worker in Compose. It installs the central Gateway in
 `openshell-system` and exposes its fixed NodePort only to the owned container
 network. In both modes, the worker
 creates the bootstrap Namespace through the regular Compute workflow. The
@@ -169,7 +168,7 @@ OCC Namespace becomes ready. See the
   reads the owned Workspace through the Gateway API. This proves infrastructure
   readiness, not a model turn. The expected Agent result is the explicit
   unsupported `secretKeyRef` projection failure with no Sandbox or Agent Pod.
-- With the default Compose control plane, OpenShell startup should report
+- With the selected Compose control plane, OpenShell startup should report
   `Control plane: Compose`, retain a private Compose snapshot, install the
   Gateway in `openshell-system`, and still create the bootstrap Namespace's
   operator-mode Workspace.

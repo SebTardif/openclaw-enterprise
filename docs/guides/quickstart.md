@@ -5,9 +5,9 @@
 Start an OpenClaw Enterprise installation that can deploy Agents on your
 machine. The OpenClaw Control Plane (OCC), PostgreSQL, and Agent workloads run
 in a local Kubernetes cluster created with k3d. This setup is for development
-and uses loopback addresses. This guide explicitly selects the Kubernetes-only
-profile; without a selection, startup uses a Compose control-plane preview that
-cannot deploy Agents. To install OCC itself in a cluster you already operate,
+and uses loopback addresses. Selecting Kubernetes Compute defaults to the
+Kubernetes-only profile; without a Compute selection, startup uses a Compose
+control-plane preview that cannot deploy Agents. To install OCC itself in a cluster you already operate,
 use [Kubernetes Setup](kubernetes-setup.md).
 
 ## Workspace access
@@ -62,20 +62,14 @@ To build both from source instead, unset both variables before startup.
 ```bash
 pnpm cli:build
 export OCC_DEVELOPMENT_COMPUTE_DRIVER=kubernetes
-export OCC_DEVELOPMENT_CONTROL_PLANE=kubernetes
 export OCC_DEVELOPMENT_SANDBOX_DRIVER=none
 ./bin/occ dev up
 ```
 
-To open the local Console without installing a browser CA, keep the exports
-above and replace the last command with this HTTP selection for a fresh start:
-
-```bash
-OCC_DEVELOPMENT_BROWSER_SCHEME=http ./bin/occ dev up
-```
-
-Use this mode only on the machine running the isolated k3d installation; browser
-traffic and its session cookie are not encrypted. HTTPS remains the default.
+The local Console uses HTTP by default without a browser CA. Use it only on the
+machine running the isolated k3d installation; browser traffic and its session
+cookie are not encrypted. To use HTTPS instead, set
+`OCC_DEVELOPMENT_BROWSER_SCHEME=https` before a fresh start.
 
 The first start builds and imports both images unless a verified pair was selected.
 This can take several minutes. Wait for `OpenClaw Enterprise development stack is ready.` The
@@ -88,11 +82,10 @@ The stock local-path StorageClass supports the Harness-only RWO claim; no provis
 
 ## Open the platform console
 
-Open the printed browser console URL. For the default HTTPS mode, first import
-the printed browser CA into your browser's trusted CA store. Only import the
-public `browser-ca.crt`; keep its private key and the entire state directory
-private. Remove the CA from your browser's trust store when you discard this
-installation. The optional local HTTP mode needs no browser CA.
+Open the printed browser console URL. If you selected HTTPS, first import the
+printed browser CA into your browser's trusted CA store. Only import the public
+`browser-ca.crt`; keep its private key and the entire state directory private.
+Remove the CA from your browser's trust store when you discard this installation.
 
 Sign in as `admin@development.openclaw.invalid` using the generated password in
 the administrator password file printed by startup. That file and the service

@@ -26,7 +26,7 @@ const (
 	developmentPostgres    = "docker.io/library/postgres:18.6@sha256:86c951e05bf56c93d95d397747fb8820ac76cc3bedb78f43abd83eedbe3666ae"
 )
 
-func upK3d(ctx context.Context, opts Options, sandboxDriver string) (result error) {
+func upK3d(ctx context.Context, opts Options, sandboxDriver, browserScheme string) (result error) {
 	r := newRunner(opts)
 	if len(opts.ComposeArgs) != 0 {
 		return fmt.Errorf("the Kubernetes-only profile does not accept Compose options")
@@ -77,7 +77,7 @@ func upK3d(ctx context.Context, opts Options, sandboxDriver string) (result erro
 		PlatformNamespace: r.setting("OCC_DEVELOPMENT_KUBERNETES_NAMESPACE", "oce-system"),
 		APIPort:           apiPort,
 		BrowserPort:       browserPort,
-		BrowserHTTP:       r.setting("OCC_DEVELOPMENT_BROWSER_SCHEME", "https") == "http",
+		BrowserHTTP:       browserScheme == "http",
 		Cluster:           r.setting("OCC_DEVELOPMENT_KUBERNETES_CLUSTER", "occ-dev-"+strings.ToLower(rand.Text()[:10])),
 		KeyPath:           opts.KeyOutput,
 		KeyOwned:          opts.KeyOutput == "",

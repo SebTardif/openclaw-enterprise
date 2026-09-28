@@ -28,11 +28,15 @@ func Up(ctx context.Context, opts Options) (result error) {
 	if sandboxDriver != "none" && sandboxDriver != "openshell" {
 		return fmt.Errorf("OCC_DEVELOPMENT_SANDBOX_DRIVER must be none or openshell")
 	}
-	controlPlane := r.setting("OCC_DEVELOPMENT_CONTROL_PLANE", "compose")
+	controlPlane := r.setting("OCC_DEVELOPMENT_CONTROL_PLANE", "kubernetes")
 	if controlPlane != "compose" && controlPlane != "kubernetes" {
 		return fmt.Errorf("OCC_DEVELOPMENT_CONTROL_PLANE must be compose or kubernetes")
 	}
-	browserScheme := r.setting("OCC_DEVELOPMENT_BROWSER_SCHEME", "https")
+	defaultBrowserScheme := "https"
+	if controlPlane == "kubernetes" && sandboxDriver == "none" {
+		defaultBrowserScheme = "http"
+	}
+	browserScheme := r.setting("OCC_DEVELOPMENT_BROWSER_SCHEME", defaultBrowserScheme)
 	if browserScheme != "https" && browserScheme != "http" {
 		return fmt.Errorf("OCC_DEVELOPMENT_BROWSER_SCHEME must be https or http")
 	}
@@ -40,7 +44,7 @@ func Up(ctx context.Context, opts Options) (result error) {
 		return fmt.Errorf("OCC_DEVELOPMENT_BROWSER_SCHEME=http requires the Kubernetes-only profile without OpenShell")
 	}
 	if controlPlane == "kubernetes" {
-		return upK3d(ctx, opts, sandboxDriver)
+		return upK3d(ctx, opts, sandboxDriver, browserScheme)
 	}
 	timeout, err := positiveSetting(r, "OCC_DEVELOPMENT_STARTUP_TIMEOUT_SECONDS", 300, 86400)
 	if err != nil {

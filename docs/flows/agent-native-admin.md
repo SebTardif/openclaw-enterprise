@@ -98,7 +98,7 @@ session cookie at that configured shared cookie parent domain. The controller
 validates that the console host and Agent host suffix fit that parent on
 DNS-label boundaries and rejects public suffixes, malformed domains, or values
 outside the parent. It does not infer a broader parent domain from the console
-or Agent hostname. The optional local k3d HTTP mode validates the exact
+or Agent hostname. The local k3d HTTP mode validates the exact
 installation-specific localhost Console and Agent suffix, emits an HttpOnly,
 SameSite=Lax shared cookie without `Secure`, and requires the exact Console host
 on authentication endpoints. Production shared cookies retain HTTPS and `Secure`. When native admin is disabled, leftover shared-cookie-domain

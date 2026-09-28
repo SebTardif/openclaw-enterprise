@@ -968,7 +968,7 @@ export function createFastifyApp(options: ControllerAppOptions): FastifyInstance
     }
   }
   if (
-    options.auth.localDevelopmentHttpOrigin !== undefined &&
+    options.auth?.localDevelopmentHttpOrigin !== undefined &&
     options.nativeAdmin?.enabled !== true
   ) {
     throw new Error("Local development HTTP requires native admin UI access.");

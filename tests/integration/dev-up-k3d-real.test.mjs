@@ -3,6 +3,7 @@ import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import net from "node:net";
+import http from "node:http";
 import https from "node:https";
 import { tmpdir } from "node:os";
 import { delimiter, join, resolve } from "node:path";
@@ -229,7 +230,6 @@ test(
       OPENCLAW_DEV_PORT: String(apiPort),
       OCC_DEVELOPMENT_BROWSER_PORT: String(browserPort),
       OCC_DEVELOPMENT_COMPUTE_DRIVER: "kubernetes",
-      OCC_DEVELOPMENT_CONTROL_PLANE: "kubernetes",
       OCC_DEVELOPMENT_CONTAINER_ENGINE: process.env.OCC_TEST_DEV_UP_CONTAINER_ENGINE ?? "docker",
       OCC_DEVELOPMENT_STATE_DIRECTORY: stateDirectory,
       OCC_DEVELOPMENT_KUBERNETES_CLUSTER: cluster,
@@ -238,7 +238,10 @@ test(
         process.env.OCC_DEVELOPMENT_KUBERNETES_DISK_THRESHOLD_PERCENT ?? "1",
       OCC_DEVELOPMENT_STARTUP_TIMEOUT_SECONDS: "600",
     };
+    delete environment.OCC_DEVELOPMENT_CONTROL_PLANE;
     delete environment.OCC_DEVELOPMENT_SANDBOX_DRIVER;
+    const browserScheme = environment.OCC_DEVELOPMENT_BROWSER_SCHEME || "http";
+    assert.ok(["http", "https"].includes(browserScheme));
     // Cleanup uses the recorded engine and cluster; failed cleanup preserves recovery state.
     t.after(async () => {
       if (await exists(stateDirectory)) {
@@ -278,19 +281,25 @@ test(
       assert.equal((await stat(join(stateDirectory, file))).mode & 0o077, 0);
     }
 
-    // The browser endpoint terminates TLS for this installation only. Verify
-    // the real console and sign-in response over that endpoint; this does not
-    // claim that an Agent native UI or its WebSocket has been exercised.
+    // Verify the default HTTP endpoint, or explicit HTTPS, through the real
+    // console and sign-in. This does not exercise an Agent UI or its WebSocket.
     const browserHost = `console.${cluster}.oce.localhost`;
-    const browserCA = await readFile(join(stateDirectory, "browser-ca.crt"));
+    assert.ok(
+      started.stdout.includes(
+        `Browser console: ${browserScheme}://${browserHost}:${browserPort}/console/`,
+      ),
+    );
+    assert.equal(state.browserHttp === true, browserScheme === "http");
+    const caPath = join(stateDirectory, "browser-ca.crt");
+    assert.equal(await exists(caPath), browserScheme === "https");
+    const browserCA = browserScheme === "https" ? await readFile(caPath) : undefined;
     const browserRequest = (path, options = {}) =>
       new Promise((resolveRequest, reject) => {
-        const request = https.request(
+        const request = (browserScheme === "https" ? https : http).request(
           {
             hostname: "127.0.0.1",
             port: browserPort,
-            servername: browserHost,
-            ca: browserCA,
+            ...(browserCA ? { servername: browserHost, ca: browserCA } : {}),
             path,
             method: options.method ?? "GET",
             headers: {
@@ -314,7 +323,7 @@ test(
     const signedIn = await browserRequest("/api/auth/sign-in/email", {
       method: "POST",
       headers: {
-        origin: `https://${browserHost}:${browserPort}`,
+        origin: `${browserScheme}://${browserHost}:${browserPort}`,
         "content-type": "application/json",
       },
       body: JSON.stringify({ email: "admin@development.openclaw.invalid", password }),
@@ -326,7 +335,15 @@ test(
       /^(?:__Secure-)?openclaw_occ_shared\.session_token=[^;]+/.test(entry),
     );
     assert.ok(sessionCookie, "browser sign-in did not issue the expected session cookie");
-    assert.ok(/;\s*Secure(?:;|$)/i.test(sessionCookie), "session cookie must be Secure");
+    assert.equal(
+      /;\s*Secure(?:;|$)/i.test(sessionCookie),
+      browserScheme === "https",
+      "the session cookie must be Secure exactly when HTTPS is selected",
+    );
+    assert.ok(
+      /;\s*SameSite=Lax(?:;|$)/i.test(sessionCookie),
+      "session cookie must be SameSite=Lax",
+    );
     assert.ok(/;\s*HttpOnly(?:;|$)/i.test(sessionCookie), "session cookie must be HttpOnly");
     assert.ok(
       sessionCookie.toLowerCase().includes(`domain=${cluster}.oce.localhost`),
