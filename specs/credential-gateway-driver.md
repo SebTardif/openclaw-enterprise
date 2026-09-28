@@ -121,18 +121,29 @@ For the future protected target, withdraw access while another Agent continues w
 
 ## Open questions
 
-The OpenShell version, provider-management names and signatures remain open. The [pinned OpenShell APIs](https://github.com/NVIDIA/OpenShell/blob/f8002d19ad2f948abf48bd2f5ca4f8ebd388e3c8/proto/openshell.proto) provide these starting points:
+[#452](https://github.com/openclaw/openclaw-enterprise/pull/452) proposes the
+common source and revision-attachment interface; [#461](https://github.com/openclaw/openclaw-enterprise/pull/461)
+shipped its first static-source implementation. The interface separates source
+registration and removal from revision attachment and withdrawal; the shipped
+OpenShell Driver still rejects withdrawal as unsupported. Source status, Sandbox
+attachment status and active-stream closure are distinct observations; removing
+one revision's access must preserve other Agents' shared configuration. The
+earlier `AddProvider`, `AuthenticateProvider`, `ProviderStatus` and
+`RemoveProvider` names are historical alternatives, not additional common Driver
+requirements.
 
-| Working name           | Decision and existing OpenShell surface                                                                                                                                                                  |
-| ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `AddProvider`          | Expose `CreateProvider` and `AttachSandboxProvider` separately, or combine them? Separate operations make shared ownership clearer.                                                                      |
-| `AuthenticateProvider` | Keep this connection/reauthentication name, or use `ConnectProvider`? No matching RPC exists in the pinned source; grant acquisition and refresh need a mapping. This is not per-request authentication. |
-| `ProviderStatus`       | Combine `GetProviderRefreshStatus` and `GetSandboxProviderStatus`, or preserve separate observations? Neither establishes active-stream closure.                                                         |
-| `RemoveProvider`       | Expose `DetachSandboxProvider` and `DeleteProvider` separately? Removing one Agent's access must preserve other Agents' shared configuration.                                                            |
+The first-slice development profile pins OpenShell source tag
+`496ebba293f5cc2bb2753444dddd534f0b4aeb6a` (`v0.1.0`). The earlier
+[source reference](https://github.com/NVIDIA/OpenShell/blob/f8002d19ad2f948abf48bd2f5ca4f8ebd388e3c8/proto/openshell.proto)
+is historical context; supported versions and the protected integration still
+need qualification.
 
-- How should connection and reauthentication handle future OAuth or dynamically issued credentials? The first slice uses a static model source.
-- Which model adapter and account/subscription modes should authenticate Responses and supported streams?
-- Which runtime mechanisms should establish session identity, mounts, readiness and active-stream closure?
+- How should connection and reauthentication handle future OAuth or dynamically
+  issued credentials? The first slice uses a static model source.
+- Which model adapter and account/subscription modes should authenticate
+  Responses and supported streams?
+- Which runtime mechanisms should establish session identity, mounts, readiness
+  and measured active-stream closure?
 
 <a id="references"></a>
 
