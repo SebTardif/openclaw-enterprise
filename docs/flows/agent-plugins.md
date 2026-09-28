@@ -159,11 +159,11 @@ recorded integrity, and the runtime source's containment in the install path.
 Verification failure prevents gateway readiness. Confirmed install rejection
 disables the optional selection and removes its managed tool allowance before startup.
 
-Dedicated Codex bootstraps its isolated `CODEX_HOME` with apps, plugins, and
-remote plugins enabled only for nonempty selections. Both states set
-`apps._default.enabled:false` and `plugins._default.enabled:false`. With selections, Compute renders the OpenClaw
-bridge with `codexPlugins.enabled:true`, `allow_all_plugins:false`, and one entry
-per selected plugin. Disabled entries remain selected but cannot execute.
+Dedicated Codex bootstraps isolated `CODEX_HOME` with
+`apps._default.enabled:false` and `plugins._default.enabled:false`.
+Nonempty selections enable apps, plugins, and remote plugins. The bridge sets
+`codexPlugins.enabled:true`, `allow_all_plugins:false`, and per-selection entries;
+disabled entries cannot execute.
 
 At startup, `plugin/list` discovers the curated marketplace; `plugin/read`
 resolves selected remote IDs. `codexRuntimeArtifact` uses concrete `detail.apps`,
@@ -185,11 +185,10 @@ Startup rechecks catalog identity, version, apps, and reported components after
 installation; `plugin/read` cannot inspect bundles.
 `writeCodexPluginConfiguration` replaces both owned tables:
 successful enabled selections get true; disabled/failed selections get false.
-Final reads verify source enablement and effective policy. With active selections,
-unselected entries must be explicitly false; selected app tool/account policies
-must match. Absent/null fields inherit; explicit tool enables cannot bypass omitted
-defaults. Failed-only app bindings are disabled; disabled selections are neither
-installed nor reported.
+Final reads check source enablement and policy: with selections, unselected entries
+must be explicitly false and selected app policies must match. Absent/null fields
+inherit; tool enables cannot bypass omitted defaults. Failed-only apps stay disabled;
+disabled selections aren't installed or reported.
 
 `runtime-entrypoints.ts:verifyCodexReviewerConfiguration` checks explicit app
 reviewers against effective app/link settings and `configRequirements/read`.
