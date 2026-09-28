@@ -2997,7 +2997,7 @@ export class OpenClawController {
         id: namespace.id,
         namespaceId: namespace.id,
       });
-      const previousId = await findCreationResult(state, request);
+      const previousId = await findCreationResult(state.creationRequests, request);
       if (previousId !== undefined) {
         await this.authorize(principalId, "read", {
           kind: "configuration",
@@ -3040,7 +3040,7 @@ export class OpenClawController {
         driver.delete({ id: configuration.id, namespaceId: configuration.namespaceId }),
       );
       const created = this.exactConfiguration(result, metadata);
-      await recordCreationResult(state, request, created);
+      await recordCreationResult(state.creationRequests, request, created);
       return created;
     });
   }
@@ -3868,7 +3868,7 @@ export class OpenClawController {
         namespaceId: namespace.id,
       };
       await this.authorize(principalId, "create", target);
-      const previousId = await findCreationResult(state, request);
+      const previousId = await findCreationResult(state.creationRequests, request);
       if (previousId !== undefined) {
         await this.authorize(principalId, "read", {
           kind: "agent",
@@ -3943,7 +3943,7 @@ export class OpenClawController {
           completed: false,
         });
       }
-      await recordCreationResult(state, request, agent);
+      await recordCreationResult(state.creationRequests, request, agent);
       return agent;
     });
   }

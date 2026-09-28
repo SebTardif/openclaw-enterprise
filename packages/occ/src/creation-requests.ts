@@ -1,6 +1,5 @@
 import { createHash } from "node:crypto";
 import { ResourceConflictError, ScopeViolationError } from "./errors.ts";
-import type { PlatformUnitOfWork } from "./state/platform-state.ts";
 
 export interface CreationRequestScope {
   readonly namespaceId: string;
@@ -84,13 +83,13 @@ export function creationRequestIdentity(
 
 /** Call under the Namespace lock also held by creation and deletion. */
 export async function findCreationResult(
-  state: PlatformUnitOfWork,
+  repository: CreationRequestRepository,
   identity: CreationRequestIdentity | undefined,
 ): Promise<string | undefined> {
   if (identity === undefined) {
     return undefined;
   }
-  const request = await state.creationRequests.find(identity);
+  const request = await repository.find(identity);
   if (request === undefined) {
     return undefined;
   }
@@ -101,12 +100,12 @@ export async function findCreationResult(
 }
 
 export async function recordCreationResult(
-  state: PlatformUnitOfWork,
+  repository: CreationRequestRepository,
   identity: CreationRequestIdentity | undefined,
   resource: { readonly id: string; readonly createdAt: string },
 ): Promise<void> {
   if (identity !== undefined) {
-    await state.creationRequests.record({
+    await repository.record({
       ...identity,
       resourceId: resource.id,
       createdAt: resource.createdAt,
