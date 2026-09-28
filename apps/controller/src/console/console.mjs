@@ -6,7 +6,7 @@ import { createNavigation, pages } from "./navigation.mjs";
 import { createShell, panel, sorted } from "./shell.mjs";
 import { createDraftStore } from "./drafts.mjs";
 import { renderRuntimeImages } from "./runtime-images.mjs";
-import { initializeConsoleTheme } from "./theme.mjs";
+import { createThemeControl, initializeConsoleTheme } from "./theme.mjs";
 
 initializeConsoleTheme();
 const app = document.querySelector("#app");
@@ -296,6 +296,7 @@ function showLogin(message = "", returnPath = null) {
     element(
       "main",
       { className: "auth" },
+      createThemeControl(),
       element(
         "p",
         { className: "brand" },

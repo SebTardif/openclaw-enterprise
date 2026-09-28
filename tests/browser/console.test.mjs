@@ -333,7 +333,7 @@ test("console browser flow keeps Namespace URL state across global pages and log
   );
 });
 
-test("console appearance follows system preference and persists explicit choices", async (t) => {
+test("console defaults to system appearance and persists explicit dark or light choices", async (t) => {
   const fixture = await createConsoleAppFixture(t);
   await fixture.bootstrap();
   await fixture.createNamespace("Theme", { ready: true });
@@ -345,6 +345,28 @@ test("console appearance follows system preference and persists explicit choices
   assert.equal(
     await systemPage.evaluate(() => globalThis.document.documentElement.dataset.theme),
     "dark",
+  );
+  assert.equal(
+    await systemPage.evaluate((key) => localStorage.getItem(key), themeStorageKey),
+    null,
+  );
+  const systemAppearance = systemPage.getByRole("group", { name: "Appearance" });
+  assert.equal(await systemAppearance.getByRole("button").count(), 2);
+  assert.equal(
+    await systemAppearance.getByRole("button", { name: "Dark" }).getAttribute("aria-pressed"),
+    "true",
+  );
+  await systemPage.emulateMedia({ colorScheme: "light" });
+  await systemPage.waitForFunction(
+    () => globalThis.document.documentElement.dataset.theme === "light",
+  );
+  assert.equal(
+    await systemPage.evaluate(() => globalThis.document.documentElement.dataset.theme),
+    "light",
+  );
+  assert.equal(
+    await systemAppearance.getByRole("button", { name: "Light" }).getAttribute("aria-pressed"),
+    "true",
   );
   assert.equal(
     await systemPage.evaluate((key) => localStorage.getItem(key), themeStorageKey),
@@ -366,29 +388,37 @@ test("console appearance follows system preference and persists explicit choices
 
   const { page } = await newPage(t, fixture);
   await login(page, fixture, "/console/settings");
-  await openShellMenu(page);
+  const appearance = page.getByRole("group", { name: "Appearance" });
+  assert.equal((await appearance.textContent()).trim(), "");
+  assert.equal(await appearance.getByRole("button").count(), 2);
   assert.equal(
-    await page.getByRole("menuitemradio", { name: "System" }).getAttribute("aria-checked"),
+    await appearance.getByRole("button", { name: "Light" }).getAttribute("aria-pressed"),
     "true",
   );
+  assert.equal(await page.evaluate((key) => localStorage.getItem(key), themeStorageKey), null);
 
-  await page.getByRole("menuitemradio", { name: "Dark" }).click();
+  await appearance.getByRole("button", { name: "Dark" }).click();
   assert.equal(
     await page.evaluate(() => globalThis.document.documentElement.dataset.theme),
     "dark",
   );
   assert.equal(await page.evaluate((key) => localStorage.getItem(key), themeStorageKey), "dark");
   assert.equal(
-    await page.getByRole("menuitemradio", { name: "Dark" }).getAttribute("aria-checked"),
+    await appearance.getByRole("button", { name: "Dark" }).getAttribute("aria-pressed"),
     "true",
   );
 
-  await page.getByRole("menuitemradio", { name: "Light" }).click();
+  await appearance.getByRole("button", { name: "Light" }).click();
   assert.equal(
     await page.evaluate(() => globalThis.document.documentElement.dataset.theme),
     "light",
   );
   assert.equal(await page.evaluate((key) => localStorage.getItem(key), themeStorageKey), "light");
+  await page.emulateMedia({ colorScheme: "dark" });
+  assert.equal(
+    await page.evaluate(() => globalThis.document.documentElement.dataset.theme),
+    "light",
+  );
   await page.reload();
   await page.getByRole("heading", { name: "Settings" }).waitFor();
   assert.equal(
@@ -396,10 +426,18 @@ test("console appearance follows system preference and persists explicit choices
     "light",
   );
 
+  assert.equal(
+    await appearance.getByRole("button", { name: "Light" }).getAttribute("aria-pressed"),
+    "true",
+  );
+  await appearance.getByRole("button", { name: "Dark" }).click();
   await openShellMenu(page);
-  await page.getByRole("menuitemradio", { name: "Dark" }).click();
   await page.getByRole("menuitem", { name: "Logout" }).click();
   await page.waitForURL(/\/console\/login$/);
+  assert.equal(
+    await appearance.getByRole("button", { name: "Dark" }).getAttribute("aria-pressed"),
+    "true",
+  );
   assert.deepEqual(await page.evaluate(() => ({ ...localStorage })), {
     [themeStorageKey]: "dark",
   });

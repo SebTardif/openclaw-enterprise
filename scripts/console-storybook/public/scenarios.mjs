@@ -632,7 +632,15 @@ export const scenarios = {
     name: "Account",
     path: "/console/settings",
     description:
-      "Signed-in name and email. Appearance choices live in the account menu and persist in the browser.",
+      "Signed-in name and email. The icon controls in the header save appearance in this browser.",
+  },
+  appearanceDarkAgents: {
+    group: "Pages/Appearance",
+    name: "Dark populated Agents",
+    theme: "dark",
+    description:
+      "Populated Agents on neutral gray surfaces with red action and selection accents. The appearance control uses icons only.",
+    steps: ["Use the moon and sun icons in the header to select Dark and Light."],
   },
   appearanceDarkLogin: {
     group: "Pages/Appearance",
@@ -650,8 +658,7 @@ export const scenarios = {
     buildRevision: "abcdef1234567890abcdef1234567890abcdef12",
     rules: [{ path: "/namespaces/ns_00000000-0000-4000-8000-000000000001/agents", status: 503 }],
     description:
-      "The dark shell covers sidebar navigation, account appearance choices, and a failed collection state.",
-    actions: account,
+      "The dark shell covers sidebar navigation, header appearance controls, and a failed collection state.",
   },
   appearanceDarkChannelDrawer: {
     group: "Pages/Appearance",

@@ -1,6 +1,6 @@
 (function () {
   const key = "openclaw.console.theme";
-  const choices = new Set(["system", "light", "dark"]);
+  const choices = new Set(["light", "dark"]);
   const root = document.documentElement;
   function storyTheme() {
     if (location.pathname !== "/storybook-fixtures/frame.html") {

@@ -1,7 +1,7 @@
 ---
 created: 2026-09-01
-updated: 2026-09-27
-last_updated_session: 01a0cf72-6985-7712-ba92-d8cc32470f24
+updated: 2026-09-28
+last_updated_session: authoring-run/2e8f7bf4-5d9c-4831-a8f8-6080691c4d13
 ---
 
 # Platform console request flow
@@ -117,18 +117,22 @@ stops reads. Stale responses are rejected; missing provenance stays explicit.
 
 `apps/controller/src/console/console.mjs:loadPage`
 
+Before styles load, `theme-bootstrap.mjs` applies a saved choice or system
+preference. `theme.mjs:initializeConsoleTheme` follows system changes until an
+icon click stores it. Storage failure still changes the page; logout keeps the
+choice.
+
 `loadPage` advances the request generation and requests `GET /api/auth/session`.
 First loads show loading. Return navigation and Refresh can restore one of at most
 16 document-local views keyed by route, Namespace, and session owner while reads
 run. Password fields and their derived discovery state clear before retention.
 Controls stay inert until admission succeeds; navigation remains available.
 
-Completed views retain their DOM, handlers, and draft capture callbacks. On return,
-`loadPage` rereads their GET dependencies and compares data and user identity.
-Unchanged views reactivate without rebuilding panels; changed data rebuilds them.
-Pending reads, read failures, password input, or mutations prevent reuse. Read-only
-catalog and diagnostic POSTs do not invalidate views. Refresh always rebuilds.
-Debug runtime disclosures follow the same validation and retain expanded state.
+Completed views retain DOM, handlers, and draft callbacks. On return, `loadPage`
+rereads GET dependencies and compares data and identity. Unchanged views
+reactivate; changed views rebuild. Pending reads, failures, password input,
+or mutations prevent reuse. Read-only catalog and diagnostic POSTs do not.
+Refresh rebuilds; validated debug disclosures retain expanded state.
 
 A changed user or session key clears retained views and drafts before further
 private reads. Missing sessions open login; failed reads offer Retry.
@@ -163,9 +167,9 @@ failure return errors.
 
 `apps/controller/src/console/agents/create.mjs:renderCreateAgent` composes Provider,
 Harness, Preset, Configuration, and workspace inputs. Provider/Harness changes
-reset incompatible credentials and model choices. The
-[creation reference](../reference/console/create-and-deploy.md) owns combinations,
-Preset constraints, token handling, permissions, and recovery.
+reset incompatible credentials and models. See the
+[creation reference](../reference/console/create-and-deploy.md) for inputs,
+permissions, and recovery.
 
 `agents/plugin-fields.mjs:createPluginFields` edits Agent `plugins` separately
 from Configuration. Invalid JSON and untouched fields survive; clearing overrides
@@ -173,10 +177,9 @@ restores inheritance. Submission, uncertain outcomes, or invalid JSON lock editi
 `capabilities.pluginPolicies` gates policy edits; unsupported reviewers remain clearable.
 
 `create.mjs:loadPluginCatalog` and `loadPluginTools` implement
-[PAT discovery](agent-plugins.md#credential-scoped-discovery): the selected or
-Preset Secret takes precedence over an entered token. OCC reads the
-Secret server-side. Pagination is upstream; filtering is local. Selecting a plugin loads tools.
-Credential, provider, and Harness changes clear results and invalidate pending reads.
+[PAT discovery](agent-plugins.md#credential-scoped-discovery). A selected or
+Preset Secret takes precedence over an entered token; OCC reads it server-side.
+Credential, provider, and Harness changes invalidate pending reads.
 
 `create.mjs:MODEL_CHOICES` supplies unauthenticated static model lists and manual
 entry. Provider/Harness changes reset incompatible settings while retaining
@@ -184,7 +187,7 @@ unrelated JSON. The [creation reference](../reference/console/create-and-deploy.
 owns selection and credential behavior.
 
 `configurationTemplate` enables Control UI with loopback origins on port 18789.
-Compute supplies gateway authentication; Presets replace the starter unchanged.
+Compute supplies gateway authentication; Presets replace the starter.
 [Native admin access](agent-native-admin.md) owns HTTPS isolation.
 [Agent editing](platform-console/agent-editing.md#4-render-draft-revision-or-channels)
 traces Slack settings, staged bindings, grants, and cancellation effects.
@@ -197,10 +200,9 @@ preserves choices; failed rediscovery blocks creation. Successful reads filter
 choices against current policy.
 
 Supported Dedicated runtimes submit inline Configuration, optional repository
-bindings, and Secret references to [provisioning](agent-provisioning.md), including
-when optional discovery is unavailable without retained selections. The worker
-reauthorizes, creates resources and exact Secret grants, and deploys. Console polls
-the job, then opens its revision.
+bindings, and Secret references to [provisioning](agent-provisioning.md), even if
+optional discovery fails without retained selections. The worker reauthorizes,
+creates resources and grants, and deploys. Console polls the job and opens its revision.
 
 Ordinary drafts post `{kind: "agent", values, secretBindings}` to
 `POST /namespaces/:namespaceId/configurations`, then submit its ID, plugins,
@@ -319,6 +321,8 @@ refresh and inspection.
 [keep this for the user to add notes. do not change between edits]
 
 ## Changelog
+
+- 2026-09-28 10:31: Trace the two-choice appearance control and system default. (authoring-run/2e8f7bf4-5d9c-4831-a8f8-6080691c4d13 - da62a036)
 
 - 2026-09-27 19:38: Preserve validated page and tab DOM in accompanying changes. (01a0b1f2-e696-7232-a439-5b668154bcd9 - 0663fa97)
 

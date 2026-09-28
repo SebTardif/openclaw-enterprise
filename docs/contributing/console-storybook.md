@@ -32,11 +32,11 @@ to restart. CI uploads a static artifact without publishing the documentation si
 
 ## Appearance review
 
-Use **Pages/Agents → Populated** to review the shared shell and controls.
-Check desktop (1440 × 1000), tablet (768 × 1024), and mobile (390 × 844);
-use keyboard focus, search, navigation, and an open dialog. Include empty,
-loading, error, permission-denied, and missing-credential stories. The console
-stays light with either system appearance preference.
+Compare **Pages/Appearance → Dark populated Agents** and **Pages/Agents →
+Populated**. Select Dark and Light with the header icons. Check desktop
+(1440 × 1000), tablet (768 × 1024), and mobile (390 × 844); keyboard focus,
+search, navigation, and a dialog. Include empty, loading, error, denied, and
+missing-credential stories.
 
 The console's Claw palette, type scale, and surface geometry reference
 [OpenClaw `6e8d06876fd166064abbec4928fb3bb109ebe999`](https://github.com/openclaw/openclaw/tree/6e8d06876fd166064abbec4928fb3bb109ebe999/ui),

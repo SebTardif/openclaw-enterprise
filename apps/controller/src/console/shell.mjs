@@ -1,5 +1,5 @@
 import { element, button } from "./dom.mjs";
-import { applyThemePreference, getThemePreference } from "./theme.mjs";
+import { createThemeControl } from "./theme.mjs";
 
 export function panel(target, title, description, actionLabel, action, requestId) {
   target.replaceChildren(
@@ -76,6 +76,7 @@ export function createShell({ app, pages, route, pageUrl, navigate, loadPage, lo
       element(
         "main",
         { className: "auth" },
+        createThemeControl(),
         element(
           "p",
           { className: "brand" },
@@ -133,34 +134,8 @@ export function createShell({ app, pages, route, pageUrl, navigate, loadPage, lo
       }
     });
     enableMenuKeys(menu, closeAccount);
-    const themeItems = [
-      ["system", "System"],
-      ["light", "Light"],
-      ["dark", "Dark"],
-    ].map(([value, label]) =>
-      button(
-        label,
-        () => {
-          applyThemePreference(value, { persist: true });
-          updateThemeSelection();
-        },
-        { role: "menuitemradio", tabindex: "-1", "aria-checked": "false" },
-      ),
-    );
-    function updateThemeSelection() {
-      const preference = getThemePreference();
-      for (const item of themeItems) {
-        item.setAttribute(
-          "aria-checked",
-          item.textContent.toLowerCase() === preference ? "true" : "false",
-        );
-      }
-    }
-    updateThemeSelection();
     menu.append(
       button("Settings", () => navigate("settings"), { role: "menuitem", tabindex: "-1" }),
-      element("p", { className: "menu-section-title", role: "presentation" }, "Appearance"),
-      ...themeItems,
       button("Logout", () => void logout(), { role: "menuitem", tabindex: "-1" }),
     );
     account.append(menu, toggle);
@@ -320,6 +295,7 @@ export function createShell({ app, pages, route, pageUrl, navigate, loadPage, lo
         "div",
         { className: "page-actions" },
         feature === "namespaces" ? null : namespaceSelector(),
+        createThemeControl(),
         feature === "settings" ? null : refresh,
       ),
     );
