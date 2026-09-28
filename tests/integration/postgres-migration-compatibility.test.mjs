@@ -1681,18 +1681,18 @@ test(
   requiresHistoryPostgres,
   async (context) => {
     const fixture = await migrationHistoryFixture();
-    for (const [prefix, history] of [
-      [0, "empty"],
-      [24, "prePresetsMain"],
-      [25, "main"],
-      [27, "repositoryCredentials"],
-      [28, "repositoryRetention"],
-      [29, "workspaceSetup"],
-      [30, "agentProvisioning"],
-      [31, "backendCompleted"],
-      [32, "backendTerminology"],
-      [33, "prePluginApprovers"],
-      [34, "preCreationRequests"],
+    for (const [prefix, history, failureTag] of [
+      [0, "empty", "ALTER FUNCTION"],
+      [24, "prePresetsMain", "ALTER FUNCTION"],
+      [25, "main", "ALTER FUNCTION"],
+      [27, "repositoryCredentials", "CREATE FUNCTION"],
+      [28, "repositoryRetention", "CREATE FUNCTION"],
+      [29, "workspaceSetup", "CREATE FUNCTION"],
+      [30, "agentProvisioning", "CREATE FUNCTION"],
+      [31, "backendCompleted", "ALTER TABLE"],
+      [32, "backendTerminology", "ALTER TABLE"],
+      [33, "prePluginApprovers", "ALTER TABLE"],
+      [34, "preCreationRequests", "CREATE TRIGGER"],
     ]) {
       await context.test(`prefix ${prefix} transaction`, async (child) => {
         const db = await historyDatabase(child, fixture, "rollback", { prefix });
@@ -1701,13 +1701,14 @@ test(
         }
         const before = await historySnapshot(db);
         const data = prefix ? await canonicalData(db) : undefined;
-        // A database-local event trigger aborts the real final DDL. Drizzle must
+        // A database-local event trigger aborts real pending DDL. Drizzle must
         // roll back every preceding SQL statement and receipt in that transaction.
+        // Prefix 34 leaves only creation_requests, which creates triggers but alters no tables.
         await historyAdmin(
           db,
           db.name,
           `CREATE FUNCTION public.reject_migration_ddl() RETURNS event_trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'migration rollback fixture' USING ERRCODE='55000'; END $$;
-        CREATE EVENT TRIGGER reject_migration_ddl ON ddl_command_start WHEN TAG IN ('${prefix >= 31 ? "ALTER TABLE" : prefix >= 27 ? "CREATE FUNCTION" : "ALTER FUNCTION"}') EXECUTE FUNCTION public.reject_migration_ddl()`,
+        CREATE EVENT TRIGGER reject_migration_ddl ON ddl_command_start WHEN TAG IN ('${failureTag}') EXECUTE FUNCTION public.reject_migration_ddl()`,
         );
         assert.deepEqual(await runHistoryMigration(db), { ok: false, code: "MIGRATION_FAILED" });
         assert.deepEqual(await historyReceipts(db.migrator), before.receipts);
