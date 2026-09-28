@@ -703,7 +703,7 @@ test("Codex runtime helper installs plugin and applies write action approval wit
       return { authPolicy: "ON_USE", appsNeedingAuth: [] };
     }
     if (method === "config/read") {
-      assert.deepEqual(params, {});
+      assert.deepEqual(params, { cwd: "/home/node/workspace" });
       return codexConfigReadResponse({
         default_tools_approval_mode: "writes",
         approvals_reviewer: "auto_review",
@@ -1066,7 +1066,16 @@ test("Codex runtime helper reports plugin install warnings without retrying", as
         throw new Error("native install rejected");
       }
       if (method === "config/read") {
-        return codexConfigReadResponse({ enabled: false }, false);
+        // Native layers may retain overrides, but app disablement blocks every tool.
+        return codexConfigReadResponse(
+          {
+            enabled: false,
+            default_tools_enabled: true,
+            tools: { list_issues: { enabled: true, approval_mode: "approve" } },
+            links: { account: { default_tools_approval_mode: "approve" } },
+          },
+          false,
+        );
       }
       throw new Error(`unexpected request ${method}`);
     },
@@ -1603,11 +1612,15 @@ test("Codex runtime helper verifies defaults and rejects inherited unselected ap
           failures: [],
         });
       } else {
+        const unselectedError =
+          table === "apps"
+            ? /effective app policy conflicts/
+            : /effective plugins configuration enables an unselected entry/;
         assert.match(
           result.error?.message ?? "",
           id === "_default"
             ? /effective config does not match admitted configuration/
-            : new RegExp(`effective ${table} configuration enables an unselected entry`),
+            : unselectedError,
         );
         assert.equal(result.value, undefined, "unselected enablement must prevent readiness");
       }
@@ -1615,8 +1628,72 @@ test("Codex runtime helper verifies defaults and rejects inherited unselected ap
   }
 });
 
-test("Codex runtime helper checks every effective nested tool and account policy before readiness", async (t) => {
+test("Codex runtime helper checks effective app, tool, and account policy before readiness", async (t) => {
   for (const scenario of [
+    {
+      name: "inherited app enablement bypasses requested destructive denial",
+      defaults: { approval: "all_actions" },
+      driverPolicy: { destructiveEnabled: false },
+      app: { default_tools_enabled: true },
+      rejects: true,
+    },
+    {
+      name: "workspace layer overrides tool enablement",
+      defaults: { approval: "all_actions" },
+      workspaceApp: { default_tools_enabled: true },
+      rejects: true,
+    },
+    {
+      name: "unrequested app category restriction conflicts",
+      app: { open_world_enabled: false },
+      rejects: true,
+    },
+    {
+      name: "explicit workspace categories match inherited native defaults",
+      defaults: { approval: "all_actions" },
+      workspaceApp: { destructive_enabled: true, open_world_enabled: true },
+      global: { destructive_enabled: true, open_world_enabled: true },
+    },
+    {
+      name: "explicit destructive denial rejects native enablement",
+      defaults: { approval: "all_actions" },
+      driverPolicy: { destructiveEnabled: false },
+      app: { destructive_enabled: true },
+      rejects: true,
+      error: /effective config does not match admitted configuration/,
+    },
+    {
+      name: "unrequested app tool exposure changes",
+      app: { omit_tools_from: ["search"] },
+      rejects: true,
+    },
+    {
+      name: "inherited global category default conflicts",
+      global: { destructive_enabled: false },
+      rejects: true,
+    },
+    {
+      name: "unselected app enabled despite global deny",
+      otherApps: { unselected: { enabled: true } },
+      rejects: true,
+    },
+    {
+      name: "serialized defaults and inherited reviewers remain valid",
+      app: {
+        destructive_enabled: null,
+        open_world_enabled: null,
+        omit_tools_from: [],
+        approvals_reviewer: "user",
+      },
+      global: {
+        destructive_enabled: true,
+        open_world_enabled: true,
+        approvals_reviewer: "auto_review",
+      },
+      otherApps: { disabled: { enabled: false } },
+      tools: {},
+      links: { account: { approvals_reviewer: "auto_review", default_tools_approval_mode: null } },
+    },
     { name: "extra enabled tool", tools: { extra: { enabled: true } }, rejects: true },
     { name: "extra approved tool", tools: { extra: { approval_mode: "approve" } }, rejects: true },
     {
@@ -1665,13 +1742,16 @@ test("Codex runtime helper checks every effective nested tool and account policy
   ]) {
     await t.test(scenario.name, async () => {
       const defaults = scenario.defaults ?? { enabled: false, approval: "all_actions" };
-      const state = codexLinearPluginState({ toolDefaults: defaults });
+      const state = codexLinearPluginState({
+        toolDefaults: defaults,
+        ...(scenario.driverPolicy === undefined ? {} : { driverPolicy: scenario.driverPolicy }),
+      });
       const runtime = { manifest: pluginRuntimeSpecForRevision(revision({ plugins: state })) };
       // A second native layer can contribute descendants absent from the user
       // config OCE replaces. Return that merged readback through the real startup helper.
       const result = await runCodexRuntimeHelper(
         runtime,
-        (method) => {
+        (method, params) => {
           if (method === "initialize") {
             return { serverInfo: { name: "codex", version: "0.156.0" } };
           }
@@ -1688,19 +1768,29 @@ test("Codex runtime helper checks every effective nested tool and account policy
             return { status: "ok", version: "nested-policy" };
           }
           if (method === "config/read") {
-            return codexConfigReadResponse({
+            const response = codexConfigReadResponse({
               default_tools_enabled: defaults.enabled ?? null,
               default_tools_approval_mode: scenario.nativeApproval ?? "prompt",
+              ...(scenario.driverPolicy === undefined ? {} : { destructive_enabled: false }),
               tools: scenario.tools,
               links: scenario.links,
+              ...scenario.app,
+              // Codex includes project layers only when config/read receives cwd.
+              ...(params.cwd === "/home/node/workspace" ? scenario.workspaceApp : {}),
             });
+            Object.assign(response.config.apps._default, scenario.global);
+            Object.assign(response.config.apps, scenario.otherApps);
+            return response;
           }
           throw new Error(`unexpected request ${method}`);
         },
         { captureError: true },
       );
       if (scenario.rejects) {
-        assert.match(result.error?.message ?? "", /effective (tool|account) policy conflicts/);
+        assert.match(
+          result.error?.message ?? "",
+          scenario.error ?? /effective (app|tool|account) policy conflicts/,
+        );
         assert.equal(result.value, undefined, "conflicting nested policy must prevent readiness");
       } else {
         assert.equal(result.error, undefined);

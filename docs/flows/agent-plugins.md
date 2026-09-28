@@ -1,6 +1,6 @@
 ---
 created: 2026-09-08
-updated: 2026-09-27
+updated: 2026-09-28
 last_updated_session: 01a0d755-b86e-7d33-bddc-c21ba03a3276
 ---
 
@@ -8,10 +8,9 @@ last_updated_session: 01a0d755-b86e-7d33-bddc-c21ba03a3276
 
 ## Overview
 
-An authorized caller saves plugin selections, then deploys. OCC validates and
-snapshots policy, selections, and Driver. Startup resolves metadata, translates
-policy, and prepares the revision. Revision selection may precede cutover; the
-Harness owns tools and approvals.
+OCC snapshots validated plugin policy on deployment. Startup prepares native
+capabilities; the Harness owns tools and approvals. Revision selection may precede
+cutover.
 
 ## Entry Points
 
@@ -165,39 +164,40 @@ Nonempty selections enable apps, plugins, and remote plugins. The bridge sets
 `codexPlugins.enabled:true`, `allow_all_plugins:false`, and per-selection entries;
 disabled entries cannot execute.
 
-At startup, `plugin/list` discovers the curated marketplace; `plugin/read`
-resolves selected remote IDs. `codexRuntimeArtifact` uses concrete `detail.apps`,
+`plugin/list` discovers the curated marketplace; `plugin/read` resolves selections.
+`codexRuntimeArtifact` uses concrete `detail.apps`,
 excluding `appTemplates`; see the [bundled Driver limits](../reference/drivers/plugin-bundled.md#selection-and-catalogs).
 `codexInstallPlan` validates policy and detail before `plugin/install`. Confirmed
 install rejections or missing app authentication warn. Explicit tool policies
 require `codex_apps` inventory from `mcpServerStatus/list`; `codexAppToolSettings`
 binds catalog action IDs to native names through `_meta._codex_apps.resource_uri`.
-Native IDs also work. Unknown, unowned, ambiguous, or duplicate IDs fail startup.
+Native IDs work; unknown, unowned, ambiguous, or duplicate IDs fail startup.
 
-`codexRuntimeArtifact` writes app defaults and explicit tools separately:
+`codexRuntimeArtifact` writes defaults and explicit tools:
 `provider_default`/`all_actions`/`write_actions`/`none` map to Codex
-`auto`/`prompt`/`writes`/`approve`. Defaults cover future actions without
-inventory; overrides require observed owned IDs. `driverPolicy.destructiveEnabled`
+`auto`/`prompt`/`writes`/`approve`. Defaults cover future actions; overrides
+require owned IDs. `driverPolicy.destructiveEnabled`
 maps to `destructive_enabled` independently. `toolDefaults.reviewer` maps
 `human`/`auto` to app `approvals_reviewer` values `user`/`auto_review`;
-omission inherits the Harness reviewer. Unsupported reviewer scopes fail before save.
-Startup rechecks catalog identity, version, apps, and reported components after
-installation; `plugin/read` cannot inspect bundles.
-`writeCodexPluginConfiguration` replaces both owned tables:
-successful enabled selections get true; disabled/failed selections get false.
-Final reads check source enablement and policy: with selections, unselected entries
-must be explicitly false and selected app policies must match. Absent/null fields
-inherit; tool enables cannot bypass omitted defaults. Failed-only apps stay disabled;
-disabled selections aren't installed or reported.
+omission inherits the Harness reviewer. Unsupported scopes fail at save.
+Startup rechecks catalog identity, version, apps, and reported components before
+activation; `plugin/read` cannot inspect bundles.
+`writeCodexPluginConfiguration` replaces both owned tables, enabling successful
+enabled selections and disabling failed/disabled selections. Failed-only apps are
+disabled; disabled selections skip installation/status. Readback verifies source
+enablement and workspace policy. `verifyCodexPluginConfiguration` rejects
+app/tool/account conflicts and unselected apps/plugins unless explicitly disabled.
+Disabled failed apps may retain inherited fields. Category defaults
+resolve app → global → native `true`; equivalent values and nulls pass. Tool
+enablement stays strict because it bypasses categories; omitted reviewers inherit.
 
-`runtime-entrypoints.ts:verifyCodexReviewerConfiguration` checks explicit app
-reviewers against effective app/link settings and `configRequirements/read`.
-It rejects forbidden reviewers, incompatible automatic-review approval settings,
-and human review conflicting with current-model requirements. These startup
-checks do not establish later session/model routing, strict review, workspace
-configuration, or managed requirements beyond reviewer checks. See the [remaining proof](../testing/plugins.md#current-proof-notes).
-Codex owns cache integrity and runtime health. Older binaries can echo
-`plugins._default.enabled` without enforcement; see [runtime prerequisites](../reference/drivers/plugin-bundled.md#native-mappings-and-limits).
+`verifyCodexReviewerConfiguration` rejects app/link reviewers and automatic-review
+settings conflicting with managed reviewer/model requirements. Startup checks
+exclude later workspace/session/model changes and strict review. Codex 0.156
+readback omits managed app/tool execution requirements; native policy introspection
+remains necessary. See [remaining proof](../testing/plugins.md#current-proof-notes).
+Codex owns cache integrity and health. Older binaries may ignore echoed plugin
+defaults; see [runtime prerequisites](../reference/drivers/plugin-bundled.md#native-mappings-and-limits).
 
 For Compute-owned Kubernetes workloads, a selected OpenClaw install command's
 normal nonzero exit, a matching Codex `plugin/install` error response, or a
@@ -295,9 +295,11 @@ completed deployment attempt rather than ongoing runtime health.
 
 ## Changelog
 
+- 2026-09-28 00:02: Reconciled Codex startup policy verification with approval scopes. (01a0b17c-68b6-7e11-bedc-f74de7d606ed - b96eadc1)
+
 - 2026-09-27 23:40: Catalog prefetch and loading feedback. (01a0e53a-f2be-7bd1-a9c1-36e827b2ee47 - b38554ac)
 
-- 2026-09-27 15:10: Added plugin defaults, selected activation, skills, and catalog checks. (codex/01a0d755-b86e-7d33-bddc-c21ba03a3276 - ab9527bb)
+- 2026-09-27 15:10: Added plugin defaults and skills. (codex/01a0d755-b86e-7d33-bddc-c21ba03a3276 - ab9527bb)
 
 - 2026-09-27 21:52: Debounced catalog searches and canceled obsolete requests. (01a0e4d2-4f51-7780-b0fc-2352cb99078f - a599db7e)
 
@@ -320,6 +322,10 @@ completed deployment attempt rather than ongoing runtime health.
 - 2026-09-26 19:16: Saved-Secret discovery. (authoring-run/828a8a37-a9f6-4bb5-9eed-912780152d5c - e5867bcd)
 
 - 2026-09-26 17:42: Document Console new-revision plugin editing and read-only revision snapshots in the accompanying change. (authoring-run/3aa63184-7716-4d27-90ed-33974110d0f5 - cdd6e3c8413f7cca4909f98d2d4c5f6bd17dbe54)
+
+- 2026-09-24 23:36: Normalize equivalent Codex category defaults during verification. (01a0b17c-68b6-7e11-bedc-f74de7d606ed - 8ce00a84)
+
+- 2026-09-24 23:09: Clarified disabled-app verification and shortened startup readback prose. (01a0b17c-68b6-7e11-bedc-f74de7d606ed - 27d44ac0)
 
 - 2026-09-24 19:44: Added Driver-owned setup and recovery links. (01a0d1dd-aa36-7622-9f43-8376f6ff935e - ef89ded5)
 

@@ -173,12 +173,10 @@ as do two selected IDs targeting the same native tool.
 Catalog classifications are not required, and app defaults are not expanded into
 per-tool rules. The optional controller catalog reader still returns `tools:null`.
 
-Supported plugins contain concrete hosted apps, skills, or both. Plugins reporting
-hooks, plugin MCP servers, scheduled tasks, or only templates remain unsupported.
-Startup rechecks catalog metadata before enabling the plugin. Remote `plugin/read`
-does not inspect installed bundle contents: selecting a plugin activates its
-whole native bundle, including components absent from catalog metadata. OCE does
-not provide a separate component sandbox for selected plugins.
+Supported plugins have concrete apps, skills, or both. Reported hooks, plugin MCP
+servers, scheduled tasks, and template-only plugins are unsupported. Startup checks
+catalog metadata, not bundle contents: selecting a plugin activates its entire
+native bundle, including unreported components. There is no component sandbox.
 The selected-only OpenClaw bridge is required for the dedicated Agent path.
 Effective nested policy requires the bridge changes in
 [OpenClaw #151260](https://github.com/openclaw/openclaw/pull/151260) and
@@ -196,35 +194,37 @@ if managed `requiredOnModels` includes the current model, or model selection
 cannot be verified against a nonempty requirement. Omitted reviewers do not
 trigger these explicit-choice checks.
 
-Before readiness, startup checks every effective nested tool's enablement and
-approval against its requested override or app default. Absent/null fields inherit;
-an explicit tool enablement is rejected if neither level requested it, because
-it can bypass category restrictions. Account/link approval defaults must match
-the requested app approval.
+Before readiness, startup reads configuration for the Agent workspace and checks
+all managed app fields, including unexpected enablement/category defaults and tool
+exposure restrictions. An enabled app outside the selection fails verification;
+unselected disabled apps remain permitted. Native serialized defaults/nulls and
+omitted reviewers preserve inheritance. Category settings (`destructive_enabled`
+and `open_world_enabled`) compare against the requested app value, then requested
+global value, then native `true`. An explicit native value equal to that expected
+default is accepted. Every nested tool's enablement/approval must match its override
+or app default; account approval must match the app. Unexpected explicit enablement
+is rejected because it can bypass category rules.
 
-These checks verify startup configuration. Future turn routing, session/model
-changes, strict review, workspace configuration, managed requirements beyond
-reviewer checks, and real Agent enforcement remain draft acceptance gates; see
+This verifies loaded startup configuration, including trusted workspace layers.
+Codex 0.156 does not expose managed app/tool requirements through `config/read` or
+`configRequirements/read`; complete native effective-policy introspection remains
+required. Later workspace/session/model changes, strict review, and real Agent
+enforcement also remain acceptance gates. See
 [runtime proof notes](../../testing/plugins.md#current-proof-notes).
 
-Dedicated Codex writes `apps._default.enabled=false` and
-`plugins._default.enabled=false` into its isolated `CODEX_HOME` before starting
-app-server. This bootstrap replaces the previous user config on every restart.
-Empty selections disable the Apps and Plugins features and need no plugin RPCs.
-After installation, startup replaces the owned app and plugin tables with the
-current selection: exact `name@marketplace` plugin IDs, concrete app IDs, and
-explicit disabled entries for disabled or failed selections. With active selections,
-inherited unselected entries that enable a plugin
-or app, even by omitting `enabled`, prevent readiness. Source/account-disabled
-plugins remain disabled.
+Dedicated Codex replaces its isolated `CODEX_HOME` config before each startup,
+setting `apps._default.enabled=false` and `plugins._default.enabled=false`.
+Empty selections disable Apps/Plugins and skip plugin RPCs. After installation,
+startup replaces both policy tables with exact `name@marketplace` plugin IDs and
+concrete app IDs. Disabled/failed selections get disabled entries. With active
+selections, inherited unselected entries block readiness unless `enabled:false`.
+Source/account-disabled plugins remain disabled.
 
-This requires a Codex build that implements `plugins._default.enabled`; older
-binaries may accept and return the setting without enforcing it. Deploy a
-verified compatible runtime before using this preparation path. These are
-ordinary layered settings, not enterprise requirements. Later session overrides
-and direct host `mcpServer/tool/call` requests are outside this startup guarantee.
-The selected-only OpenClaw bridge remains required; its Codex transport plugin
-is separate infrastructure. Operator profiles are never imported.
+This requires a verified Codex build supporting plugin defaults; older binaries
+may echo the setting without enforcing it. These ordinary layered settings are
+not enterprise requirements; later overrides and direct host `mcpServer/tool/call`
+are outside the guarantee. The selected-only OpenClaw bridge and its separate
+Codex transport plugin remain required. Operator profiles are never imported.
 
 The Driver rejects conflicting raw Configuration for its managed fields rather
 than silently overwriting it. For OpenClaw, this includes an existing selected
