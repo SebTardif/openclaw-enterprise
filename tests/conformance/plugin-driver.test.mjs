@@ -298,17 +298,19 @@ test("Hardcoded OpenAI catalog returns curated details without provider requests
   assert.ok(github);
   assert.equal(github.remoteId, "plugin_connector_1p_1a69035c238881919c4190932b2df699");
   assert.deepEqual(await driver.getCatalogPlugin({ pluginId: github.remoteId }), github);
-  // Unverified local components still prevent selection from this static catalog.
+  // Recorded releases with unsupported components must never be offered for selection.
   assert.deepEqual(
     new Set(page.plugins.filter((entry) => entry.available === false).map((entry) => entry.name)),
-    new Set(["Notion", "Figma", "Canva", "Sentry", "Adobe"]),
+    new Set(["Sentry"]),
   );
   assert.equal(new Set(page.plugins.map((entry) => entry.remoteId)).size, page.plugins.length);
   for (const entry of page.plugins) {
     assert.ok(entry.remoteId);
     assert.deepEqual(await driver.getCatalogPlugin({ pluginId: entry.remoteId }), entry);
     if (entry.available === false) {
-      assert.match(entry.unavailableReason, /local components/);
+      assert.match(entry.unavailableReason, /no concrete hosted app/);
+    } else {
+      assert.equal(entry.selectableWithoutTools, true);
     }
   }
   assert.deepEqual(await driver.listCatalog(context("dedicated")), page.plugins);
@@ -799,6 +801,18 @@ test("Codex destructive defaults project to native config and the hosted-app bri
       validatePolicies("codex", codexSelection(linearPluginId, { driverPolicy })),
     );
   }
+});
+
+test("Codex startup translation admits a selected plugin with native skills", () => {
+  const detail = codexDetail("linear", ["linear_app"], {
+    skills: [{ name: "linear-workflow" }],
+  });
+  const artifact = codexRuntimeArtifact(codexSelection(linearPluginId), [detail]);
+  assert.deepEqual(
+    artifact.installs.map((install) => install.pluginId),
+    [linearPluginId],
+  );
+  assert.equal(artifact.configuration.apps.linear_app.enabled, true);
 });
 
 test("Codex startup translation fails selected-only policy gaps at startup", () => {

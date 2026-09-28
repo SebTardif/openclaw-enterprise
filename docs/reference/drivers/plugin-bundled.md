@@ -34,9 +34,9 @@ drivers:
 The curated catalog includes Linear, Slack, GitHub, Notion, Figma, Canva,
 Datadog, Sentry, Adobe, Coursera Learning, and Google Contacts. Their recorded
 identities and presentation metadata do not include tool inventory or
-account-specific availability. Notion, Figma, Canva, Sentry, and Adobe are
-unavailable because their recorded releases have unverified local components.
-Use hosted discovery for current skill-plugin metadata. Select a plugin and set its default policy; per-tool controls are
+account-specific availability. Notion, Figma, Canva, and Adobe include supported
+hosted apps with skills. Sentry remains unavailable because its recorded release
+has no concrete hosted app. Select a plugin and set its default policy; per-tool controls are
 unavailable until the catalog supplies tool details. Startup resolves native
 metadata independently and still requires the Agent's actual authentication and
 provider access. Catalog membership does not grant access or prove execution.
@@ -307,4 +307,7 @@ not write the shared native registry while the prior gateway is running.
 Source and contract tests do not establish compatibility with every runtime
 image. Native proof requires the testing guide's opt-in real-runtime lane.
 
-Disabling a selection does not uninstall it. Native remote installation can enable a plugin on the credential’s account; Agent-local app configuration and the OpenClaw bridge still block its execution. Agent enablement does not manage account-wide installation state.
+Disabling a selection does not uninstall it. Native remote installation can enable
+the plugin on the credential's account. Agent-local plugin/app policy and the
+OpenClaw bridge enforce the startup restrictions above; selections do not manage
+account-wide installation state.

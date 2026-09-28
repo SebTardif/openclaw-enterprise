@@ -149,6 +149,7 @@ function catalogEntry(value: unknown): PluginCatalogEntry {
     invalid();
   }
   const apps = array(release.app_ids, 100).map((id) => text(id, 256));
+  // Native Codex loads skills from the installed bundle; validate catalog metadata here.
   const skills = array(release.skills, 1000);
   if (
     !["AVAILABLE", "INSTALLED_BY_DEFAULT", "NOT_AVAILABLE"].includes(

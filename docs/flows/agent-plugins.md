@@ -144,13 +144,12 @@ the container's private temporary home.
 
 `apps/controller/src/drivers/compute/kubernetes/runtime-entrypoints.ts:installOpenClawPlugins`
 
-For embedded OpenClaw, the entrypoint checks selections against the bundled
-catalog and native policy. Generated grants enter nonempty `tools.allow`,
+Embedded OpenClaw validates selections against its bundled catalog and policy. Grants enter nonempty `tools.allow`,
 otherwise `tools.alsoAllow`, preserving denies and profiles. A tool's `enabled`
 override precedes `toolDefaults.enabled`; disabled tools emit native denies.
 Master disable and operator denies prevail; `provider_default` and `none` add no
-Diffs review step. The revision-private configuration uses `--pin --force --no-enable`
-to prevent installation from changing enablement or allow/deny lists. Preparation
+Diffs review step. Revision-private configuration uses `--pin --force --no-enable`,
+preserving enablement and allow/deny lists during installation. Preparation
 refreshes the registry and verifies admitted configuration. The runtime image
 must gain this flag; the pinned release lacks it.
 Native inspection verifies plugin ID, package name, runtime/install version,
@@ -164,14 +163,15 @@ Nonempty selections enable apps, plugins, and remote plugins. The bridge sets
 `codexPlugins.enabled:true`, `allow_all_plugins:false`, and per-selection entries;
 disabled entries cannot execute.
 
-`plugin/list` discovers the curated marketplace; `plugin/read` resolves selections.
-`codexRuntimeArtifact` uses concrete `detail.apps`,
-excluding `appTemplates`; see the [bundled Driver limits](../reference/drivers/plugin-bundled.md#selection-and-catalogs).
-`codexInstallPlan` validates policy and detail before `plugin/install`. Confirmed
-install rejections or missing app authentication warn. Explicit tool policies
-require `codex_apps` inventory from `mcpServerStatus/list`; `codexAppToolSettings`
-binds catalog action IDs to native names through `_meta._codex_apps.resource_uri`.
-Native IDs work; unknown, unowned, ambiguous, or duplicate IDs fail startup.
+`plugin/list` discovers the marketplace; `plugin/read` resolves selections.
+`codexRuntimeArtifact` uses concrete `detail.apps`, excluding `appTemplates`.
+`codexInstallPlan` validates policy and [component support](../reference/drivers/plugin-bundled.md)
+before `plugin/install`. Codex loads bundled skills; selected-only activation
+requires the compatible runtime described below.
+Install rejections or missing app authentication warn. Explicit tool policies
+require `mcpServerStatus/list`'s `codex_apps` inventory; `codexAppToolSettings`
+binds catalog action IDs through `_meta._codex_apps.resource_uri`. Native IDs
+work. Unknown, unowned, ambiguous, or duplicate IDs fail startup.
 
 `codexRuntimeArtifact` writes defaults and explicit tools:
 `provider_default`/`all_actions`/`write_actions`/`none` map to Codex
@@ -298,6 +298,8 @@ completed deployment attempt rather than ongoing runtime health.
 - 2026-09-28 00:02: Reconciled Codex startup policy verification with approval scopes. (01a0b17c-68b6-7e11-bedc-f74de7d606ed - b96eadc1)
 
 - 2026-09-27 23:40: Catalog prefetch and loading feedback. (01a0e53a-f2be-7bd1-a9c1-36e827b2ee47 - b38554ac)
+
+- 2026-09-27 22:17: Document native Codex bundled skill support and pending account-plugin activation restriction. (01a0d4f7-8085-70e0-9d0c-69a465a81fe3 - 19f72841c3aed621137bd438ae91fa016c39b292)
 
 - 2026-09-27 15:10: Added plugin defaults and skills. (codex/01a0d755-b86e-7d33-bddc-c21ba03a3276 - ab9527bb)
 
