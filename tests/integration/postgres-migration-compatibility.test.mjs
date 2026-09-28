@@ -1013,10 +1013,10 @@ async function assertCompletedHistory(db, previous = []) {
   const receipts = await historyReceipts(db.migrator);
   assert.deepEqual(receipts.slice(0, previous.length), previous);
   const providerEntries = manifest.compatibleLineages.providerCompleted.entries;
+  const providerLineage = [...providerEntries, ...manifest.entries.slice(providerEntries.length)];
   const expectedEntries =
-    previous.length >= providerEntries.length &&
-    receiptsMatchEntries(previous.slice(0, providerEntries.length), providerEntries)
-      ? [...providerEntries, ...manifest.entries.slice(providerEntries.length)]
+    previous.length >= providerEntries.length && receiptsMatchEntries(previous, providerLineage)
+      ? providerLineage
       : manifest.entries;
   assert.deepEqual(
     receipts.map(({ hash, created_at }) => [hash, Number(created_at)]),
@@ -1328,7 +1328,7 @@ async function canonicalData(db) {
   ]) {
     const ignoredColumns =
       table === "agents"
-        ? ["repository_bindings"]
+        ? ["repository_bindings", "harness_auth_credential_source_id", "plugin_approvers"]
         : table === "controller_work"
           ? ["work_kind"]
           : [];
@@ -1387,7 +1387,9 @@ test(
       [29, "workspaceSetup"],
       [30, "agentProvisioning"],
       [31, "backendCompleted"],
-      [32, "backendCompatibility"],
+      [32, "backendTerminology"],
+      [33, "prePluginApprovers"],
+      [34, "preCreationRequests"],
     ]) {
       await context.test(`populated canonical ${history}`, async (child) => {
         const db = await historyDatabase(child, fixture, "main", { prefix });
@@ -1620,33 +1622,31 @@ test(
 );
 
 test(
-  "Canonical migration resumes Provider lineage after Backend compatibility without rewriting receipts",
+  "Canonical migration completes a Provider lineage after later canonical migrations",
   requiresHistoryPostgres,
   async (context) => {
     const fixture = await migrationHistoryFixture();
-    const db = await historyDatabase(context, fixture, "providerresume");
-    await installProviderCompletedHistory(db);
-    await seedProviderCompletedData(db);
-    // A database upgraded by main already has the compatibility receipt, while
-    // its first 31 receipts retain the original Provider fingerprints.
-    await installCanonicalPrefix(db, 32);
-    const receipts = await historyReceipts(db.migrator);
-    const before = await canonicalData(db);
-    assert.equal(receipts.length, 32);
-    assert.deepEqual(await runHistoryMigration(db, "production", true), {
-      ok: true,
-      history: "backendCompatibility",
-    });
-    assert.deepEqual(await runHistoryMigration(db), {
-      ok: true,
-      history: "backendCompatibility",
-    });
-    await assertCompletedHistory(db, receipts);
-    assert.deepEqual(await canonicalData(db), before);
-    assert.deepEqual(await runHistoryMigration(db, "production", true), {
-      ok: true,
-      history: "completed",
-    });
+    for (const [prefix, history] of [
+      [32, "backendTerminology"],
+      [33, "prePluginApprovers"],
+      [34, "preCreationRequests"],
+    ]) {
+      await context.test(history, async (child) => {
+        const db = await historyDatabase(child, fixture, "providercontinuation");
+        await installProviderCompletedHistory(db);
+        // Stock Drizzle appends later canonical migrations while retaining Provider fingerprints.
+        await installCanonicalPrefix(db, prefix);
+        const receipts = await historyReceipts(db.migrator);
+        assert.equal(receipts.length, prefix);
+        assert.deepEqual(await runHistoryMigration(db, "production", true), {
+          ok: true,
+          history,
+        });
+        assert.deepEqual(await runHistoryMigration(db), { ok: true, history });
+        // Later canonical migrations append without rewriting existing receipts.
+        await assertCompletedHistory(db, receipts);
+      });
+    }
   },
 );
 
@@ -1690,7 +1690,9 @@ test(
       [29, "workspaceSetup"],
       [30, "agentProvisioning"],
       [31, "backendCompleted"],
-      [32, "backendCompatibility"],
+      [32, "backendTerminology"],
+      [33, "prePluginApprovers"],
+      [34, "preCreationRequests"],
     ]) {
       await context.test(`prefix ${prefix} transaction`, async (child) => {
         const db = await historyDatabase(child, fixture, "rollback", { prefix });
@@ -1705,7 +1707,7 @@ test(
           db,
           db.name,
           `CREATE FUNCTION public.reject_migration_ddl() RETURNS event_trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'migration rollback fixture' USING ERRCODE='55000'; END $$;
-        CREATE EVENT TRIGGER reject_migration_ddl ON ddl_command_start WHEN TAG IN ('${prefix >= 27 ? "CREATE FUNCTION" : "ALTER FUNCTION"}') EXECUTE FUNCTION public.reject_migration_ddl()`,
+        CREATE EVENT TRIGGER reject_migration_ddl ON ddl_command_start WHEN TAG IN ('${prefix >= 31 ? "ALTER TABLE" : prefix >= 27 ? "CREATE FUNCTION" : "ALTER FUNCTION"}') EXECUTE FUNCTION public.reject_migration_ddl()`,
         );
         assert.deepEqual(await runHistoryMigration(db), { ok: false, code: "MIGRATION_FAILED" });
         assert.deepEqual(await historyReceipts(db.migrator), before.receipts);

@@ -102,9 +102,6 @@ function requireReceiptsMatchEntries(receipts, entries) {
 }
 
 function classifyReceipts(receipts, manifest) {
-  const backendCompletedLength = manifest.entries.findIndex(
-    (entry) => entry.tag === "0031_backend_terminology_compatibility",
-  );
   const providerCompleted = manifest.compatibleLineages?.providerCompleted;
   if (providerCompleted !== undefined && receipts.length >= providerCompleted.entries.length) {
     const providerEntries = [
@@ -115,9 +112,16 @@ function classifyReceipts(receipts, manifest) {
       if (receipts.length === manifest.entries.length) {
         return "completed";
       }
-      return receipts.length === backendCompletedLength + 1
-        ? "backendCompatibility"
-        : "providerCompleted";
+      if (receipts.length === 32) {
+        return "backendTerminology";
+      }
+      if (receipts.length === 33) {
+        return "prePluginApprovers";
+      }
+      if (receipts.length === 34) {
+        return "preCreationRequests";
+      }
+      return "providerCompleted";
     }
     if (!receiptsMatchEntries(receipts, manifest.entries)) {
       refuse("the applied receipts differ from canonical history");
@@ -149,11 +153,17 @@ function classifyReceipts(receipts, manifest) {
   if (receipts.length === 30) {
     return "agentProvisioning";
   }
-  if (receipts.length === backendCompletedLength) {
+  if (receipts.length === 31) {
     return "backendCompleted";
   }
-  if (receipts.length === backendCompletedLength + 1) {
-    return "backendCompatibility";
+  if (receipts.length === 32) {
+    return "backendTerminology";
+  }
+  if (receipts.length === 33) {
+    return "prePluginApprovers";
+  }
+  if (receipts.length === 34) {
+    return "preCreationRequests";
   }
   refuse("an incomplete or unsupported development history is installed");
 }
