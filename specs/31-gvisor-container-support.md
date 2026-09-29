@@ -80,7 +80,7 @@ flowchart TB
   Compute["<b>OCC and Compute</b><br/>Admit and check runtime"]
   Codex["<b>Dedicated Codex</b><br/>Tools inside gVisor"]
   Contribution["<b>Disposable contribution</b><br/>Test, push and open PR"]
-  Recovery["<b>Later selected work</b><br/>Retain and recover state"]
+  Recovery["<b>Later proposed work</b><br/>Retain and recover state"]
   Request -.->|admit revision| Compute
   Compute -.->|prepare and observe| Codex
   Codex -.->|managed repository access| Contribution
@@ -113,8 +113,9 @@ The proposal has four [delivery increments](31-gvisor-container-support/delivery
    artifacts, and restore to fresh stores without blindly repeating uncertain
    model or repository effects.
 
-All four remain selected scope. The runtime checkpoint alone does not complete
-contribution or recovery. [Storage and recovery](31-gvisor-container-support/storage-and-recovery.md)
+All four are the proposed gVisor MVP sequence for 1.x discussion, not approved
+release scope. The runtime checkpoint alone does not complete contribution or
+recovery. [Storage and recovery](31-gvisor-container-support/storage-and-recovery.md)
 defines disposal, writer exclusion and completed-context restore; the exact
 disposal transition and native import interface remain
 [open decisions](31-gvisor-container-support/interfaces.md#owner-decisions).

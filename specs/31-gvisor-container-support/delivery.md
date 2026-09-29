@@ -7,7 +7,7 @@ for release scope and changes to the historical source and storage baseline.
 
 Each increment ends in a useful ordinary-Agent outcome and its own evidence.
 The following criteria are required results, not reported passes. Accepted
-direction, source definitions and a running fixture do not complete the selected
+direction, source definitions and a running fixture do not complete the proposed
 gVisor contribution or recovery journey.
 
 The increments remain proposed 1.x discussion, with no commitment to ship in
@@ -45,8 +45,8 @@ limits. One operator-managed combination suffices for initial qualification.
    compatibility and preserved uncertain effects. Host-loss and changed-build
    claims need separate qualification.
 
-The runtime checkpoint does not complete the selected MVP. All four increments
-remain selected. [Protected composition](architecture.md#protected-composition)
+The runtime checkpoint does not complete the proposed gVisor MVP for 1.x
+discussion. All four increments remain proposed, not approved release scope. [Protected composition](architecture.md#protected-composition)
 has its own gates and does not automatically precede every retained-state task.
 Every deployment must satisfy its immutable profile. No weaker retained
 combination is implied.
