@@ -137,7 +137,8 @@ in its HttpOnly cookie and is omitted from session-inspection responses.
 under the auth secret (`apps/controller/src/auth/session-binding.ts`), alongside
 public user identity. Console compares it to invalidate retained views and drafts
 after a new session, including for the same user. Sign-out revokes the session,
-and public signup is disabled.
+and public signup is disabled. Without an external provider,
+`auth/admission.ts:passwordFailureAdmission` limits failed password sign-ins.
 
 `requireSessionKey` applies the optional `x-occ-session-key` header after the
 cookie session resolves, in `ControllerAdmissionVerifier.verify` (protected API
@@ -223,7 +224,7 @@ that version and invalidate target sessions and proofs without changing IAM.
 A guarded read returns current account and method state, not a prior operation
 receipt. Unknown completion returns an explicit dependency failure without
 replay or compensation; operators must resolve uncertainty before a new action.
-Logout commits deletion and audit before clearing the cookie. The [authentication reference](../reference/authentication.md#github-sign-in-for-existing-accounts)
+Logout commits deletion and audit before clearing the cookie. The [authentication reference](../reference/authentication/external-sign-in.md#github-sign-in-for-existing-accounts)
 owns configuration, recovery limits, and operator-visible behavior.
 
 ### 4. Admit and authorize protected API calls
