@@ -1,5 +1,7 @@
 # Implementation specifications
 
+[Basic Agent observability](31-basic-observability.md) — Proposed lifecycle History, protected access, recovery and audit retention. Implementation and qualification remain pending.
+
 [Default production observability](36-production-observability.md) — Implemented locally;
 production telemetry defaults, separate demo stack, and local k3d/CI acceptance.
 See the [implementation plan](36-production-observability-plan.md) and
