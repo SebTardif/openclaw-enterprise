@@ -4,7 +4,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createRequire } from "node:module";
-import { runInNewContext } from "node:vm";
+import { runInNewContext, Script } from "node:vm";
 import test from "node:test";
 import {
   AGENT_READINESS_ENTRYPOINT,
@@ -4702,6 +4702,20 @@ test("runtime entrypoints fit in a single exec argument", async () => {
   for (const [name, size] of Object.entries(sizes)) {
     assert.ok(size < limit, `${name} is ${size} bytes; the exec limit is ${limit}`);
   }
+  // The supervisor's copy of the Codex program drops only full-line comments,
+  // which is safe while no string, template literal or block comment spans lines.
+  assert.doesNotMatch(AGENT_RUNTIME_ENTRYPOINT, /`|\/\*/);
+  const slot = 'name: "Codex", args: ["-e", ';
+  const start = AGENT_WITH_NODE_ENTRYPOINT.indexOf(slot) + slot.length;
+  const end = AGENT_WITH_NODE_ENTRYPOINT.indexOf("], env: codexEnv }", start);
+  const embedded = JSON.parse(AGENT_WITH_NODE_ENTRYPOINT.slice(start, end));
+  assert.equal(
+    embedded,
+    AGENT_RUNTIME_ENTRYPOINT.split("\n")
+      .filter((line) => !/^\s*\/\//.test(line))
+      .join("\n"),
+  );
+  assert.doesNotThrow(() => new Script(embedded));
   for (const embedded of [true, false]) {
     const { driver, revision, objects, state, context } = workspaceSetupFixture(embedded);
     await driver.prepareRevision(revision, context);

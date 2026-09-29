@@ -2494,6 +2494,17 @@ if (runtimeStatusPort() === undefined) {
 }
 `;
 
+// The supervisor carries the Codex program inside its own exec argument, which
+// Linux limits to 128 KiB (MAX_ARG_STRLEN). Its copy drops full-line comments.
+// That is safe while the program has no template literals or block comments, so
+// no line can continue a string; a conformance test pins both conditions.
+function withoutLineComments(program: string): string {
+  return program
+    .split("\n")
+    .filter((line) => !/^\s*\/\//.test(line))
+    .join("\n");
+}
+
 // Kubernetes Codex implementation: this file-only node is not an OpenClaw
 // execution worker; its explicit command allowlist disables worker hosting.
 // It serves files while Codex restarts. Reuse Codex login/plugin initialization
@@ -2551,7 +2562,7 @@ const processes = [
       "--commands", "file.fetch,file.stat,file.write,file.create,dir.list,workspace.memory,workspace.skills"],
     env: nodeEnv,
   },
-  { name: "Codex", args: ["-e", ${JSON.stringify(AGENT_RUNTIME_ENTRYPOINT)}], env: codexEnv },
+  { name: "Codex", args: ["-e", ${JSON.stringify(withoutLineComments(AGENT_RUNTIME_ENTRYPOINT))}], env: codexEnv },
 ];
 let stopping = false;
 function killGroup(child, signal) {
