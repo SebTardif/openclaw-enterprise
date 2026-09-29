@@ -28,6 +28,10 @@ function derivePluginAppServerTokenFromBase(baseToken, revisionId, startupId) {
 }
 `;
 
+// The runtime status document reports startup: pending | ready | failed. Both
+// readiness entrypoints require "ready" before any native check, so a process
+// that listens while its model probe runs never becomes ready early, and a
+// failed startup stays unready with its runtimeFailure evidence.
 export const PLUGIN_RUNTIME_HELPERS = String.raw`
 const pluginRuntimeTranslator = (${PLUGIN_RUNTIME_TRANSLATOR_SOURCE})();
 const {
@@ -188,9 +192,6 @@ let pluginStatusReport = {
 };
 
 let runtimeStartupFailure;
-// Readiness reads this on every runtime Gateway and Harness: the native process
-// may already listen while the model probe runs, but it is never ready before
-// startup is "ready", and a failed startup stays unready with its evidence.
 let runtimeStartupState = "pending";
 
 function publishPluginRuntimeStatus(report) {
@@ -1668,6 +1669,10 @@ async function installCodexPlugins(runtime, failures = []) {
 }
 `;
 
+// startBoundedProbe runs a probe without blocking the wrapper, so the native
+// process can start alongside it. Its result has spawnSync's shape and bounds:
+// the timeout and the stdout maxBuffer kill the probe with killSignal and report
+// ETIMEDOUT or ENOBUFS. Probe stderr was never read, so it is discarded.
 const AUTH_PROBE_FAILURE_HELPER = String.raw`
 function holdFailedAuthentication(check = "model-probe", code = "UNAVAILABLE") {
   publishRuntimeFailure(check, code);
@@ -1676,77 +1681,53 @@ function holdFailedAuthentication(check = "model-probe", code = "UNAVAILABLE") {
   setInterval(() => {}, 3600000);
 }
 
-// Run a bounded probe without blocking the wrapper, so the native process can
-// start alongside it. The result has spawnSync's shape and bounds: the timeout
-// and the per-stream maxBuffer kill the probe with killSignal and report
-// ETIMEDOUT or ENOBUFS, exactly as the synchronous probe did.
 function startBoundedProbe(command, args, options) {
-  const { spawn: spawnBoundedProbe } = require("node:child_process");
+  const { spawn: spawnProbe } = require("node:child_process");
   const { Buffer: ProbeBuffer } = require("node:buffer");
-  const chunks = { stdout: [], stderr: [] };
-  const sizes = { stdout: 0, stderr: 0 };
-  let child;
+  const chunks = [];
+  let size = 0;
   let error;
-  let settled = false;
+  let child;
   let timer;
-  let resolveResult;
+  let finish;
   const result = new Promise((resolve) => {
-    resolveResult = resolve;
+    finish = (status, signal) => {
+      clearTimeout(timer);
+      resolve({ status, signal, stdout: ProbeBuffer.concat(chunks).toString("utf8"), ...(error && { error }) });
+    };
   });
-  const text = (name) =>
-    ProbeBuffer.concat(
-      chunks[name].map((chunk) => (typeof chunk === "string" ? ProbeBuffer.from(chunk) : chunk)),
-    ).toString("utf8");
-  const finish = (status, signal) => {
-    if (settled) return;
-    settled = true;
-    clearTimeout(timer);
-    resolveResult({
-      status,
-      signal,
-      stdout: text("stdout"),
-      stderr: text("stderr"),
-      ...(error === undefined ? {} : { error }),
-    });
-  };
   const stop = (code) => {
-    if (settled) return;
     error ??= { code };
     child?.kill(options.killSignal);
   };
   try {
-    child = spawnBoundedProbe(command, args, { cwd: options.cwd, env: options.env, stdio: options.stdio });
+    child = spawnProbe(command, args, { cwd: options.cwd, env: options.env, stdio: ["ignore", "pipe", "ignore"] });
   } catch (spawnError) {
     error = spawnError;
     finish(null, null);
     return { result, stop() {} };
   }
   timer = setTimeout(() => stop("ETIMEDOUT"), options.timeout);
-  for (const name of ["stdout", "stderr"]) {
-    child[name]?.on("data", (chunk) => {
-      if (error !== undefined) return;
-      sizes[name] += chunk.length;
-      if (sizes[name] > options.maxBuffer) {
-        stop("ENOBUFS");
-        return;
-      }
-      chunks[name].push(chunk);
-    });
-  }
+  child.stdout.on("data", (chunk) => {
+    size += chunk.length;
+    if (size > options.maxBuffer) stop("ENOBUFS");
+    else if (error === undefined) chunks.push(chunk);
+  });
   child.on("error", (spawnError) => {
     error ??= spawnError;
     if (child.pid === undefined) finish(null, null);
   });
-  child.on("close", (status, signal) => finish(status ?? null, signal ?? null));
+  child.on("close", finish);
   return { result, stop: () => stop("TERMINATED") };
 }
 `;
 
 // The native probe disables tools and fallback and performs a bounded model turn.
 // Its JSON status, not its process exit status alone, establishes provider acceptance.
+// startOpenClawAuthenticationProbe runs the same probe alongside Gateway startup;
+// its outcome resolves to a failure code, or undefined once the provider accepted.
 const OPENCLAW_AUTH_PROBE_HELPERS = String.raw`
 ${AUTH_PROBE_FAILURE_HELPER}
-// Returns a failure code, or the isolated probe invocation.
 function openClawProbeInvocation(fs, directory) {
   const model = process.env.OPENCLAW_HARNESS_MODEL;
   const provider = process.env.OPENCLAW_HARNESS_PROVIDER;
@@ -1814,19 +1795,15 @@ function probeOpenClawAuthenticationFailureCode() {
   }
 }
 
-// The same probe, run alongside Gateway startup. outcome resolves to a failure
-// code, or undefined when the provider accepted the credential.
 function startOpenClawAuthenticationProbe() {
   const fs = require("node:fs");
   let probe;
-  let stopped = false;
   const outcome = (async () => {
     let directory;
     try {
       directory = fs.mkdtempSync("/tmp/openclaw-auth-probe-");
       const invocation = openClawProbeInvocation(fs, directory);
       if (invocation.code !== undefined) return invocation.code;
-      if (stopped) return "UNAVAILABLE";
       probe = startBoundedProbe("node", invocation.args, invocation.options);
       return openClawProbeFailureCode(invocation, await probe.result);
     } catch {
@@ -1835,13 +1812,7 @@ function startOpenClawAuthenticationProbe() {
       if (directory !== undefined) fs.rmSync(directory, { recursive: true, force: true });
     }
   })();
-  return {
-    outcome,
-    stop() {
-      stopped = true;
-      probe?.stop();
-    },
-  };
+  return { outcome, stop: () => probe?.stop() };
 }
 `;
 
@@ -1888,6 +1859,13 @@ function publishAgentPluginSkillPath() {
 
 `;
 
+// With a runtime status port, the embedded model probe starts first and runs
+// alongside plugin installation, configuration and the gateway process; startup
+// becomes ready only when the probe passed and the gateway was spawned. A failed
+// probe stops the gateway and holds the same runtime failure: the gateway's
+// exit then does not end the wrapper, and termination exits at once. A gateway
+// exit or startup error seen first waits for the probe, so its failure still
+// wins, as when it ran first. Without the port the probe runs before startup.
 export const GATEWAY_RUNTIME_ENTRYPOINT = String.raw`
 const { mkdirSync, rmSync } = require("node:fs");
 const { join } = require("node:path");
@@ -1914,7 +1892,6 @@ function forwardTermination(child, onTermination = () => {}) {
     terminating = true;
     terminationRequested = true;
     onTermination();
-    // A wrapper holding failed startup evidence has no child left to drain.
     if (exited) {
       process.exit(0);
       return;
@@ -1927,8 +1904,6 @@ function forwardTermination(child, onTermination = () => {}) {
 }
 
 const modelProbeConfigured = process.env.OPENCLAW_HARNESS_PROBE_CONFIG !== undefined;
-// Where readiness reads the startup state, the model probe runs alongside
-// Gateway startup and gates readiness. Without that state it gates the process.
 const concurrentModelProbe =
   modelProbeConfigured && runtimeStatusPort() !== undefined
     ? startOpenClawAuthenticationProbe()
@@ -1954,8 +1929,6 @@ concurrentModelProbe?.outcome.then((code) => {
     publishStartupWhenComplete();
     return;
   }
-  // The Gateway never became ready: stop it and keep the same failure evidence
-  // a probe that ran before it would have published.
   startupHeld = true;
   if (child !== undefined) {
     child.kill("SIGTERM");
@@ -2050,7 +2023,6 @@ if (workspaceNodeId !== undefined || process.env.APP_SERVER_URL !== undefined) {
   }
   writeOpenClawConfig(config);
 }
-// A model probe that failed while startup was prepared already holds the wrapper.
 if (startupHeld) return;
 nativeStarting = true;
 publishStartupWhenComplete();
@@ -2092,27 +2064,31 @@ if (pluginRuntime?.manifest?.kind === "codex" && hasEnabledPluginSelections(plug
   }, 2_000).unref();
 }
 child.on("exit", (code, signal) => {
-  // A failed model probe stopped the Gateway: hold its evidence, never restart.
   if (startupHeld) return;
   const exit = () => process.exit(code ?? (signal === "SIGTERM" ? 0 : 1));
   if (modelProbePassed || terminationRequested) {
     exit();
     return;
   }
-  // An early exit must not hide a pending probe failure.
   concurrentModelProbe.outcome.then((failure) => {
     if (failure === undefined) exit();
   });
 });
 })().catch(async (error) => {
   if (holdPluginApproverConfigurationFailure(error)) return;
-  // A failed model probe outranks other startup errors, as when it ran first.
   if (concurrentModelProbe !== undefined && (await concurrentModelProbe.outcome) !== undefined) return;
   throw error;
 });
 }
 `;
 
+// With a runtime status port (every Kubernetes Harness), app-server and plugin
+// installation start right after login while the model probe runs with the same
+// attempts and budget. Plugin status, the ready marker and startup "ready" wait
+// for the probe. A failed probe stops app-server and holds the same runtime
+// failure; an app-server exit or plugin failure seen first waits for the probe,
+// so its failure still wins. Termination stops the probe and exits without
+// waiting for it. Without the port (Docker), the probe gates app-server as before.
 export const AGENT_RUNTIME_ENTRYPOINT = String.raw`
 const { createHash } = require("node:crypto");
 const { mkdirSync, mkdtempSync, rmSync } = require("node:fs");
@@ -2206,7 +2182,6 @@ function isRecoveredNativeStreamError(event) {
   return !/auth|unauthori[sz]ed|forbidden|credential|api.?key|\b40[13]\b/i.test(event.message);
 }
 
-// Returns the isolated probe invocation, or undefined for an unsupported model.
 function codexProbeInvocation(directory, timeout) {
   const selectedModel = process.env.OPENCLAW_HARNESS_MODEL;
   if (typeof selectedModel !== "string" || !/^(openai|codex)\/.+/.test(selectedModel)) return undefined;
@@ -2318,7 +2293,6 @@ function probeCodexAuthentication(timeout) {
   }
 }
 
-// The same probe attempt, run alongside app-server startup.
 let activeCodexProbe;
 let codexTerminating = false;
 async function probeCodexAuthenticationConcurrently(timeout) {
@@ -2340,8 +2314,6 @@ async function probeCodexAuthenticationConcurrently(timeout) {
 }
 
 // A single startup budget includes both process attempts and the retry delay.
-// attemptProbe calls back with each attempt's report; settle receives the
-// failure code, or undefined once the provider accepted the credential.
 function runCodexModelProbe(attemptProbe, settle, attempt = 1, deadline = performance.now() + 61000) {
   const startedAt = performance.now();
   const timeout = Math.min(30000, Math.floor(deadline - startedAt));
@@ -2376,7 +2348,6 @@ function forwardTermination(child, onTermination = () => {}) {
     if (terminating) return;
     terminating = true;
     onTermination();
-    // A wrapper holding failed startup evidence has no child left to drain.
     if (exited) {
       process.exit(0);
       return;
@@ -2428,9 +2399,7 @@ function failCodexPluginRuntime(child, error) {
   process.exit(1);
 }
 
-// Without a runtime status port, readiness cannot see the probe: it gates the
-// app-server process, as it always has. No signal handler is installed during
-// the retry backoff, so termination exits promptly.
+// No signal handler is installed during backoff, so termination exits promptly.
 function startAuthenticatedCodex() {
   runCodexModelProbe((timeout, report) => report(probeCodexAuthentication(timeout)), (failure) => {
     if (failure !== undefined) {
@@ -2456,9 +2425,6 @@ function startAuthenticatedCodex() {
   });
 }
 
-// With a runtime status port, app-server boot and plugin installation run
-// alongside the model probe. Readiness waits for startup "ready", which follows
-// the probe, and the plugin status and ready marker are held until it passes.
 function startCodexWithConcurrentProbe() {
   let probeSettled = false;
   let holding = false;
@@ -2470,7 +2436,6 @@ function startCodexWithConcurrentProbe() {
   const probe = new Promise((settle) => {
     runCodexModelProbe(
       (timeout, report) => {
-        // Termination ends the wrapper: start no attempt and report none.
         if (codexTerminating) return;
         probeCodexAuthenticationConcurrently(timeout).then((result) => {
           if (!codexTerminating) report(result);
@@ -2482,8 +2447,6 @@ function startCodexWithConcurrentProbe() {
   probe.then((failure) => {
     probeSettled = true;
     if (failure === undefined || codexTerminating) return;
-    // The app-server never became ready: stop it and keep the same failure
-    // evidence a probe that ran before it would have published.
     holding = true;
     child.kill("SIGTERM");
     setTimeout(() => child.kill("SIGKILL"), 8_000)?.unref?.();
@@ -2497,7 +2460,6 @@ function startCodexWithConcurrentProbe() {
       exit();
       return;
     }
-    // An early app-server exit must not hide a pending probe failure.
     probe.then((failure) => {
       if (failure === undefined) exit();
     });
@@ -2510,10 +2472,8 @@ function startCodexWithConcurrentProbe() {
     (error) => ({ error }),
   );
   (async () => {
-    // A failed probe outranks a plugin failure, as when the probe ran first.
     if ((await probe) !== undefined || codexTerminating) return;
     const installed = await plugins;
-    // An app-server that already exited ends the wrapper instead.
     if (codexTerminating || appServerExited) return;
     try {
       if (installed.error !== undefined) throw installed.error;

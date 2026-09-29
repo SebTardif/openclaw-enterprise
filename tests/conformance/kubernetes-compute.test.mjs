@@ -8,6 +8,8 @@ import { runInNewContext } from "node:vm";
 import test from "node:test";
 import {
   AGENT_READINESS_ENTRYPOINT,
+  AGENT_RUNTIME_ENTRYPOINT,
+  AGENT_WITH_NODE_ENTRYPOINT,
   GATEWAY_READINESS_ENTRYPOINT,
   GATEWAY_RUNTIME_ENTRYPOINT,
 } from "../../apps/controller/src/drivers/compute/kubernetes/runtime-entrypoints.ts";
@@ -4683,6 +4685,38 @@ test("an embedded Gateway that exits early waits for its pending model probe", a
         assert.equal(status.startup, "failed");
       }
     });
+  }
+});
+
+// Linux rejects any single exec argument above MAX_ARG_STRLEN (32 pages, 128 KiB)
+// with E2BIG. Entrypoints travel as one `node -e` argument, and the workspace
+// node supervisor embeds the Codex program in its own. Fail here, by name,
+// rather than as a Pod that cannot start.
+test("runtime entrypoints fit in a single exec argument", async () => {
+  const limit = 128 * 1024;
+  const sizes = {
+    GATEWAY_RUNTIME_ENTRYPOINT: Buffer.byteLength(GATEWAY_RUNTIME_ENTRYPOINT),
+    AGENT_RUNTIME_ENTRYPOINT: Buffer.byteLength(AGENT_RUNTIME_ENTRYPOINT),
+    AGENT_WITH_NODE_ENTRYPOINT: Buffer.byteLength(AGENT_WITH_NODE_ENTRYPOINT),
+  };
+  for (const [name, size] of Object.entries(sizes)) {
+    assert.ok(size < limit, `${name} is ${size} bytes; the exec limit is ${limit}`);
+  }
+  for (const embedded of [true, false]) {
+    const { driver, revision, objects, state, context } = workspaceSetupFixture(embedded);
+    await driver.prepareRevision(revision, context);
+    state.ready = true;
+    await driver.prepareRevision(revision, context).catch(() => undefined);
+    for (const workload of [...objects.values()].filter(({ kind }) => kind === "Deployment")) {
+      for (const container of workload.spec.template.spec.containers) {
+        for (const argument of [...(container.command ?? []), ...(container.args ?? [])]) {
+          assert.ok(
+            Buffer.byteLength(argument) < limit,
+            `${workload.metadata.name}/${container.name} renders a ${Buffer.byteLength(argument)}-byte argument`,
+          );
+        }
+      }
+    }
   }
 });
 
