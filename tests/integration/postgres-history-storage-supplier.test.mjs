@@ -117,7 +117,7 @@ test("History qualification rejects endpoint and role overrides before opening p
 
 async function supplierPreflight() {
   const sql = await readFile(
-    new URL("../../migrations/0037_agent_audit_ledger_metadata.sql", import.meta.url),
+    new URL("../../migrations/0038_agent_audit_ledger_metadata.sql", import.meta.url),
     "utf8",
   );
   // Execute the actual first supplier statement, never its schema mutations or

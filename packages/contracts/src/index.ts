@@ -592,6 +592,27 @@ export interface Agent extends Scope {
   readonly createdAt: string;
 }
 
+/** Browsing failures never stand in for an empty or deployable configuration. */
+export interface ConfigurationReadError {
+  readonly code: "SAVED_CONFIGURATION_UNREADABLE";
+  readonly field:
+    | "plugins"
+    | "pluginApprovers"
+    | "repositoryBindings"
+    | "harnessAuth"
+    | "secretBindings"
+    | "repositoryCredentials"
+    | "configuration";
+}
+
+export type AgentMetadata = Omit<
+  Agent,
+  "plugins" | "pluginApprovers" | "repositoryBindings" | "harnessAuth"
+>;
+
+export type AgentRead =
+  Agent | (AgentMetadata & { readonly configurationReadError: ConfigurationReadError });
+
 export interface InstallationDeploymentInventoryAgent {
   readonly id: string;
   readonly status: AgentStatus;
@@ -646,6 +667,15 @@ export interface AgentRevision extends Scope {
   readonly servicePrincipalId: string;
   readonly createdAt: string;
 }
+
+export type AgentRevisionMetadata = Pick<
+  AgentRevision,
+  "id" | "namespaceId" | "agentId" | "revision" | "backendId" | "createdAt"
+>;
+
+export type AgentRevisionRead =
+  | AgentRevision
+  | (AgentRevisionMetadata & { readonly configurationReadError: ConfigurationReadError });
 
 export function freezeAgentRevision(revision: AgentRevision): Readonly<AgentRevision> {
   return Object.freeze({
@@ -948,6 +978,7 @@ export interface IAMPolicyManagementContext {
 }
 
 export type ManagedIAMResourceKind =
+  | "namespace"
   | "agent"
   | "agent_revision"
   | "configuration"
@@ -1067,6 +1098,7 @@ export interface SandboxDriver extends Driver {
   readonly facets: readonly SandboxFacet[];
   configureAgent?(
     configuration: Readonly<OpenClawConfigurationDocument>,
+    harness: Readonly<RevisionHarnessDescriptor>,
   ): OpenClawConfigurationDocument;
   ensureNamespace?(context: SandboxNamespaceContext): Promise<void>;
   provisionHarness?(context: SandboxHarnessContext): Promise<SandboxResourceRef>;
