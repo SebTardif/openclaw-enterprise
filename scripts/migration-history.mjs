@@ -31,6 +31,9 @@ async function readManifest() {
   ) {
     refuse("the journal differs from the reviewed source manifest");
   }
+  if (!/^[a-f0-9]{64}$/.test(manifest.catalogs?.completed ?? "")) {
+    refuse("the completed catalog has no reviewed PostgreSQL digest");
+  }
   const migrations = readMigrationFiles({ migrationsFolder: directory });
   if (migrations.length !== manifest.entries.length) {
     refuse("the migration source set differs");
@@ -127,6 +130,9 @@ function classifyReceipts(receipts, manifest) {
       if (receipts.length === 35) {
         return "preAgentDeletion";
       }
+      if (receipts.length === 37) {
+        return "preHistoryStorage";
+      }
       return "providerCompleted";
     }
     if (!receiptsMatchEntries(receipts, manifest.entries)) {
@@ -176,6 +182,9 @@ function classifyReceipts(receipts, manifest) {
   }
   if (receipts.length === 35) {
     return "preAgentDeletion";
+  }
+  if (receipts.length === 37) {
+    return "preHistoryStorage";
   }
   refuse("an incomplete or unsupported development history is installed");
 }

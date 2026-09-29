@@ -201,3 +201,30 @@ through its loopback proxy. It rejects nonloopback targets and TLS connections
 before mutation: inspecting encrypted protocol completion is unsupported, and
 TLS intent is never silently downgraded. Use the ordinary disposable non-TLS
 loopback setup above for this test.
+
+## Audit ledger metadata
+
+The `postgres-application` lane gives
+`tests/integration/postgres-history-storage-supplier.test.mjs` its own migrated
+`openclaw_history_storage_*` database through the official prepare/cleanup path.
+It supplies `OCC_HISTORY_STORAGE_DATABASE_URL` for the limited application role
+and `OCC_HISTORY_STORAGE_MIGRATOR_DATABASE_URL` for fixture faults and catalog
+checks. Both must name the same explicit loopback host, port and database, with
+literal role names and no URL query overrides. The runner keeps these selectors
+local to the selected test process; do not export them through GitHub's environment
+file. The existing cleanup owner removes the disposable database.
+
+Required cases cover ordinary State append, closed-fact validation, database-owned
+receipt/parentage, effective privileges, queue recovery with audit rejection, and
+Agent deletion preserving independent repository cleanup. The suite inventory
+requires the actual writer and both exhausted recovery cases; the URL guard alone
+cannot satisfy this lane. Run only against a source whose completed PostgreSQL
+catalog digest has been captured and reviewed. A missing digest refuses migration
+before SQL execution; it is not permission to bypass the migration runner.
+
+A separately owned configuration-drift fixture may explicitly set
+`OCC_HISTORY_STORAGE_UNSAFE_CONFIGURATION` to an existing named scenario in the
+test. That mode exercises only preflight refusal and cannot satisfy the normal
+writer suite's required cases. It does not grant privileges or prepare the unsafe
+configuration. These database tests do not prove authenticated History serving,
+audit retention, transcript capture, or installed deployment.

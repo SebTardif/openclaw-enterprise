@@ -51,6 +51,7 @@ const fixtureLanes = new Set([
   "k3d-fixture-plugins",
 ]);
 const nativeIAMBarrierFile = "tests/integration/postgres-native-iam-policy-barrier.test.mjs";
+const historyStorageFile = "tests/integration/postgres-history-storage-supplier.test.mjs";
 
 function laneDefinition(name) {
   return laneDefinitions[name] ?? {};
@@ -116,6 +117,9 @@ function ownedName(prefix, label, { maxLength = 63, separator = "-" } = {}) {
 }
 
 function databaseName(kind, label) {
+  if (kind === "history_storage") {
+    return ownedName("openclaw_history_storage", label, { maxLength: 63, separator: "_" });
+  }
   const prefix =
     kind === "failures" ? "openclaw_failures" : kind === "k8s" ? "openclaw_k8s" : "openclaw_ci";
   return ownedName(prefix, label, { maxLength: 63, separator: "_" });
@@ -2097,7 +2101,10 @@ async function prepareFile({ lane, file, statePath }) {
   }
 
   if (prepare.postgres) {
-    const dbKind = prepare.k3d ? "k8s" : "ci";
+    let dbKind = prepare.k3d ? "k8s" : "ci";
+    if (relativeFile === historyStorageFile) {
+      dbKind = "history_storage";
+    }
     const database = await createAndMigrateDatabase(resolvedStatePath, effectiveState, {
       kind: dbKind,
       label: fileStem(relativeFile),
@@ -2109,6 +2116,10 @@ async function prepareFile({ lane, file, statePath }) {
       env.OCC_TEST_NATIVE_IAM_BARRIER_CI = "1";
       env.OCC_TEST_NATIVE_IAM_BARRIER_DATABASE = database.name;
       env.OCC_TEST_NATIVE_IAM_BARRIER_MIGRATION_DATABASE_URL = database.migrationUrl;
+    }
+    if (name === "postgres-application" && relativeFile === historyStorageFile) {
+      env.OCC_HISTORY_STORAGE_DATABASE_URL = database.appUrl;
+      env.OCC_HISTORY_STORAGE_MIGRATOR_DATABASE_URL = database.migrationUrl;
     }
     if (relativeFile.endsWith("occ-metrics.test.mjs")) {
       env.OCC_METRICS_TEST_MIGRATION_DATABASE_URL = database.migrationUrl;
@@ -2173,7 +2184,7 @@ async function main() {
   }
   if (
     args.file &&
-    toRepositoryRelative(args.file) === nativeIAMBarrierFile &&
+    [nativeIAMBarrierFile, historyStorageFile].includes(toRepositoryRelative(args.file)) &&
     (args["github-env"] || process.env.GITHUB_ENV)
   ) {
     throw new Error(
