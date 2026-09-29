@@ -8,27 +8,22 @@ last_updated_session: authoring-run/27083620-6cdd-4ef0-bb22-aa2f3eee8f2a
 
 ## Overview
 
-The Kubernetes Compute Driver delegates dedicated Codex and native OpenClaw
-Harnesses to the selected OpenShell Sandbox Driver. One deployment-paired OpenShell Gateway uses
-an explicitly configured workspace mode. Operator mode is implemented: for each
-OCC Namespace, the Driver labels the Kubernetes namespace, reconciles rendered
-workspace-chart resources, and creates or adopts an OpenShell Workspace with
-the same physical name. Managed mode is recognized but fails before mutation.
-Sandbox requests are homed in the operator-mode Workspace.
+Kubernetes Compute delegates dedicated Codex and native OpenClaw Harnesses to
+the selected OpenShell Sandbox Driver and deployment-paired Gateway. In operator
+workspace mode, the Driver labels each OCC Namespace's Kubernetes namespace,
+reconciles rendered workspace-chart resources, and creates or adopts a same-named
+OpenShell Workspace for Sandbox requests. Managed mode fails before mutation.
 
-The model credential no longer needs a Secret projection: a
-[credential source](credential-source-lifecycle.md) attaches an OpenShell
-provider to the Sandbox, and the supervisor proxy injects the key. The regular
-Agent workflow with stock OpenShell still stops before Sandbox creation because
-`v0.1.0` cannot accept the Secret-backed app-server token or projected workload
-identity. The repository retains a verification-only PVC staging fixture, but
-the adapter does not accept it as a material supplier. Required repository and
-plugin material still stop provisioning before Sandbox creation.
+A [credential source](credential-source-lifecycle.md) attaches an OpenShell
+provider; the supervisor proxy injects the model key without Secret projection.
+Stock `v0.1.0` still cannot accept the app-server token or projected workload
+identity, so regular Agent provisioning stops before Sandbox creation. Repository
+and plugin material also block provisioning: the adapter does not accept the
+retained verification-only PVC staging fixture as a supplier.
 
-The local Kubernetes development profile installs the pinned Gateway and
-renders the workspace chart into the Installation configuration, in either a
-Kubernetes-only or Compose control plane. Neither uses the verification-only
-compatibility projection.
+Both Kubernetes-only and Compose development profiles install the pinned Gateway
+and render its workspace chart into Installation configuration. Neither uses the
+verification-only compatibility projection.
 
 ## Entry Points
 
@@ -93,58 +88,51 @@ graph TD
 `internal/occdev/openshell.go:prepareOpenShell`,
 `internal/occdev/kubernetes.go:writeInstallation`
 
-The written Installation declares the `openshell` Backend with the Gateway
-endpoint, the Sandbox, and a Credential Gateway whose `binaries` list holds the
-native Codex executable. The Sandbox policy has no model-egress rule; the
-credential source's provider profile supplies it.
+The Installation declares an `openshell` Backend with Gateway endpoint, Sandbox,
+and Credential Gateway whose `binaries` list contains native Codex. The Sandbox
+policy has no model-egress rule; the credential source's provider profile supplies it.
 
-The environment selects Kubernetes Compute and OpenShell. `scripts/dev-up`
-validates that combination and delegates lifecycle ownership to `occ dev up`.
-The control plane defaults to Compose; `OCC_DEVELOPMENT_CONTROL_PLANE=kubernetes`
-selects the Kubernetes-only profile. Both verify the `v0.1.0` source archive
-before packaging its Gateway and Workspace charts, and import the matching
-digest-pinned Gateway, Sandbox, and supervisor images. The launcher supplies v0.1.0's separate
-image registry, repository, and digest values for each component and omits the
+`scripts/dev-up` validates the selected Kubernetes Compute/OpenShell combination
+and delegates lifecycle to `occ dev up`. Compose is the default;
+`OCC_DEVELOPMENT_CONTROL_PLANE=kubernetes` selects Kubernetes-only. Both verify
+the `v0.1.0` source archive before packaging Gateway/Workspace charts and import
+matching digest-pinned Gateway, Sandbox and supervisor images. The launcher
+supplies each component's separate registry, repository and digest, omitting the
 NetworkPolicy acknowledgement removed from that chart.
-The CLI records the exact engine endpoint, cluster,
-platform Namespace, API port, and key destination before creating resources.
-The Kubernetes-only mode creates k3d without a Compose network, imports the OCE controller, Agent
-runtime, PostgreSQL, and three OpenShell images, and resolves their in-cluster
-digests. Unless the developer selects existing images explicitly, startup
-rebuilds the controller and Agent runtime from the current checkout before
-importing them.
 
-`installKubernetesControlPlane` creates protected PostgreSQL and bootstrap PVCs,
-runs migration and bootstrap through the production OCE Helm chart, and deploys
-the API and worker in `oce-system`. The Installation selects in-cluster
-Kubernetes authentication and the central Gateway's ClusterIP DNS name. A
-labeled development proxy is the API NetworkPolicy's only local client; k3d
-publishes its NodePort on host loopback. A separate development NetworkPolicy
-admits the OCE API, which registers providers, and the worker to the Gateway. The Gateway ingress policy also admits
-OpenShell supervisor Pods, but only from OCE-owned tenant namespaces. In each
-tenant namespace, the callback egress policy selects only Pods carrying the
-OpenShell managed-by and supervisor boundary labels. Other tenant Pods cannot
-reach the Gateway even though this disposable profile enables OpenShell's
-unauthenticated development mode. Because the cluster is disposable, the helper
-also binds the Helm chart's tenant roles to the OCE service accounts for all
-Namespaces. A development ClusterRole lets the worker manage the workspace Role
-and RoleBinding, with `bind` and `escalate` limited to the pinned OpenShell
-workspace Role. Production retains operator-owned tenant-local RoleBindings.
-Startup copies the generated service key
-through a temporary PVC reader Pod, verifies it against the live Installation,
-and removes the reader.
+Before creating resources, the CLI records engine endpoint, cluster, platform
+Namespace, API port and key destination. Kubernetes-only creates k3d without a
+Compose network, imports OCE controller, Agent runtime, PostgreSQL and the three
+OpenShell images, and resolves in-cluster digests. Unless existing images are
+explicitly selected, startup rebuilds controller/runtime from the current checkout.
 
-Cleanup validates the private state and recorded engine endpoint before deleting
-the named cluster. The Kubernetes-only state contains no Compose snapshot, and
-the cleanup path never calls a Compose provider.
+`installKubernetesControlPlane` creates protected PostgreSQL/bootstrap PVCs,
+runs migration/bootstrap through the production OCE Helm chart, and deploys API
+and worker in `oce-system`. Installation uses in-cluster Kubernetes authentication
+and central Gateway ClusterIP DNS. A labeled development proxy is the API
+NetworkPolicy's only local client; k3d publishes its NodePort on host loopback.
 
-In Compose mode, `internal/occdev/up.go:Up` starts PostgreSQL, migration, and
-bootstrap before creating k3d on the private Compose network. It installs the
-Gateway in `openshell-system` with a fixed NodePort, writes kubeconfig-based
-Driver configuration, and starts the API and Kubernetes worker in Compose. The
-worker reaches the Gateway through the owned container network. Cleanup stops
-the reconcilers, deletes the cluster, removes the recorded Compose project and
-volumes, and retains recovery state if any step fails.
+Development NetworkPolicies admit the provider-registering OCE API and worker
+to the Gateway, plus supervisor Pods only from OCE-owned tenant namespaces.
+Tenant callback egress selects only Pods with OpenShell managed-by and supervisor
+boundary labels; other tenant Pods cannot reach the Gateway despite its
+unauthenticated development mode. This disposable profile binds chart tenant
+roles to OCE service accounts across Namespaces. A development ClusterRole permits
+worker management of workspace Role/RoleBinding, limiting `bind`/`escalate` to the
+pinned workspace Role. Production retains operator-owned tenant-local RoleBindings.
+Startup copies the generated service key through a temporary PVC reader, verifies
+it against the live Installation, and removes the reader.
+
+Cleanup validates private state and recorded engine endpoint before deleting the
+named cluster. Kubernetes-only state has no Compose snapshot; cleanup never calls
+Compose.
+
+Compose's `internal/occdev/up.go:Up` starts PostgreSQL, migration and bootstrap,
+then creates k3d on its private network. It installs the Gateway in
+`openshell-system` with fixed NodePort, writes kubeconfig-based Driver configuration,
+and starts API/worker in Compose. The worker reaches the Gateway through the owned
+network. Cleanup stops reconcilers, deletes the cluster and recorded Compose
+project/volumes, retaining recovery state on failure.
 
 ### 1. Prepare the Namespace and OpenShell Workspace
 
