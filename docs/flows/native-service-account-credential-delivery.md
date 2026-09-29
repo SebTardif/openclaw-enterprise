@@ -188,7 +188,10 @@ Embedded OpenClaw consumes the selected provider's native API key and runs one b
 primary-model probe in the actual gateway startup, with tools and fallback
 disabled. With a runtime status port, `startOpenClawAuthenticationProbe` runs it
 alongside plugin installation and the gateway process under the same startup
-gate. Its 16-token output limit meets the provider's minimum request size.
+gate, and holds plugin status `starting` until the probe passes. Because that
+probe shares the gateway's CPU limit, a process timeout is retried once with
+the Codex attempt cap, delay and 61-second budget; other failures are final.
+Its 16-token output limit meets the provider's minimum request size.
 Initial and replacement deployments use this same startup path. For replacement,
 activation first updates the shared gateway's `Recreate` Deployment, which can
 stop the serving gateway before the new process validates credentials. Invalid
@@ -247,7 +250,7 @@ history cannot restore historical Secret values.
 
 ## Changelog
 
-- 2026-09-29 09:45: Run the startup model probes alongside app-server and gateway start behind a private startup readiness gate in the accompanying change. (authoring-run/074a5e05-eb1c-4279-b6c7-174c3d89ba7b - d040b86d)
+- 2026-09-29 09:45: Run the startup model probes alongside app-server and gateway start behind a private startup readiness gate, and retry a timed-out embedded probe once, in the accompanying change. (authoring-run/074a5e05-eb1c-4279-b6c7-174c3d89ba7b - d040b86d)
 
 - 2026-09-28 18:45: Document bounded Codex model-probe recovery and sanitized attempt evidence in the accompanying change. (authoring-run/3b7cc615-9e7b-416a-aec7-fe13c38cace1 - a14435c81e0d4020dd24568babddf95aba533da7)
 

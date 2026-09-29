@@ -299,8 +299,9 @@ for additional execution details.
   volume by a previous container attempt cannot make a restarted runtime ready.
   Access-token login retries only native process timeouts, up to three 30-second
   attempts. The dedicated Codex model probe separately retries a confirmed timeout
-  once within a 61-second budget; refusals are not retried. Exhausted startup
-  remains unready until an explicit restart. See the
+  once within a 61-second budget; refusals are not retried. The embedded
+  OpenClaw probe runs beside gateway startup and retries a timeout the same
+  way. Exhausted startup remains unready until an explicit restart. See the
   [authentication probe contract](../harness-execution.md#harness-authentication)
   for retry limits and sanitized attempt logs.
   Native plugin startup, authentication, transport, and installation failures

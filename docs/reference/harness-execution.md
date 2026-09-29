@@ -117,7 +117,9 @@ On Kubernetes the app-server and the embedded gateway start while their probe
 runs. Readiness first reads the wrapper's private startup state, which stays
 `pending` until the probe passes and becomes `failed` if it fails, so the
 process never receives Service traffic before the probe passes. A failed probe
-stops the process and holds the same runtime failure. Without that private
+stops the process and holds the same runtime failure; termination ends the
+held wrapper once the stopped process exits. Plugin status also stays
+`starting` until the probe passes. Without that private
 status port, as on Docker, the probe still runs before the process starts.
 Login state stays in its
 bounded ephemeral home. Gateway transport and workload identity credentials
@@ -145,7 +147,10 @@ one 61-second budget, including the delay. Authentication rejection, malformed
 output, tool events, and external signals without timeout evidence do not retry.
 Termination during the delay exits without starting another probe. Exhausted or
 nonretryable failure holds the process unready until restart; readiness polling
-never starts another model call. Embedded OpenClaw continues to probe once.
+never starts another model call. On Kubernetes, embedded OpenClaw shares the
+gateway's CPU limit while it probes, so it retries a process timeout once under
+the same attempt cap, delay and budget, and logs an `openclaw.model_probe` line
+for the timed-out attempt. Without the private status port it probes once.
 
 Codex emits a structured `codex.model_probe` log for each attempt with its number,
 elapsed milliseconds, exit code, recognized termination signal, and final code

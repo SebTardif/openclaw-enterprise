@@ -1726,6 +1726,11 @@ function startBoundedProbe(command, args, options) {
 // Its JSON status, not its process exit status alone, establishes provider acceptance.
 // startOpenClawAuthenticationProbe runs the same probe alongside Gateway startup;
 // its outcome resolves to a failure code, or undefined once the provider accepted.
+// Sharing the Gateway's CPU limit can slow the probe's node boot past its process
+// cap, so a MODEL_PROBE_TIMEOUT is retried once after one second, with Codex's
+// policy: 30-second attempts within one 61-second budget. Other failures, and
+// termination, end it at once. The serial path (no runtime status port) competes
+// with nothing and still probes once.
 const OPENCLAW_AUTH_PROBE_HELPERS = String.raw`
 ${AUTH_PROBE_FAILURE_HELPER}
 function openClawProbeInvocation(fs, directory) {
@@ -1797,22 +1802,52 @@ function probeOpenClawAuthenticationFailureCode() {
 
 function startOpenClawAuthenticationProbe() {
   const fs = require("node:fs");
+  const { performance: probeClock } = require("node:perf_hooks");
+  const deadline = probeClock.now() + 61000;
   let probe;
-  const outcome = (async () => {
+  let stopped = false;
+  let wake;
+  const attempt = async (timeout) => {
     let directory;
     try {
       directory = fs.mkdtempSync("/tmp/openclaw-auth-probe-");
       const invocation = openClawProbeInvocation(fs, directory);
       if (invocation.code !== undefined) return invocation.code;
-      probe = startBoundedProbe("node", invocation.args, invocation.options);
+      probe = startBoundedProbe("node", invocation.args, { ...invocation.options, timeout });
       return openClawProbeFailureCode(invocation, await probe.result);
     } catch {
       return "MODEL_PROBE_FAILED";
     } finally {
+      probe = undefined;
       if (directory !== undefined) fs.rmSync(directory, { recursive: true, force: true });
     }
+  };
+  const outcome = (async () => {
+    const startedAt = probeClock.now();
+    const first = await attempt(30000);
+    if (first !== "MODEL_PROBE_TIMEOUT" || stopped || probeClock.now() + 1000 >= deadline) return first;
+    console.error(JSON.stringify({
+      event: "openclaw.model_probe",
+      attempt: 1,
+      elapsedMs: Math.round(probeClock.now() - startedAt),
+      code: first,
+    }));
+    await new Promise((resume) => {
+      wake = resume;
+      setTimeout(resume, 1000);
+    });
+    const timeout = Math.min(30000, Math.floor(deadline - probeClock.now()));
+    if (stopped || timeout <= 0) return first;
+    return attempt(timeout);
   })();
-  return { outcome, stop: () => probe?.stop() };
+  return {
+    outcome,
+    stop() {
+      stopped = true;
+      probe?.stop();
+      wake?.();
+    },
+  };
 }
 `;
 
@@ -1918,9 +1953,16 @@ if (openClawAuthenticationFailureCode !== undefined) {
 let startupHeld = false;
 let modelProbePassed = concurrentModelProbe === undefined;
 let nativeStarting = false;
+let pendingPluginStatus;
 let child;
+// Plugin status "ready" and startup "ready" both wait for the model probe.
 function publishStartupWhenComplete() {
-  if (!startupHeld && modelProbePassed && nativeStarting) publishRuntimeReady();
+  if (startupHeld || !modelProbePassed) return;
+  if (pendingPluginStatus !== undefined) {
+    publishPluginRuntimeStatus(pendingPluginStatus);
+    pendingPluginStatus = undefined;
+  }
+  if (nativeStarting) publishRuntimeReady();
 }
 concurrentModelProbe?.outcome.then((code) => {
   if (terminationRequested) return;
@@ -1960,7 +2002,8 @@ const pluginResult =
 if (peerStatus !== undefined) {
   pluginResult.successfulPluginIds = peerStatus.successfulPluginIds;
 }
-publishPluginRuntimeStatus({ phase: "ready", ...pluginResult });
+pendingPluginStatus = { phase: "ready", ...pluginResult };
+publishStartupWhenComplete();
 const workspaceNodeId = process.env.OPENCLAW_WORKSPACE_NODE_ID;
 if (workspaceNodeId !== undefined || process.env.APP_SERVER_URL !== undefined) {
   const config = readOpenClawConfig();
@@ -2038,6 +2081,7 @@ if (pluginRuntime?.manifest?.kind === "codex" && hasEnabledPluginSelections(plug
   const stopForChangedPeerStatus = () => {
     if (stoppingForChangedPeerStatus) return;
     stoppingForChangedPeerStatus = true;
+    pendingPluginStatus = undefined;
     publishPluginRuntimeStatus({ phase: "starting", ...pluginResult });
     child.kill("SIGTERM");
     setTimeout(() => process.exit(1), ${GATEWAY_STOP_TIMEOUT_MS}).unref();
@@ -2064,7 +2108,11 @@ if (pluginRuntime?.manifest?.kind === "codex" && hasEnabledPluginSelections(plug
   }, 2_000).unref();
 }
 child.on("exit", (code, signal) => {
-  if (startupHeld) return;
+  if (startupHeld) {
+    // A holding wrapper outlives the stopped Gateway, unless it is terminating.
+    if (terminationRequested) process.exit(0);
+    return;
+  }
   const exit = () => process.exit(code ?? (signal === "SIGTERM" ? 0 : 1));
   if (modelProbePassed || terminationRequested) {
     exit();
@@ -2454,7 +2502,11 @@ function startCodexWithConcurrentProbe() {
   });
   child.on("exit", (code, signal) => {
     appServerExited = true;
-    if (holding) return;
+    if (holding) {
+      // A holding wrapper outlives the stopped app-server, unless it is terminating.
+      if (codexTerminating) process.exit(0);
+      return;
+    }
     const exit = () => process.exit(code ?? (signal === "SIGTERM" ? 0 : 1));
     if (probeSettled || codexTerminating) {
       exit();

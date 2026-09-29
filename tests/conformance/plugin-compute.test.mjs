@@ -3360,6 +3360,11 @@ test("Codex concurrent startup keeps the probe outcome ahead of other startup fa
     { name: "early app-server exit, then rejected probe", appServerExit: 1, probe: "rejected" },
     { name: "early app-server exit, then accepted probe", appServerExit: 1, probe: "accepted" },
     { name: "termination while the probe runs", terminate: true },
+    {
+      name: "termination while holding, before the stopped app-server exits",
+      probe: "rejected",
+      terminateWhileHolding: true,
+    },
   ];
   for (const scenario of scenarios) {
     await t.test(scenario.name, async () => {
@@ -3526,6 +3531,15 @@ test("Codex concurrent startup keeps the probe outcome ahead of other startup fa
           assert.equal(held, true);
           assert.deepEqual(exits, []);
           assert.ok(!errors.some((message) => /plugin runtime initialization/.test(message)));
+          if (scenario.terminateWhileHolding) {
+            // The stopped app-server has not exited yet; termination must still
+            // end the holding wrapper once it does.
+            assert.deepEqual(appServerSignals, ["SIGTERM"]);
+            signals.get("SIGTERM")();
+            assert.deepEqual(exits, [], "the wrapper waits for its stopped app-server");
+            exitAppServer(null, "SIGTERM");
+            assert.deepEqual(exits, [0], "termination ends the holding wrapper");
+          }
         } else {
           // The probe passed: the other failure ends the wrapper as before.
           assert.deepEqual(exits, [1]);

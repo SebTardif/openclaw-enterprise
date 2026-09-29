@@ -4688,6 +4688,318 @@ test("an embedded Gateway that exits early waits for its pending model probe", a
   }
 });
 
+// Runs the generated embedded Gateway wrapper on the Kubernetes path (runtime
+// status port) with stubbed native processes, timers and a controllable clock.
+function startEmbeddedGatewayWrapper(extraEnvironment = {}) {
+  const nodeRequire = createRequire(import.meta.url);
+  const driver = createKubernetesComputeDriver(options());
+  const candidate = {
+    namespaceId: tenant.id,
+    harness: { id: "openclaw", version: "1.0.0", mode: "embedded" },
+    harnessAuth: apiKeyAuth,
+    configuration: { agents: { defaults: { model: "openai/gpt-5" } } },
+  };
+  const prepared = driver.harnessAuthForRevision(candidate, authContext(candidate), {
+    name: kubernetesGatewayNamespaceName(tenant.id),
+    plane: "control",
+  });
+  const state = {
+    clock: 0,
+    exits: [],
+    errors: [],
+    signals: new Map(),
+    timers: [],
+    probes: [],
+    gatewaySignals: [],
+    gatewayExitListeners: [],
+    gatewayStarted: false,
+    held: false,
+  };
+  let statusHandler;
+  let awaitingProbeTimer;
+  const read = (url) => {
+    let body = "";
+    statusHandler({ method: "GET", url }, { writeHead() {}, end: (chunk) => (body += chunk) });
+    return JSON.parse(body);
+  };
+  runInNewContext(GATEWAY_RUNTIME_ENTRYPOINT, {
+    Buffer,
+    JSON,
+    URL,
+    console: { error: (value) => state.errors.push(value) },
+    process: {
+      env: {
+        ...Object.fromEntries(
+          prepared.environment.map((entry) => [entry.name, entry.value ?? "fixture-model-key"]),
+        ),
+        OPENCLAW_AGENT_REVISION_ID: "revision-embedded-wrapper",
+        OPENCLAW_RUNTIME_STATUS_CONTAINER: "gateway",
+        OPENCLAW_RUNTIME_STATUS_PORT: "18791",
+        OPENCLAW_POD_UID: "pod-embedded-wrapper",
+        ...extraEnvironment,
+      },
+      on(signal, callback) {
+        state.signals.set(signal, callback);
+      },
+      exit(code) {
+        state.exits.push(code);
+      },
+    },
+    setTimeout(callback, delay) {
+      const timer = { callback, delay, fired: false, cleared: false, unref() {} };
+      state.timers.push(timer);
+      // The bounded runner arms the probe's process cap right after spawning it.
+      if (awaitingProbeTimer !== undefined) {
+        awaitingProbeTimer.timer = timer;
+        awaitingProbeTimer = undefined;
+      }
+      return timer;
+    },
+    clearTimeout(timer) {
+      if (timer) {
+        timer.cleared = true;
+      }
+    },
+    setInterval() {
+      state.held = true;
+    },
+    require(specifier) {
+      if (specifier === "node:perf_hooks") {
+        return { performance: { now: () => state.clock } };
+      }
+      if (specifier === "node:http") {
+        return {
+          createServer(handler) {
+            statusHandler = handler;
+            return { listen() {} };
+          },
+        };
+      }
+      if (specifier === "node:fs") {
+        return {
+          mkdirSync() {},
+          mkdtempSync: () => "/isolated-probe",
+          writeFileSync() {},
+          rmSync() {},
+        };
+      }
+      if (specifier === "node:child_process") {
+        return {
+          spawn(_command, args) {
+            if (args[1] !== "models") {
+              state.gatewayStarted = true;
+              return {
+                kill(signal) {
+                  state.gatewaySignals.push(signal);
+                },
+                on(event, listener) {
+                  if (event === "exit") {
+                    state.gatewayExitListeners.push(listener);
+                  }
+                },
+              };
+            }
+            const listeners = {};
+            const stdout = [];
+            const probe = {
+              pid: 13,
+              get timeout() {
+                return this.timer.delay;
+              },
+              killed: [],
+              stdout: { on: (_event, listener) => stdout.push(listener) },
+              stderr: { on() {} },
+              on(event, listener) {
+                listeners[event] = listener;
+              },
+              kill(signal) {
+                probe.killed.push(signal);
+                queueMicrotask(() => listeners.close?.(null, signal));
+                return true;
+              },
+              respond(status) {
+                const results = [
+                  { provider: "openai", model: "openai/gpt-5", source: "env", status },
+                ];
+                for (const listener of stdout) {
+                  listener(Buffer.from(JSON.stringify({ auth: { probes: { results } } })));
+                }
+                listeners.close(0, null);
+              },
+            };
+            state.probes.push(probe);
+            awaitingProbeTimer = probe;
+            return probe;
+          },
+        };
+      }
+      return nodeRequire(specifier);
+    },
+  });
+  const fire = (delay) => {
+    const timer = state.timers.find(
+      (entry) => entry.delay === delay && !entry.fired && !entry.cleared,
+    );
+    assert.ok(timer, `a pending ${delay} ms timer`);
+    timer.fired = true;
+    timer.callback();
+  };
+  return {
+    state,
+    fire,
+    runtimeStatus: () => read("/openclaw/runtime/status"),
+    pluginStatus: () => read("/openclaw/plugin-runtime/status"),
+    exitGateway(code, signal) {
+      for (const listener of state.gatewayExitListeners) {
+        listener(code, signal);
+      }
+    },
+    // The probe process outlives its cap: the bounded runner kills it.
+    expireProbe(elapsedMs) {
+      const probe = state.probes.at(-1);
+      state.clock += elapsedMs ?? probe.timeout;
+      probe.timer.fired = true;
+      probe.timer.callback();
+    },
+    probeDiagnostics: () =>
+      state.errors
+        .filter((message) => message.startsWith("{"))
+        .map((message) => JSON.parse(message)),
+  };
+}
+
+const settle = () => new Promise((resolve) => setImmediate(resolve));
+
+test("a holding embedded Gateway exits on termination before its stopped Gateway exits", async () => {
+  const wrapper = startEmbeddedGatewayWrapper();
+  await settle();
+  wrapper.state.probes[0].respond("auth");
+  await settle();
+  assert.equal(wrapper.runtimeStatus().startup, "failed");
+  assert.equal(wrapper.state.held, true);
+  // The failed probe stopped the Gateway, which has not exited yet.
+  assert.deepEqual(wrapper.state.gatewaySignals, ["SIGTERM"]);
+  wrapper.state.signals.get("SIGTERM")();
+  assert.deepEqual(wrapper.state.exits, [], "the wrapper waits for its stopped Gateway");
+  wrapper.exitGateway(null, "SIGTERM");
+  assert.deepEqual(wrapper.state.exits, [0], "termination ends the holding wrapper");
+});
+
+test("the embedded model probe retries one timeout within the startup budget", async (t) => {
+  await t.test("timeout, then accepted", async () => {
+    const wrapper = startEmbeddedGatewayWrapper();
+    await settle();
+    assert.equal(wrapper.state.probes[0].timeout, 30_000);
+    wrapper.expireProbe();
+    await settle();
+    assert.deepEqual(wrapper.state.probes[0].killed, ["SIGKILL"]);
+    assert.equal(wrapper.state.probes.length, 1, "the retry waits one second");
+    assert.deepEqual(wrapper.probeDiagnostics(), [
+      { event: "openclaw.model_probe", attempt: 1, elapsedMs: 30_000, code: "MODEL_PROBE_TIMEOUT" },
+    ]);
+    const pending = wrapper.runtimeStatus();
+    assert.equal(pending.startup, "pending");
+    assert.equal(pending.runtimeFailure, undefined);
+    assert.deepEqual(wrapper.state.gatewaySignals, []);
+    wrapper.state.clock += 1_000;
+    wrapper.fire(1_000);
+    await settle();
+    assert.equal(wrapper.state.probes.length, 2);
+    assert.equal(wrapper.state.probes[1].timeout, 30_000);
+    wrapper.state.probes[1].respond("ok");
+    await settle();
+    assert.equal(wrapper.runtimeStatus().startup, "ready");
+    assert.equal(wrapper.state.held, false);
+    assert.deepEqual(wrapper.state.gatewaySignals, []);
+  });
+
+  await t.test("two timeouts hold MODEL_PROBE_TIMEOUT", async () => {
+    const wrapper = startEmbeddedGatewayWrapper();
+    await settle();
+    wrapper.expireProbe();
+    await settle();
+    wrapper.state.clock += 1_000;
+    wrapper.fire(1_000);
+    await settle();
+    wrapper.expireProbe();
+    await settle();
+    assert.equal(wrapper.state.probes.length, 2, "only one retry");
+    const status = wrapper.runtimeStatus();
+    assert.equal(status.startup, "failed");
+    assert.equal(status.runtimeFailure.code, "MODEL_PROBE_TIMEOUT");
+    assert.equal(wrapper.state.held, true);
+    assert.deepEqual(wrapper.state.gatewaySignals, ["SIGTERM"]);
+    assert.equal(wrapper.probeDiagnostics().length, 1);
+  });
+
+  await t.test("the retry gets only the rest of the 61-second budget", async () => {
+    const wrapper = startEmbeddedGatewayWrapper();
+    await settle();
+    wrapper.expireProbe(40_000);
+    await settle();
+    wrapper.state.clock += 1_000;
+    wrapper.fire(1_000);
+    await settle();
+    assert.equal(wrapper.state.probes[1].timeout, 20_000);
+  });
+
+  await t.test("no retry once the budget cannot hold the delay", async () => {
+    const wrapper = startEmbeddedGatewayWrapper();
+    await settle();
+    wrapper.expireProbe(60_000);
+    await settle();
+    assert.equal(wrapper.state.probes.length, 1);
+    assert.equal(wrapper.runtimeStatus().runtimeFailure.code, "MODEL_PROBE_TIMEOUT");
+    assert.equal(wrapper.state.held, true);
+  });
+
+  await t.test("a rejection is not retried", async () => {
+    const wrapper = startEmbeddedGatewayWrapper();
+    await settle();
+    wrapper.state.probes[0].respond("unknown");
+    await settle();
+    assert.equal(wrapper.state.probes.length, 1);
+    assert.equal(wrapper.runtimeStatus().runtimeFailure.code, "MODEL_PROBE_FAILED");
+    assert.ok(!wrapper.state.timers.some((timer) => timer.delay === 1_000));
+  });
+
+  await t.test("termination during the retry delay starts no second probe", async () => {
+    const wrapper = startEmbeddedGatewayWrapper();
+    await settle();
+    wrapper.expireProbe();
+    await settle();
+    wrapper.state.signals.get("SIGTERM")();
+    assert.deepEqual(wrapper.state.gatewaySignals, ["SIGTERM"]);
+    await settle();
+    wrapper.fire(1_000);
+    await settle();
+    assert.equal(wrapper.state.probes.length, 1);
+    assert.equal(wrapper.runtimeStatus().startup, "pending");
+    assert.equal(wrapper.state.held, false);
+    wrapper.exitGateway(null, "SIGTERM");
+    assert.deepEqual(wrapper.state.exits, [0]);
+  });
+});
+
+test("embedded Gateway plugin status stays starting until the model probe passes", async (t) => {
+  const pluginEnvironment = {
+    OPENCLAW_PLUGIN_STATUS_PORT: "18791",
+    OPENCLAW_PLUGIN_STATUS_CONTAINER: "gateway",
+  };
+  for (const accepted of [true, false]) {
+    await t.test(accepted ? "accepted probe" : "rejected probe", async () => {
+      const wrapper = startEmbeddedGatewayWrapper(pluginEnvironment);
+      await settle();
+      assert.equal(wrapper.state.gatewayStarted, true, "plugins installed; the Gateway started");
+      assert.equal(wrapper.pluginStatus().phase, "starting");
+      wrapper.state.probes[0].respond(accepted ? "ok" : "auth");
+      await settle();
+      assert.equal(wrapper.pluginStatus().phase, accepted ? "ready" : "starting");
+      assert.equal(wrapper.runtimeStatus().startup, accepted ? "ready" : "failed");
+    });
+  }
+});
+
 // Linux rejects any single exec argument above MAX_ARG_STRLEN (32 pages, 128 KiB)
 // with E2BIG. Entrypoints travel as one `node -e` argument, and the workspace
 // node supervisor embeds the Codex program in its own. Fail here, by name,
