@@ -5,7 +5,7 @@ dedicated Codex/native OpenClaw Harnesses and
 [Kubernetes Compute](kubernetes-compute.md). OCC owns Agents, revisions,
 Namespaces, routing, credentials and authorization.
 
-**OpenShell is not supported for production Agent deployment.** Stock
+**The OpenShell integration is a work in progress.** Stock
 [`v0.1.0`](https://github.com/NVIDIA/OpenShell/tree/v0.1.0) cannot accept dedicated
 Agents' Secret-backed app-server token or projected workload identity. The paired
 [Credential Gateway](openshell-credential-gateway.md) supplies the model key;
@@ -307,8 +307,8 @@ profile. See the
 
 ## Current upstream preconditions
 
-The current integration cannot run production Agents. Production support would
-require upstream OpenShell to satisfy all of these conditions:
+The following upstream OpenShell capabilities are being worked on to enable
+production Agent deployment:
 
 - OpenShell must create Sandboxes with the per-Agent ServiceAccount that Compute
   creates for the Harness.
