@@ -32,6 +32,8 @@ export const RepositoryAdmitted = {
   name: "Repository access in current version",
 };
 export const DeploymentPending = story("deploymentPending");
+export const DeploymentDeferred = story("deploymentDeferred");
+export const DeploymentRetrying = story("deploymentRetrying");
 export const DeploymentRunning = story("deploymentRunning");
 export const CurrentVersionDuringDeployment = story("currentVersionDuringDeployment");
 export const DeploymentFailed = story("deploymentFailed");
@@ -46,6 +48,8 @@ export const ConfigurationError = {
   ...story("configurationError"),
   name: "Configuration unavailable",
 };
+export const UnreadableAgentConfiguration = story("unreadableAgentConfiguration");
+export const UnreadableRevisionConfiguration = story("unreadableRevisionConfiguration");
 export const RevisionError = { ...story("revisionError"), name: "Revision history unavailable" };
 export const DeployDenied = { ...story("deployDenied"), name: "Deployment denied" };
 
@@ -59,3 +63,9 @@ export const RevisionCredentialsMissing = {
   ...story("revisionCredentialsMissing"),
   name: "New version missing credentials",
 };
+
+export const Sharing = { ...story("agentSharing") };
+export const SharingGranted = { ...story("agentSharingGranted") };
+export const SharingRemoved = { ...story("agentSharingRemoved") };
+export const SharingDenied = { ...story("agentSharingDenied") };
+export const SharingUnknown = { ...story("agentSharingUnknown") };
