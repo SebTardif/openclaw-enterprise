@@ -116,7 +116,6 @@ export function createRepositoryFields(context, onChange, initialBindings = []) 
     selected: new Set(initialBindings.map((binding) => binding.repositoryRef)),
     profile: initialBindings[0]?.profile ?? "",
     settled: false,
-    draftOnly: false,
     blockingFailure: undefined,
     disabled: false,
   };
@@ -337,7 +336,6 @@ export function createRepositoryFields(context, onChange, initialBindings = []) 
 
   async function load(clearSelections = false) {
     state.settled = false;
-    state.draftOnly = false;
     state.blockingFailure = undefined;
     retry.hidden = true;
     choices.setAttribute("aria-busy", "true");
@@ -410,7 +408,6 @@ export function createRepositoryFields(context, onChange, initialBindings = []) 
       state.settled = true;
       const optionalOutage =
         error.status === 503 && error.code === "REPOSITORY_OPTIONS_UNAVAILABLE";
-      state.draftOnly = optionalOutage && !clearSelections && state.selected.size === 0;
       if (error.status === 403) {
         state.blockingFailure = "denied";
       } else if (error.status === 409) {
@@ -433,7 +430,19 @@ export function createRepositoryFields(context, onChange, initialBindings = []) 
         status.textContent = `Repository choices could not be loaded. ${message(error)} Your selections are retained. Retry repository choices before creating an Agent.`;
       } else if (optionalOutage) {
         status.className = "hint";
-        status.textContent = `Repository choices are unavailable. ${message(error)} You can save a draft without repository access; provisioning is unavailable until discovery succeeds.`;
+        status.replaceChildren(
+          "Repository choices are unavailable. ",
+          element(
+            "a",
+            {
+              href: "https://github.com/openclaw/openclaw-enterprise/blob/main/docs/guides/repository-credentials/team-runbook.md",
+              target: "_blank",
+              rel: "noopener noreferrer",
+            },
+            "Set up repository access",
+          ),
+          ". You can continue without repository access.",
+        );
       } else {
         status.className = "error";
         status.textContent = `Repository choices could not be loaded. ${message(error)} Retry repository choices before creating an Agent.`;
@@ -460,6 +469,5 @@ export function createRepositoryFields(context, onChange, initialBindings = []) 
     reload: () => load(true),
     isSettled: () => state.settled,
     blocksCreate: () => state.blockingFailure !== undefined,
-    draftOnly: () => state.draftOnly,
   };
 }

@@ -31,6 +31,9 @@ async function readManifest() {
   ) {
     refuse("the journal differs from the reviewed source manifest");
   }
+  if (typeof manifest.catalogs.completed !== "string") {
+    refuse("the completed catalog has not been qualified");
+  }
   const migrations = readMigrationFiles({ migrationsFolder: directory });
   if (migrations.length !== manifest.entries.length) {
     refuse("the migration source set differs");
@@ -102,7 +105,6 @@ function requireReceiptsMatchEntries(receipts, entries) {
 }
 
 function classifyReceipts(receipts, manifest) {
-  const backendCompletedLength = manifest.entries.length - 1;
   const providerCompleted = manifest.compatibleLineages?.providerCompleted;
   if (providerCompleted !== undefined && receipts.length >= providerCompleted.entries.length) {
     const providerEntries = [
@@ -112,6 +114,30 @@ function classifyReceipts(receipts, manifest) {
     if (receiptsMatchEntries(receipts, providerEntries)) {
       if (receipts.length === manifest.entries.length) {
         return "completed";
+      }
+      if (receipts.length === 32) {
+        return "backendTerminology";
+      }
+      if (receipts.length === 33) {
+        return "prePluginApprovers";
+      }
+      if (receipts.length === 34) {
+        return "preBrokerReceipts";
+      }
+      if (receipts.length === 36) {
+        return "preDeploymentProgress";
+      }
+      if (receipts.length === 35) {
+        return "preAgentDeletion";
+      }
+      if (receipts.length === 37) {
+        return "preHumanAuthentication";
+      }
+      if (receipts.length === 38) {
+        return "preAgentDeletionTakeover";
+      }
+      if (receipts.length === 39) {
+        return "preNamespaceDeletionTakeover";
       }
       return "providerCompleted";
     }
@@ -145,8 +171,32 @@ function classifyReceipts(receipts, manifest) {
   if (receipts.length === 30) {
     return "agentProvisioning";
   }
-  if (receipts.length === backendCompletedLength) {
+  if (receipts.length === 31) {
     return "backendCompleted";
+  }
+  if (receipts.length === 32) {
+    return "backendTerminology";
+  }
+  if (receipts.length === 33) {
+    return "prePluginApprovers";
+  }
+  if (receipts.length === 34) {
+    return "preBrokerReceipts";
+  }
+  if (receipts.length === 36) {
+    return "preDeploymentProgress";
+  }
+  if (receipts.length === 35) {
+    return "preAgentDeletion";
+  }
+  if (receipts.length === 37) {
+    return "preHumanAuthentication";
+  }
+  if (receipts.length === 38) {
+    return "preAgentDeletionTakeover";
+  }
+  if (receipts.length === 39) {
+    return "preNamespaceDeletionTakeover";
   }
   refuse("an incomplete or unsupported development history is installed");
 }
