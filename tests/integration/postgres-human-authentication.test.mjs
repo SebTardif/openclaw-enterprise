@@ -245,10 +245,10 @@ test(
           persistence.activateRecovery(person.id, seed.principal.id),
           /designation cannot be changed/,
         );
-        await assert.rejects(
-          changeAccount(recoveryUser.id, "disable"),
-          /recovery account cannot be disabled/,
-        );
+        await assert.rejects(changeAccount(recoveryUser.id, "disable"), {
+          name: "ResourceConflictError",
+          message: /recovery account cannot be disabled/,
+        });
         await assert.rejects(pool.query('DELETE FROM occ."user" WHERE id=$1', [recoveryUser.id]), {
           code: "23001",
         });
@@ -353,6 +353,45 @@ test(
           bindings: 0,
           enrolled: 0,
         });
+
+        // A lost COMMIT reply reports an unknown outcome, never a rollback. The
+        // login and its Principal share the transaction, so they cannot diverge.
+        const uncertain = await preparedAccount("uncertain");
+        const uncertainSeed = auth.principalSeed(uncertain, { roleId });
+        let commits = 0;
+        const lostAckState = new PostgresPlatformState(
+          transportPool(pool, async (client, sql, parameters) => {
+            const result = await client.query(sql, parameters);
+            if (sql === "COMMIT") {
+              commits++;
+              throw new Error("Simulated lost provisioning commit acknowledgement");
+            }
+            return result;
+          }),
+        );
+        await assert.rejects(
+          new PostgresHumanAuthentication(
+            lostAckState,
+            installation.id,
+            issuer,
+          ).provisionPasswordAccount(uncertain, uncertainSeed),
+          { name: "PostgresCommitOutcomeUnknownError" },
+        );
+        assert.equal(commits, 1, "an uncertain provisioning is never replayed");
+        assert.deepEqual(await rowCounts(uncertain.id, uncertainSeed.principal.id), {
+          users: 1,
+          methods: 1,
+          principals: 1,
+          bindings: 1,
+          enrolled: 1,
+        });
+        // Retrying the same email converges on the committed account.
+        const retry = { ...(await preparedAccount("uncertain-retry")), email: uncertain.email };
+        await assert.rejects(
+          persistence.provisionPasswordAccount(retry, auth.principalSeed(retry, { roleId })),
+          { name: "UserAlreadyExistsError" },
+        );
+        assert.equal((await persistence.snapshotPassword(uncertain.email)).user.id, uncertain.id);
       },
     );
 
@@ -484,7 +523,7 @@ test(
     );
 
     await context.test(
-      "pending attempt capacity is serialized and expired cleanup has a finite batch",
+      "a full pending attempt table evicts the oldest attempts and expired cleanup has a finite batch",
       async () => {
         const attempt = {
           stateHash: randomBytes(32).toString("hex"),
@@ -497,21 +536,34 @@ test(
         await pool.query("DELETE FROM occ.human_authentication_attempts WHERE installation_id=$1", [
           installation.id,
         ]);
-        for (let i = 0; i < 999; i++) {
+        const oldest = { ...attempt, stateHash: randomBytes(32).toString("hex") };
+        await persistence.createAttempt(oldest);
+        const secondOldest = { ...attempt, stateHash: randomBytes(32).toString("hex") };
+        await persistence.createAttempt(secondOldest);
+        for (let i = 0; i < 997; i++) {
           await persistence.createAttempt({
             ...attempt,
             stateHash: randomBytes(32).toString("hex"),
           });
         }
+        // A full table must not refuse new starts: anyone can create attempts, so a refusal
+        // would let one client block every provider sign-in. The oldest pending attempt goes.
+        const competitor = { ...attempt, stateHash: randomBytes(32).toString("hex") };
         const results = await Promise.allSettled([
           persistence.createAttempt(attempt),
-          peer.createAttempt({ ...attempt, stateHash: randomBytes(32).toString("hex") }),
+          peer.createAttempt(competitor),
         ]);
-        assert.equal(results.filter((result) => result.status === "fulfilled").length, 1);
-        assert.equal(
-          results.find((result) => result.status === "rejected").reason.name,
-          "ResourceConflictError",
+        assert.deepEqual(
+          results.map((result) => result.status),
+          ["fulfilled", "fulfilled"],
         );
+        assert.equal(await peer.consumeAttempt(oldest), undefined);
+        assert.ok(await peer.consumeAttempt(competitor));
+        assert.ok(await peer.consumeAttempt(attempt));
+        assert.ok(await peer.consumeAttempt(secondOldest));
+        await persistence.createAttempt(attempt);
+        await persistence.createAttempt(competitor);
+        await persistence.createAttempt(secondOldest);
         assert.equal(
           (
             await pool.query(
@@ -626,8 +678,10 @@ test(
           installation.id,
           issuer,
         );
+        // A lock timeout (55P03) is retryable contention, not an internal error.
         await assert.rejects(changeAccount(person.id, "revoke", bounded), {
-          code: "55P03",
+          name: "DependencyUnavailableError",
+          message: /lock timeout/,
         });
       } finally {
         release.resolve();
@@ -779,6 +833,13 @@ test(
           persistence.issueSession(proof, sessionRecord(person.id)),
           /no longer current/,
         );
+        // A disabled target is a state conflict (409), not an unknown account (404).
+        const disabledTarget = await persistence.readAccount(person.id, admin);
+        await assert.rejects(
+          persistence.attachExternal(person.id, providerId, "99", admin, disabledTarget.version),
+          { name: "ResourceConflictError", message: /account is disabled/ },
+        );
+        assert.deepEqual(await persistence.readAccount(person.id, admin), disabledTarget);
         const audits = await state.transact((unit) => unit.audit.list());
         assert.ok(
           audits.some(
@@ -863,7 +924,7 @@ test(
             admin,
             disabled.version,
           ),
-          /recovery account is unavailable/,
+          { name: "ResourceConflictError", message: /account is disabled/ },
         );
         await assert.rejects(
           persistence.replaceRecovery(successor.id, successorPrincipal, successor.id, admin, 1),
@@ -947,10 +1008,10 @@ test(
           [recoveryUser.id, previousHash],
         );
         await signInAdmin();
-        await assert.rejects(
-          changeAccount(successor.id, "disable"),
-          /recovery account cannot be disabled/,
-        );
+        await assert.rejects(changeAccount(successor.id, "disable"), {
+          name: "ResourceConflictError",
+          message: /recovery account cannot be disabled/,
+        });
         // The application role cannot delete the designation, only move it.
         await assert.rejects(
           pool.query("DELETE FROM occ.human_authentication_recovery WHERE installation_id=$1", [

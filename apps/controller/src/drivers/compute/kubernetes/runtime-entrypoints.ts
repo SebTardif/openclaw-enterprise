@@ -1,10 +1,39 @@
 import { PLUGIN_RUNTIME_TRANSLATOR_SOURCE } from "../../plugin/runtime-translator.ts";
+import { nodeProgramArguments } from "../node-program.ts";
 
 // Match the pinned OpenClaw service stop budget: 315s drain, 10s cleanup,
 // and 5s supervisor margin. Idle Gateways exit as soon as their work settles.
 export const GATEWAY_STOP_TIMEOUT_MS = 330_000;
 
 export const PLUGIN_APP_SERVER_TOKEN_HMAC_DOMAIN = "openclaw-plugin-runtime/app-server-token/v1";
+
+const STARTUP_PHASE_EVENT = "runtime.startup_phase";
+
+// One stderr JSON line per startup phase, for deploy-time measurement. Callers
+// pass fixed phase names only: never provider, model, credential or path values.
+// Date.now() keeps this usable in every wrapper, including stubbed test contexts.
+function startupPhaseHelper(container: "gateway" | "agent"): string {
+  return String.raw`
+const startupPhaseOrigin = Date.now();
+function logStartupPhase(phase, startedAt, outcome = "ok") {
+  const now = Date.now();
+  console.error(JSON.stringify({
+    event: ${JSON.stringify(STARTUP_PHASE_EVENT)},
+    container: ${JSON.stringify(container)},
+    phase,
+    outcome: outcome === "ok" ? "ok" : "failed",
+    ms: now - startedAt,
+    sinceStartMs: now - startupPhaseOrigin,
+  }));
+}
+async function timeStartupPhase(phase, run) {
+  const startedAt = Date.now();
+  const result = await run();
+  logStartupPhase(phase, startedAt);
+  return result;
+}
+`;
+}
 
 const PLUGIN_APP_SERVER_TOKEN_DERIVATION_HELPER = String.raw`
 function derivePluginAppServerTokenFromBase(baseToken, revisionId, startupId) {
@@ -193,6 +222,10 @@ let pluginStatusReport = {
 
 let runtimeStartupFailure;
 let runtimeStartupState = "pending";
+// The workspace node OpenClaw itself reports applied (its file-transfer plugin
+// loaded from a config with the node), and the current reason it is not.
+let runtimeWorkspaceNodeId;
+let runtimeWorkspaceNodeFailure;
 
 function publishPluginRuntimeStatus(report) {
   if (pluginRuntimeStatusPort() === undefined) return;
@@ -256,6 +289,8 @@ function runtimeStatusReport() {
     podUid: requireNonEmptyString(process.env.OPENCLAW_POD_UID, "Runtime status Pod UID"),
     startup: runtimeStartupState,
     ...(runtimeStartupFailure === undefined ? {} : { runtimeFailure: runtimeStartupFailure }),
+    ...(runtimeWorkspaceNodeId === undefined ? {} : { workspaceNodeId: runtimeWorkspaceNodeId }),
+    ...(runtimeWorkspaceNodeFailure === undefined ? {} : { workspaceNodeFailure: runtimeWorkspaceNodeFailure }),
   };
 }
 
@@ -281,7 +316,7 @@ function armTimer(callback, timeoutMs) {
   return timer;
 }
 
-function runNativeRuntimeJson(args, timeoutMs, abortSignal) {
+function runNativeRuntimeJson(args, timeoutMs, abortSignal, maxBytes = 65536) {
   return new Promise((resolve) => {
     const child = pluginSpawn("node", ["/app/openclaw.mjs", ...args], {
       stdio: ["ignore", "pipe", "ignore"],
@@ -312,7 +347,7 @@ function runNativeRuntimeJson(args, timeoutMs, abortSignal) {
     child.stdout.on("data", (chunk) => {
       if (oversized) return;
       stdout += chunk.toString("utf8");
-      if (Buffer.byteLength(stdout, "utf8") > 65536) {
+      if (Buffer.byteLength(stdout, "utf8") > maxBytes) {
         oversized = true;
         child.kill("SIGKILL");
       }
@@ -849,19 +884,28 @@ async function readPeerPluginRuntimeStatus() {
   };
 }
 
+// The Gateway may start before its Harness is ready: on a first dedicated
+// deploy both are created together, and the agent Service lists the Harness
+// only once it is ready. This wait has no deadline and never rejects, so a slow
+// Harness cannot crash-loop the Gateway; the controller's convergence deadline
+// governs a Harness that never reports. The Gateway stays unready meanwhile.
 async function waitForPeerPluginRuntimeStatus() {
-  const deadline = Date.now() + CODEX_PLUGIN_RUNTIME_INSTALL_DEADLINE_MS;
-  let lastError;
-  while (Date.now() < deadline) {
+  let lastReportedAt;
+  for (;;) {
+    let reason;
     try {
       const status = await readPeerPluginRuntimeStatus();
       if (status !== undefined) return status;
+      reason = "Peer plugin runtime status endpoint is not configured.";
     } catch (error) {
-      lastError = error;
-      await pluginRuntimeDelay(250);
+      reason = pluginRuntimeErrorMessage(error);
     }
+    if (lastReportedAt === undefined || Date.now() - lastReportedAt >= 30_000) {
+      lastReportedAt = Date.now();
+      console.error("Waiting for Harness plugin runtime status: " + reason);
+    }
+    await pluginRuntimeDelay(250);
   }
-  throw new Error("Peer plugin runtime status did not reach readiness: " + pluginRuntimeErrorMessage(lastError));
 }
 
 function samePluginFailures(left, right) {
@@ -1733,6 +1777,10 @@ function startBoundedProbe(command, args, options) {
 // with nothing and still probes once.
 const OPENCLAW_AUTH_PROBE_HELPERS = String.raw`
 ${AUTH_PROBE_FAILURE_HELPER}
+function openClawProbeTemporaryPrefix() {
+  return (process.env.TMPDIR || "/tmp").replace(/\/+$/, "") + "/openclaw-auth-probe-";
+}
+
 function openClawProbeInvocation(fs, directory) {
   const model = process.env.OPENCLAW_HARNESS_MODEL;
   const provider = process.env.OPENCLAW_HARNESS_PROVIDER;
@@ -1759,8 +1807,12 @@ function openClawProbeInvocation(fs, directory) {
       env: {
         PATH: process.env.PATH,
         HOME: directory,
+        TMPDIR: directory,
         OPENCLAW_STATE_DIR: directory + "/state",
         OPENCLAW_CONFIG_PATH: configPath,
+        NODE_COMPILE_CACHE: process.env.NODE_COMPILE_CACHE,
+        NODE_EXTRA_CA_CERTS: process.env.NODE_EXTRA_CA_CERTS,
+        SSL_CERT_FILE: process.env.SSL_CERT_FILE,
         [credentialEnvironment]: process.env[credentialEnvironment],
       },
       encoding: "utf8", stdio: ["ignore", "pipe", "pipe"],
@@ -1785,7 +1837,7 @@ function openClawProbeFailureCode(invocation, result) {
 function probeOpenClawAuthenticationFailureCode() {
   const fs = require("node:fs");
   const { spawnSync } = require("node:child_process");
-  const directory = fs.mkdtempSync("/tmp/openclaw-auth-probe-");
+  const directory = fs.mkdtempSync(openClawProbeTemporaryPrefix());
   try {
     const invocation = openClawProbeInvocation(fs, directory);
     if (invocation.code !== undefined) return invocation.code;
@@ -1810,7 +1862,7 @@ function startOpenClawAuthenticationProbe() {
   const attempt = async (timeout) => {
     let directory;
     try {
-      directory = fs.mkdtempSync("/tmp/openclaw-auth-probe-");
+      directory = fs.mkdtempSync(openClawProbeTemporaryPrefix());
       const invocation = openClawProbeInvocation(fs, directory);
       if (invocation.code !== undefined) return invocation.code;
       probe = startBoundedProbe("node", invocation.args, { ...invocation.options, timeout });
@@ -1883,7 +1935,9 @@ function publishImageTree(source, destination, required) {
 
 function initializeRuntimeAssets() {
   publishImageTree("/app/skills", runtimeAssetsDirectory + "/bundled-skills", true);
+  publishImageTree("/app/custodian-skills", runtimeAssetsDirectory + "/custodian-skills", false);
   publishImageTree("/app/plugin-skills", runtimeAssetsDirectory + "/plugin-skills", false);
+  process.env.OPENCLAW_BUNDLED_SKILLS_DIR = runtimeAssetsDirectory + "/bundled-skills";
 }
 
 function publishAgentPluginSkillPath() {
@@ -1912,7 +1966,7 @@ process.env.OPENCLAW_NO_AUTO_UPDATE = "1";
 ${PLUGIN_RUNTIME_HELPERS}
 ${WORKSPACE_ASSET_HELPERS}
 ${OPENCLAW_AUTH_PROBE_HELPERS}
-
+${startupPhaseHelper("gateway")}
 startPluginRuntimeStatusServer();
 
 let terminationRequested = false;
@@ -1938,6 +1992,180 @@ function forwardTermination(child, onTermination = () => {}) {
   process.on("SIGINT", () => forward("SIGINT"));
 }
 
+function configureNativeWorkerProfile() {
+  const deviceId = process.env.OPENCLAW_WORKSPACE_NODE_ID;
+  const profileId = process.env.OPENCLAW_NATIVE_WORKER_PROFILE;
+  if (profileId === undefined || deviceId === undefined) return;
+  if (!/^[a-f0-9]{64}$/u.test(deviceId) || !profileId) {
+    throw new Error("Dedicated OpenClaw worker placement configuration is invalid.");
+  }
+  const config = readOpenClawConfig();
+  const cloudWorkers = isPlainObject(config.cloudWorkers) ? config.cloudWorkers : {};
+  const profiles = isPlainObject(cloudWorkers.profiles) ? cloudWorkers.profiles : {};
+  if (profiles[profileId] !== undefined) {
+    throw new Error("Dedicated OpenClaw worker profile conflicts with admitted configuration.");
+  }
+  writeOpenClawConfig({
+    ...config,
+    cloudWorkers: {
+      ...cloudWorkers,
+      requiredProfile: profileId,
+      profiles: {
+        ...profiles,
+        [profileId]: {
+          provider: "device",
+          settings: { device: deviceId, inference: "worker" },
+        },
+      },
+    },
+  });
+}
+
+function requireWorkspaceNodePlugins(config) {
+  const plugins = isPlainObject(config.plugins) ? config.plugins : {};
+  if (
+    plugins.deny?.includes("file-transfer") ||
+    plugins.entries?.["file-transfer"]?.enabled === false
+  ) {
+    throw new Error("The workspace node requires the file-transfer plugin.");
+  }
+}
+
+// Every change this makes is under plugins.*, which OpenClaw hot-applies.
+function configureWorkspaceNodePlugins(config, workspaceNodeId) {
+  requireWorkspaceNodePlugins(config);
+  const plugins = config.plugins ??= {};
+  if (Array.isArray(plugins.allow)) {
+    plugins.allow = [...new Set([...plugins.allow, "file-transfer"])];
+  }
+  const entries = plugins.entries ??= {};
+  const transfer = entries["file-transfer"] ??= {};
+  transfer.enabled = true;
+  const fileConfig = transfer.config ??= {};
+  // Current Kubernetes Codex layout; this is not a cross-Harness workspace root.
+  const remoteRoot = "/home/node/workspace";
+  // Codex stages reply artifacts while its client is live, even when both
+  // hosts use the same workspace path. A shared path no longer means shared files.
+  if (entries.codex) {
+    const appServer = (entries.codex.config ??= {}).appServer ??= {};
+    appServer.remoteWorkspaceRoot ??= remoteRoot;
+  }
+  // OCC edits four owner documents; native previews read the Agent workspace.
+  const editable = ["AGENTS.md", "SOUL.md", "IDENTITY.md", "USER.md"];
+  const memoryPaths = ["MEMORY.md", "memory.md", "DREAMS.md", "dreams.md", "memory", "memory/**"]
+    .map((name) => remoteRoot + "/" + name);
+  const skillRoots = [
+    "/home/node/.openclaw/skills", "/home/node/.openclaw/plugin-skills",
+    "/home/node/.openclaw/agents/*/agent/workshop-skills",
+    "/home/node/.openclaw/worktree-sources/empty/*/workspace",
+    "/home/node/.agents/skills", "/home/node/openclaw-runtime-assets/bundled-skills",
+    "/home/node/openclaw-runtime-assets/custodian-skills",
+    "/home/node/openclaw-runtime-assets/plugin-skills", "/app/extensions/*/skills",
+  ];
+  const nodes = fileConfig.nodes ??= {};
+  if (nodes[workspaceNodeId] === undefined && nodes["*"] === undefined) {
+    nodes[workspaceNodeId] = {
+      ask: "off",
+      allowReadPaths: [
+        remoteRoot,
+        remoteRoot + "/**",
+        "/home/node/.openclaw",
+        ...skillRoots.flatMap((root) => [root, root + "/**"]),
+      ],
+      allowWritePaths: [
+        ...editable.map((name) => remoteRoot + "/" + name),
+        ...memoryPaths,
+        remoteRoot + "/skills",
+        remoteRoot + "/media/inbound/openclaw-staged-*/**",
+      ],
+      followSymlinks: false,
+    };
+  }
+  fileConfig.policyVersion ??= 2;
+  (fileConfig.workspaces ??= {}).main = { nodeId: workspaceNodeId, remoteRoot };
+}
+
+const WORKSPACE_NODE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
+const workspaceNodeBindingPath = process.env.OPENCLAW_WORKSPACE_NODE_PATH;
+
+// The controller writes {revisionId, deviceId} to an optional ConfigMap volume.
+// A missing, partial or foreign file (another revision of this Agent) is absent.
+function readWorkspaceNodeBinding() {
+  if (workspaceNodeBindingPath === undefined) return undefined;
+  let binding;
+  try {
+    binding = JSON.parse(pluginReadFileSync(workspaceNodeBindingPath, "utf8"));
+  } catch {
+    return undefined;
+  }
+  if (
+    !isPlainObject(binding) ||
+    binding.revisionId !== process.env.OPENCLAW_AGENT_REVISION_ID ||
+    typeof binding.deviceId !== "string" ||
+    !WORKSPACE_NODE_ID_PATTERN.test(binding.deviceId)
+  ) {
+    return undefined;
+  }
+  return binding.deviceId;
+}
+
+// OpenClaw hot-applies plugins.* and cloudWorkers.* (gateway/config-reload-plan.ts);
+// any other change, gateway.* in particular, would restart the Gateway.
+const HOT_APPLIED_CONFIG_KEYS = new Set(["plugins", "cloudWorkers"]);
+
+function assertHotApplicableChange(previous, next) {
+  for (const key of new Set([...Object.keys(previous), ...Object.keys(next)])) {
+    if (!HOT_APPLIED_CONFIG_KEYS.has(key) && !pluginDeepEqual(previous[key], next[key])) {
+      throw new Error("A workspace node update would change configuration OpenClaw cannot hot-apply.");
+    }
+  }
+}
+
+// OpenClaw watches the config file: replace it whole so it never reads a partial write.
+function replaceOpenClawConfig(config) {
+  const { renameSync } = require("node:fs");
+  const target = writableOpenClawConfigPath();
+  const staged = target + ".workspace-node-" + process.pid;
+  pluginWriteFileSync(staged, JSON.stringify(config), { mode: 0o600 });
+  renameSync(staged, target);
+  process.env.OPENCLAW_CONFIG_PATH = target;
+}
+
+// The running Gateway's own view of file-transfer: its runtime state in the
+// live plugin registry ("active", "service-failed", "disabled", "unloaded")
+// and that registry's generation, which every plugin reload replaces.
+async function openClawFileTransferState() {
+  const result = await runNativeRuntimeJson(
+    ["gateway", "call", "plugins.list", "--params", "{}", "--json", "--timeout", "5000"],
+    8000,
+    undefined,
+    4 * 1024 * 1024,
+  );
+  if (!result.ok || !isPlainObject(result.value) || !Array.isArray(result.value.plugins)) {
+    return undefined;
+  }
+  const plugin = result.value.plugins.find((entry) => isPlainObject(entry) && entry.id === "file-transfer");
+  const state = isPlainObject(plugin?.runtime) && typeof plugin.runtime.state === "string"
+    ? plugin.runtime.state
+    : "unloaded";
+  return { state, generation: result.value.generation };
+}
+
+class WorkspaceNodeFailure extends Error {
+  constructor(code, message) {
+    super(message);
+    this.code = code;
+  }
+}
+
+function withWorkspaceNodeFailure(code, run) {
+  try {
+    return run();
+  } catch (error) {
+    throw new WorkspaceNodeFailure(code, error instanceof Error ? error.message : String(error));
+  }
+}
+
 const modelProbeConfigured = process.env.OPENCLAW_HARNESS_PROBE_CONFIG !== undefined;
 const concurrentModelProbe =
   modelProbeConfigured && runtimeStatusPort() !== undefined
@@ -1947,6 +2175,10 @@ const openClawAuthenticationFailureCode =
   modelProbeConfigured && concurrentModelProbe === undefined
     ? probeOpenClawAuthenticationFailureCode()
     : undefined;
+if (modelProbeConfigured && concurrentModelProbe === undefined) {
+  // The serial probe is the first startup step, so wrapper start marks its beginning.
+  logStartupPhase("model-probe", startupPhaseOrigin, openClawAuthenticationFailureCode === undefined ? "ok" : "failed");
+}
 if (openClawAuthenticationFailureCode !== undefined) {
   holdFailedAuthentication("model-probe", openClawAuthenticationFailureCode);
 } else {
@@ -1966,6 +2198,8 @@ function publishStartupWhenComplete() {
 }
 concurrentModelProbe?.outcome.then((code) => {
   if (terminationRequested) return;
+  // The concurrent probe also starts at wrapper start.
+  logStartupPhase("model-probe", startupPhaseOrigin, code === undefined ? "ok" : "failed");
   if (code === undefined) {
     modelProbePassed = true;
     publishStartupWhenComplete();
@@ -1982,105 +2216,163 @@ concurrentModelProbe?.outcome.then((code) => {
 mkdirSync("/home/node/.openclaw", { recursive: true });
 mkdirSync("/home/node/workspace", { recursive: true });
 if (process.env.OPENCLAW_WORKSPACE_DIR !== undefined) {
+  const assetsStartedAt = Date.now();
   mkdirSync(process.env.OPENCLAW_WORKSPACE_DIR, { recursive: true });
   initializeRuntimeAssets();
+  logStartupPhase("runtime-assets", assetsStartedAt);
 }
 delete process.env.OPENCLAW_LOG_LEVEL;
 const pluginRuntime = readGatewayPluginRuntime();
+configureNativeWorkerProfile();
 const peerStatus =
   pluginRuntime?.manifest?.kind === "codex" && hasEnabledPluginSelections(pluginRuntime)
-    ? await waitForPeerPluginRuntimeStatus()
+    ? await timeStartupPhase("peer-plugin-status", waitForPeerPluginRuntimeStatus)
     : undefined;
 const peerFailures = peerStatus?.failures ?? readPluginFailuresFromEnvironment();
 if (peerStatus !== undefined) {
   process.env.APP_SERVER_TOKEN = derivePluginAppServerToken(peerStatus.startupId);
 }
+const pluginInstallStartedAt = Date.now();
 const pluginResult =
   pluginRuntime === undefined
     ? { successfulPluginIds: [], failures: peerFailures }
     : installOpenClawPlugins(pluginRuntime, peerFailures);
+if (pluginRuntime !== undefined) {
+  logStartupPhase("plugin-install", pluginInstallStartedAt);
+}
 if (peerStatus !== undefined) {
   pluginResult.successfulPluginIds = peerStatus.successfulPluginIds;
 }
 pendingPluginStatus = { phase: "ready", ...pluginResult };
 publishStartupWhenComplete();
-const workspaceNodeId = process.env.OPENCLAW_WORKSPACE_NODE_ID;
-if (workspaceNodeId !== undefined || process.env.APP_SERVER_URL !== undefined) {
+// A native worker profile, or a Gateway whose controller cannot read its runtime
+// status, receives its node in the environment; the others read the binding file.
+const environmentWorkspaceNodeId = process.env.OPENCLAW_WORKSPACE_NODE_ID;
+let startWorkspaceNodeId;
+if (
+  environmentWorkspaceNodeId !== undefined ||
+  workspaceNodeBindingPath !== undefined ||
+  process.env.APP_SERVER_URL !== undefined ||
+  process.env.OPENCLAW_NATIVE_WORKER_PROFILE !== undefined
+) {
   const config = readOpenClawConfig();
   // The first pairing records its command grant before a node ID is available.
+  // gateway.* changes restart OpenClaw, so this is written only here, at start.
   const commands = ((config.gateway ??= {}).nodes ??= {}).commands ??= {};
   commands.allow = [...new Set([...(commands.allow ?? []), "file.fetch", "file.stat", "file.write", "file.create", "dir.list", "workspace.memory", "workspace.skills"])];
-  if (workspaceNodeId !== undefined) {
-    const plugins = config.plugins ??= {};
-    if (plugins.deny?.includes("file-transfer")) {
-      throw new Error("The workspace node requires the file-transfer plugin.");
-    }
-    if (Array.isArray(plugins.allow)) {
-      plugins.allow = [...new Set([...plugins.allow, "file-transfer"])];
-    }
-    const entries = plugins.entries ??= {};
-    const transfer = entries["file-transfer"] ??= {};
-    if (transfer.enabled === false) {
-      throw new Error("The workspace node requires the file-transfer plugin.");
-    }
-    transfer.enabled = true;
-    const fileConfig = transfer.config ??= {};
-    // Current Kubernetes Codex layout; this is not a cross-Harness workspace root.
-    const remoteRoot = "/home/node/workspace";
-    // Codex stages reply artifacts while its client is live, even when both
-    // hosts use the same workspace path. A shared path no longer means shared files.
-    if (entries.codex) {
-      const appServer = (entries.codex.config ??= {}).appServer ??= {};
-      appServer.remoteWorkspaceRoot ??= remoteRoot;
-    }
-    // OCC edits four owner documents; native previews read the Agent workspace.
-    const editable = ["AGENTS.md", "SOUL.md", "IDENTITY.md", "USER.md"];
-    const memoryPaths = ["MEMORY.md", "memory.md", "DREAMS.md", "dreams.md", "memory", "memory/**"]
-      .map((name) => remoteRoot + "/" + name);
-    const skillRoots = [
-      "/home/node/.openclaw/skills", "/home/node/.openclaw/plugin-skills",
-      "/home/node/.agents/skills", "/home/node/openclaw-runtime-assets/bundled-skills",
-      "/home/node/openclaw-runtime-assets/plugin-skills",
-    ];
-    const nodes = fileConfig.nodes ??= {};
-    if (nodes[workspaceNodeId] === undefined && nodes["*"] === undefined) {
-      nodes[workspaceNodeId] = {
-        ask: "off",
-        allowReadPaths: [
-          remoteRoot,
-          remoteRoot + "/**",
-          "/home/node/.openclaw",
-          ...skillRoots.flatMap((root) => [root, root + "/**"]),
-        ],
-        allowWritePaths: [
-          ...editable.map((name) => remoteRoot + "/" + name),
-          ...memoryPaths,
-          remoteRoot + "/skills",
-          remoteRoot + "/media/inbound/openclaw-staged-*/**",
-        ],
-        followSymlinks: false,
-      };
-    }
-    fileConfig.policyVersion ??= 2;
-    (fileConfig.workspaces ??= {}).main = { nodeId: workspaceNodeId, remoteRoot };
+  if (environmentWorkspaceNodeId !== undefined || workspaceNodeBindingPath !== undefined) {
+    // Refuse a revision that cannot host its node now, not when the node arrives.
+    requireWorkspaceNodePlugins(config);
+  }
+  startWorkspaceNodeId = environmentWorkspaceNodeId ?? readWorkspaceNodeBinding();
+  if (startWorkspaceNodeId !== undefined) {
+    configureWorkspaceNodePlugins(config, startWorkspaceNodeId);
   }
   writeOpenClawConfig(config);
 }
 if (startupHeld) return;
 nativeStarting = true;
 publishStartupWhenComplete();
+// Everything before this line delays the native Gateway process.
+logStartupPhase("native-spawn", startupPhaseOrigin);
 child = spawn(
   "node",
   ["/app/openclaw.mjs", "gateway", "--port", process.env.OPENCLAW_GATEWAY_PORT],
   { stdio: "inherit" },
 );
+// Apply budgets start when OpenClaw does, not at wrapper start: login, the model
+// probe and plugin install must not count against them.
+const childSpawnedAt = Date.now();
 forwardTermination(child, () => concurrentModelProbe?.stop());
+if (workspaceNodeBindingPath !== undefined) {
+  // The wrapper writing the config is not the ack: OpenClaw must report the
+  // file-transfer plugin active in a plugin registry loaded after the write.
+  const WORKSPACE_NODE_APPLY_TIMEOUT_MS = 30_000;
+  let written = startWorkspaceNodeId === undefined
+    ? undefined
+    : { deviceId: startWorkspaceNodeId, at: childSpawnedAt, activeBefore: false };
+  let firstSeenAt;
+  let stoppingForChangedWorkspaceNode = false;
+  let pollInFlight = false;
+  const reportFailure = (code) => {
+    if (runtimeWorkspaceNodeFailure?.code === code) return;
+    runtimeWorkspaceNodeFailure = { code, checkedAt: new Date().toISOString() };
+    // Fixed codes only; a changed cause is logged again.
+    console.error(JSON.stringify({ event: "runtime.workspace_node", container: "gateway", outcome: "failed", code }));
+  };
+  const pollWorkspaceNode = async () => {
+    // A held startup has stopped OpenClaw; there is nothing to apply the node to.
+    if (startupHeld) return;
+    const deviceId = readWorkspaceNodeBinding();
+    if (deviceId === undefined || deviceId === runtimeWorkspaceNodeId) return;
+    if (written !== undefined && written.deviceId !== deviceId) {
+      // Another node for this revision: replace the config from a clean start.
+      if (stoppingForChangedWorkspaceNode) return;
+      stoppingForChangedWorkspaceNode = true;
+      clearInterval(workspaceNodePoll);
+      logStartupPhase("workspace-node-changed", startupPhaseOrigin);
+      child.kill("SIGTERM");
+      setTimeout(() => process.exit(1), ${GATEWAY_STOP_TIMEOUT_MS}).unref();
+      return;
+    }
+    firstSeenAt ??= Date.now();
+    if (written === undefined) {
+      const before = await openClawFileTransferState();
+      if (before === undefined) {
+        if (Date.now() - firstSeenAt > WORKSPACE_NODE_APPLY_TIMEOUT_MS) reportFailure("GATEWAY_UNAVAILABLE");
+        return;
+      }
+      const previous = withWorkspaceNodeFailure("CONFIG_UNREADABLE", readOpenClawConfig);
+      const next = JSON.parse(JSON.stringify(previous));
+      withWorkspaceNodeFailure("FILE_TRANSFER_DENIED", () => configureWorkspaceNodePlugins(next, deviceId));
+      withWorkspaceNodeFailure("NOT_HOT_APPLICABLE", () => assertHotApplicableChange(previous, next));
+      withWorkspaceNodeFailure("CONFIG_UNWRITABLE", () => replaceOpenClawConfig(next));
+      written = {
+        deviceId,
+        at: Date.now(),
+        activeBefore: before.state === "active",
+        generationBefore: before.generation,
+      };
+      return;
+    }
+    const after = await openClawFileTransferState();
+    if (
+      after?.state === "active" &&
+      (!written.activeBefore || after.generation !== written.generationBefore)
+    ) {
+      runtimeWorkspaceNodeId = deviceId;
+      runtimeWorkspaceNodeFailure = undefined;
+      logStartupPhase("workspace-node", written.at);
+      return;
+    }
+    if (after?.state === "service-failed") {
+      reportFailure("FILE_TRANSFER_FAILED");
+    } else if (Date.now() - written.at > WORKSPACE_NODE_APPLY_TIMEOUT_MS) {
+      reportFailure(after === undefined ? "GATEWAY_UNAVAILABLE" : "RELOAD_NOT_CONFIRMED");
+    }
+  };
+  const workspaceNodePoll = setInterval(async () => {
+    if (pollInFlight) return;
+    pollInFlight = true;
+    try {
+      await pollWorkspaceNode();
+    } catch (error) {
+      // The next poll retries; the status carries the current cause.
+      reportFailure(error instanceof WorkspaceNodeFailure ? error.code : "UNAVAILABLE");
+    } finally {
+      pollInFlight = false;
+    }
+  }, 1_000);
+  workspaceNodePoll.unref?.();
+}
 if (pluginRuntime?.manifest?.kind === "codex" && hasEnabledPluginSelections(pluginRuntime)) {
   let pollInFlight = false;
   let stoppingForChangedPeerStatus = false;
   const stopForChangedPeerStatus = () => {
     if (stoppingForChangedPeerStatus) return;
     stoppingForChangedPeerStatus = true;
+    // The container exits and restarts: a Gateway start the controller cannot see.
+    logStartupPhase("peer-status-changed", startupPhaseOrigin);
     pendingPluginStatus = undefined;
     publishPluginRuntimeStatus({ phase: "starting", ...pluginResult });
     child.kill("SIGTERM");
@@ -2145,7 +2437,7 @@ const { performance } = require("node:perf_hooks");
 
 ${PLUGIN_RUNTIME_HELPERS}
 ${AUTH_PROBE_FAILURE_HELPER}
-
+${startupPhaseHelper("agent")}
 startPluginRuntimeStatusServer();
 const loginMode = process.env.CODEX_LOGIN_MODE;
 const apiKey = process.env.OPENAI_API_KEY;
@@ -2194,6 +2486,7 @@ const loginArguments = loginMode === "api_key"
 function codexAuthenticationRejected(message) {
   return typeof message === "string" && /\bstatus 40[13] (Unauthorized|Forbidden)\b/.test(message);
 }
+const loginStartedAt = Date.now();
 let login;
 for (let attempt = 0; attempt < 3; attempt++) {
   login = spawnSync("codex", loginArguments, {
@@ -2206,6 +2499,7 @@ for (let attempt = 0; attempt < 3; attempt++) {
   // A cold-node login timeout may recover; model probing has its own bounded retry.
   if (loginMode === "api_key" || login.error?.code !== "ETIMEDOUT") break;
 }
+logStartupPhase("codex-login", loginStartedAt, login.status !== 0 || login.error ? "failed" : "ok");
 if (login.status !== 0 || login.error) {
   holdFailedAuthentication(
     "login",
@@ -2366,6 +2660,7 @@ function runCodexModelProbe(attemptProbe, settle, attempt = 1, deadline = perfor
   const startedAt = performance.now();
   const timeout = Math.min(30000, Math.floor(deadline - startedAt));
   if (timeout <= 0) {
+    logStartupPhase("model-probe", modelProbeStartedAt, "failed");
     settle("MODEL_PROBE_TIMEOUT");
     return;
   }
@@ -2382,6 +2677,7 @@ function runCodexModelProbe(attemptProbe, settle, attempt = 1, deadline = perfor
       setTimeout(() => runCodexModelProbe(attemptProbe, settle, 2, deadline), 1000);
       return;
     }
+    logStartupPhase("model-probe", modelProbeStartedAt, result.code === undefined ? "ok" : "failed");
     settle(result.code);
   });
 }
@@ -2411,6 +2707,8 @@ function startCodexAppServer(onTermination) {
   if (pluginRuntimeStatusPort() !== undefined) {
     process.env.APP_SERVER_TOKEN = derivePluginAppServerToken(pluginStatusReport.startupId);
   }
+  // Everything before this line delays the Codex app-server.
+  logStartupPhase("native-spawn", startupPhaseOrigin);
   const digest = createHash("sha256").update(process.env.APP_SERVER_TOKEN).digest("hex");
   const child = spawn(
     "codex",
@@ -2460,7 +2758,9 @@ function startAuthenticatedCodex() {
     (async () => {
       try {
         if (pluginRuntime !== undefined) {
+          const pluginInstallStartedAt = Date.now();
           const result = await installCodexPlugins(pluginRuntime);
+          logStartupPhase("plugin-install", pluginInstallStartedAt);
           publishPluginRuntimeStatus({ phase: "ready", ...result });
         } else {
           publishPluginRuntimeStatus({ phase: "ready", successfulPluginIds: [], failures: [] });
@@ -2516,10 +2816,13 @@ function startCodexWithConcurrentProbe() {
       if (failure === undefined) exit();
     });
   });
-  const plugins = (async () =>
-    pluginRuntime === undefined
-      ? { successfulPluginIds: [], failures: [] }
-      : await installCodexPlugins(pluginRuntime))().then(
+  const plugins = (async () => {
+    if (pluginRuntime === undefined) return { successfulPluginIds: [], failures: [] };
+    const pluginInstallStartedAt = Date.now();
+    const result = await installCodexPlugins(pluginRuntime);
+    logStartupPhase("plugin-install", pluginInstallStartedAt);
+    return result;
+  })().then(
     (result) => ({ result }),
     (error) => ({ error }),
   );
@@ -2538,6 +2841,7 @@ function startCodexWithConcurrentProbe() {
   })();
 }
 
+const modelProbeStartedAt = Date.now();
 if (runtimeStatusPort() === undefined) {
   startAuthenticatedCodex();
 } else {
@@ -2546,29 +2850,29 @@ if (runtimeStatusPort() === undefined) {
 }
 `;
 
-// The supervisor carries the Codex program inside its own exec argument, which
-// Linux limits to 128 KiB (MAX_ARG_STRLEN). Its copy drops full-line comments.
-// That is safe while the program has no template literals or block comments, so
-// no line can continue a string; a conformance test pins both conditions.
-function withoutLineComments(program: string): string {
-  return program
-    .split("\n")
-    .filter((line) => !/^\s*\/\//.test(line))
-    .join("\n");
-}
-
 // Kubernetes Codex implementation: this file-only node is not an OpenClaw
 // execution worker; its explicit command allowlist disables worker hosting.
 // It serves files while Codex restarts. Reuse Codex login/plugin initialization
 // for each Codex start; other Harnesses need their own execution composition.
+// Codex starts from bounded program pieces, like the container that runs this.
+//
+// A Deployment-backed Harness starts before its node setup exists and reads the
+// code from OPENCLAW_NODE_SETUP_PATH, an optional Secret volume. Codex starts at
+// once; the node slot starts when the file holds a complete code. The controller
+// removes the code after pairing, so a later start without it reconnects with
+// the saved device identity. No deadline here: the controller's convergence
+// deadline governs a setup that never arrives. SandboxDriver Harnesses still
+// receive OPENCLAW_NODE_SETUP_CODE in the environment.
 export const AGENT_WITH_NODE_ENTRYPOINT = String.raw`
-const { mkdirSync, writeFileSync, rmSync } = require("node:fs");
+const { mkdirSync, readFileSync, writeFileSync, rmSync } = require("node:fs");
 const { join } = require("node:path");
-const { spawn, spawnSync } = require("node:child_process");
+const { execFile, spawn, spawnSync } = require("node:child_process");
 ${WORKSPACE_ASSET_HELPERS}
+${startupPhaseHelper("agent")}
 const state = process.env.OPENCLAW_NODE_STATE_DIR;
-const setupCode = process.env.OPENCLAW_NODE_SETUP_CODE;
-if (!state || !setupCode) throw new Error("The workspace node is not provisioned.");
+const setupEnvironment = process.env.OPENCLAW_NODE_SETUP_CODE;
+const setupPath = process.env.OPENCLAW_NODE_SETUP_PATH;
+if (!state || (!setupEnvironment && !setupPath)) throw new Error("The workspace node is not provisioned.");
 mkdirSync(state, { recursive: true });
 initializeRuntimeAssets();
 publishAgentPluginSkillPath();
@@ -2597,24 +2901,78 @@ if (process.env.OPENCLAW_NODE_CA_PEM) {
 }
 // The workspace belongs to the Harness. Native setup creates missing defaults
 // without replacing owner edits; neither child may serve an uninitialized workspace.
+const baselineStartedAt = Date.now();
 const baseline = spawnSync(process.execPath, [
   "/app/openclaw.mjs", "setup", "--baseline", "--workspace", "/home/node/workspace", "--json",
 ], { env: nodeEnv, stdio: "inherit" });
+logStartupPhase("workspace-baseline", baselineStartedAt, baseline.error || baseline.status !== 0 ? "failed" : "ok");
 if (baseline.error) throw baseline.error;
 if (baseline.status !== 0) throw new Error("Workspace initialization failed.");
 const codexEnv = { ...process.env, PATH: harnessPath };
 delete codexEnv.OPENCLAW_NODE_SETUP_CODE;
+delete codexEnv.OPENCLAW_NODE_SETUP_PATH;
 delete codexEnv.OPENCLAW_NODE_CA_PEM;
 delete codexEnv.OPENCLAW_NODE_STATE_DIR;
 delete codexEnv.OPENCLAW_WORKSPACE_BOOTSTRAP;
+const nodeCommands = ["--commands", "file.fetch,file.stat,file.write,file.create,dir.list,workspace.memory,workspace.skills"];
+// The kubelet swaps Secret volume contents atomically, but an empty, truncated
+// or otherwise undecodable code is treated as absent and never started.
+function readSetupCode() {
+  if (setupEnvironment) return setupEnvironment;
+  let code;
+  try {
+    code = readFileSync(setupPath, "utf8").trim();
+  } catch {
+    return undefined;
+  }
+  const encoded = code.toLowerCase().startsWith("oc-pair://") ? code.slice("oc-pair://".length) : code;
+  if (!/^[A-Za-z0-9_-]+$/u.test(encoded)) return undefined;
+  try {
+    const payload = JSON.parse(Buffer.from(encoded, "base64url").toString("utf8"));
+    return payload !== null && typeof payload === "object" && !Array.isArray(payload) ? code : undefined;
+  } catch {
+    return undefined;
+  }
+}
+// "unknown" until checked; pairing can create the identity, so a start with a
+// code resets it. Only a missing code triggers the check. A failed or timed-out
+// probe (CPU contention while Codex starts) is not proof of absence, and a later
+// start may need the identity after the controller removed the code, so any
+// result other than "present" is re-checked with a bounded backoff.
+let savedIdentity = "unknown";
+let identityRetryAt = 0;
+let identityBackoff = 2_000;
+function checkSavedIdentity() {
+  savedIdentity = "checking";
+  execFile(process.execPath, ["/app/openclaw.mjs", "node", "identity", "--json"],
+    { env: nodeEnv, timeout: 30_000 }, (error, stdout) => {
+      let deviceId;
+      try { deviceId = JSON.parse(stdout).deviceId; } catch {}
+      if (!error && /^[a-f0-9]{64}$/u.test(deviceId ?? "")) {
+        savedIdentity = "present";
+        return;
+      }
+      savedIdentity = "unknown";
+      identityRetryAt = Date.now() + identityBackoff;
+      identityBackoff = Math.min(identityBackoff * 2, 30_000);
+    });
+}
+let nodeSetupWait;
+function nodeArguments() {
+  const code = readSetupCode();
+  if (code !== undefined) {
+    savedIdentity = "unknown";
+    identityRetryAt = 0;
+    identityBackoff = 2_000;
+    return ["/app/openclaw.mjs", "node", "run", "--pair-if-needed", code, ...nodeCommands];
+  }
+  if (savedIdentity === "present") return ["/app/openclaw.mjs", "node", "run", ...nodeCommands];
+  if (savedIdentity === "unknown" && Date.now() >= identityRetryAt) checkSavedIdentity();
+  return undefined;
+}
 const processes = [
-  {
-    name: "workspace node",
-    args: ["/app/openclaw.mjs", "node", "run", "--pair-if-needed", setupCode,
-      "--commands", "file.fetch,file.stat,file.write,file.create,dir.list,workspace.memory,workspace.skills"],
-    env: nodeEnv,
-  },
-  { name: "Codex", args: ["-e", ${JSON.stringify(withoutLineComments(AGENT_RUNTIME_ENTRYPOINT))}], env: codexEnv },
+  { name: "workspace node", args: nodeArguments, env: nodeEnv },
+  { name: "Codex", args: ${JSON.stringify(["-e", ...nodeProgramArguments(AGENT_RUNTIME_ENTRYPOINT)])}, env: codexEnv },
 ];
 let stopping = false;
 function killGroup(child, signal) {
@@ -2624,7 +2982,16 @@ function killGroup(child, signal) {
 }
 function start(slot) {
   if (stopping) return;
-  const child = spawn(process.execPath, slot.args, {
+  const args = typeof slot.args === "function" ? slot.args() : slot.args;
+  if (args === undefined) {
+    slot.timer = setTimeout(() => start(slot), 250);
+    return;
+  }
+  if (typeof slot.args === "function" && nodeSetupWait !== undefined) {
+    logStartupPhase("node-setup", nodeSetupWait);
+    nodeSetupWait = undefined;
+  }
+  const child = spawn(process.execPath, args, {
     env: slot.env, stdio: "inherit", detached: true,
   });
   slot.child = child;
@@ -2658,7 +3025,138 @@ function stop(signal) {
 }
 process.on("SIGTERM", () => stop("SIGTERM"));
 process.on("SIGINT", () => stop("SIGINT"));
-for (const slot of processes) start(slot);
+logStartupPhase("supervisor-spawn", startupPhaseOrigin);
+nodeSetupWait = Date.now();
+// Codex first: it does not wait for the node setup.
+for (const slot of [...processes].reverse()) start(slot);
+`;
+
+export const NATIVE_WORKER_ENTRYPOINT = String.raw`
+const { join } = require("node:path");
+const { chmodSync, mkdirSync, readFileSync, rmSync, writeFileSync } = require("node:fs");
+const { spawn } = require("node:child_process");
+${WORKSPACE_ASSET_HELPERS}
+
+function publishRuntimeFailure() {}
+${OPENCLAW_AUTH_PROBE_HELPERS}
+
+const inferenceConfig = process.env.OPENCLAW_NATIVE_INFERENCE_CONFIG;
+const inferenceConfigPath = process.env.OPENCLAW_NATIVE_INFERENCE_CONFIG_PATH;
+const state = process.env.OPENCLAW_NODE_STATE_DIR;
+const setupCode = process.env.OPENCLAW_NODE_SETUP_CODE;
+const temporary = process.env.TMPDIR;
+const workerCapacity = Number(process.env.OPENCLAW_NATIVE_WORKER_CAPACITY);
+if (
+  !inferenceConfig ||
+  !inferenceConfigPath ||
+  !state ||
+  !setupCode ||
+  !temporary ||
+  !Number.isSafeInteger(workerCapacity) ||
+  workerCapacity < 1 ||
+  workerCapacity > 1024
+) {
+  throw new Error("Dedicated OpenClaw worker configuration is invalid.");
+}
+mkdirSync(temporary, { recursive: true, mode: 0o700 });
+chmodSync(temporary, 0o700);
+initializeRuntimeAssets();
+const authenticationFailureCode = probeOpenClawAuthenticationFailureCode();
+if (authenticationFailureCode !== undefined) {
+  holdFailedAuthentication("model-probe", authenticationFailureCode);
+} else {
+mkdirSync(state, { recursive: true });
+const workerConfigPath = join(state, "openclaw.json");
+writeFileSync(inferenceConfigPath, inferenceConfig, { mode: 0o600 });
+writeFileSync(workerConfigPath, JSON.stringify({
+  agents: { defaults: { workspace: "/home/node/workspace" } },
+  plugins: {
+    allow: ["file-transfer"],
+    slots: { memory: "none" },
+    entries: { "file-transfer": { enabled: true } },
+  },
+  nodeHost: {
+    workerRuns: {
+      enabled: true,
+      capacity: workerCapacity,
+      isolation: "none",
+      nativeInferenceConfig: inferenceConfigPath,
+    },
+    skills: { enabled: false },
+  },
+}), { mode: 0o600 });
+delete process.env.OPENCLAW_NATIVE_INFERENCE_CONFIG;
+delete process.env.OPENCLAW_HARNESS_PROBE_CONFIG;
+const nodeEnv = {
+  ...process.env,
+  OPENCLAW_STATE_DIR: state,
+  OPENCLAW_CONFIG_PATH: workerConfigPath,
+};
+if (process.env.OPENCLAW_NODE_CA_PEM) {
+  const caPath = join(state, "gateway-ca.pem");
+  const inheritedCa = process.env.NODE_EXTRA_CA_CERTS
+    ? readFileSync(process.env.NODE_EXTRA_CA_CERTS, "utf8")
+    : "";
+  writeFileSync(
+    caPath,
+    [inheritedCa, process.env.OPENCLAW_NODE_CA_PEM].filter(Boolean).join("\n"),
+    { mode: 0o600 },
+  );
+  nodeEnv.NODE_EXTRA_CA_CERTS = caPath;
+}
+const connectTargetPath = join(state, "connect-target");
+writeFileSync(connectTargetPath, setupCode, { mode: 0o600 });
+const child = spawn(
+  process.execPath,
+  [
+    "/app/openclaw.mjs",
+    "connect",
+    "--target-file",
+    connectTargetPath,
+    "--ephemeral",
+    "--display-name",
+    "OpenClaw Enterprise native worker",
+  ],
+  { stdio: "inherit", env: nodeEnv },
+);
+let terminating = false;
+const stop = (signal) => {
+  if (terminating) return;
+  terminating = true;
+  child.kill(signal);
+  setTimeout(() => child.kill("SIGKILL"), 8_000).unref();
+};
+process.on("SIGTERM", () => stop("SIGTERM"));
+process.on("SIGINT", () => stop("SIGINT"));
+child.on("exit", (code, signal) => process.exit(code ?? (signal === "SIGTERM" ? 0 : 1)));
+}
+`;
+
+export const NATIVE_WORKER_READINESS_ENTRYPOINT = String.raw`
+const { join } = require("node:path");
+const { spawnSync } = require("node:child_process");
+const state = process.env.OPENCLAW_NODE_STATE_DIR;
+if (!state) process.exit(1);
+const identity = spawnSync(
+  process.execPath,
+  ["/app/openclaw.mjs", "node", "identity", "--json"],
+  {
+    env: {
+      ...process.env,
+      OPENCLAW_STATE_DIR: state,
+      OPENCLAW_CONFIG_PATH: join(state, "openclaw.json"),
+    },
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "ignore"],
+    timeout: 2_000,
+  },
+);
+if (identity.status !== 0) process.exit(1);
+try {
+  process.exit(/^[a-f0-9]{64}$/u.test(JSON.parse(identity.stdout).deviceId) ? 0 : 1);
+} catch {
+  process.exit(1);
+}
 `;
 
 const RUNTIME_STARTUP_READINESS_HELPER = String.raw`

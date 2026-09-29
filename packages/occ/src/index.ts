@@ -904,6 +904,24 @@ function validExecutionMode(value: unknown): value is HarnessExecutionMode {
   return value === "embedded" || value === "dedicated";
 }
 
+function requireDedicatedNativeSandbox(
+  harness: Readonly<RevisionHarnessDescriptor>,
+  sandbox: SandboxDriver | undefined,
+): void {
+  if (harness.id !== "openclaw" || harness.mode !== "dedicated") {
+    return;
+  }
+  const requiredFacets: readonly SandboxFacet[] = ["networking", "filesystem", "process"];
+  if (
+    sandbox?.provisionHarness === undefined ||
+    requiredFacets.some((facet) => !sandbox.facets.includes(facet))
+  ) {
+    throw new DependencyUnavailableError(
+      "Dedicated OpenClaw requires a provisioning SandboxDriver with networking, filesystem, and process containment.",
+    );
+  }
+}
+
 function validRepositorySelector(value: unknown): value is string {
   return typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(value);
 }
@@ -1297,8 +1315,9 @@ export class OpenClawController {
     }
     const namespace = await this.admitIAMPolicyOperation(principalId, input.namespaceId);
     const driver = this.iamPolicyDriver("createNamespaceRole");
-    return this.mutate((state) =>
-      this.iamPolicyOperation(() =>
+    return this.mutate(async (state) => {
+      await this.holdIAMPolicyAuthority(state, principalId, namespace.id);
+      return this.iamPolicyOperation(() =>
         driver.createNamespaceRole!(
           { policy: state.iamPolicy },
           {
@@ -1308,8 +1327,8 @@ export class OpenClawController {
             permissions,
           },
         ),
-      ),
-    );
+      );
+    });
   }
 
   async getIAMRole(
@@ -1333,20 +1352,39 @@ export class OpenClawController {
     return role;
   }
 
-  async deleteIAMRole(principalId: string, namespaceId: string, roleId: string): Promise<void> {
+  // Returns the removed Role so the caller can audit what was deleted.
+  async deleteIAMRole(
+    principalId: string,
+    namespaceId: string,
+    roleId: string,
+  ): Promise<Readonly<Role>> {
     if (!isNonEmptyString(roleId)) {
       throw new ScopeViolationError("The exact IAM Role identity is missing.");
     }
     const namespace = await this.admitIAMPolicyOperation(principalId, namespaceId);
+    const reader = this.iamPolicyDriver("getNamespaceRole");
     const driver = this.iamPolicyDriver("deleteNamespaceRole");
-    const deleted = await this.mutate((state) =>
-      this.iamPolicyOperation(() =>
-        driver.deleteNamespaceRole!({ policy: state.iamPolicy }, namespace.id, roleId),
-      ),
-    );
-    if (!deleted) {
+    const deleted = await this.mutate(async (state) => {
+      await this.holdIAMPolicyAuthority(state, principalId, namespace.id);
+      return this.iamPolicyOperation(async () => {
+        const role = await reader.getNamespaceRole!(
+          { policy: state.iamPolicy },
+          namespace.id,
+          roleId,
+        );
+        if (
+          role === undefined ||
+          !(await driver.deleteNamespaceRole!({ policy: state.iamPolicy }, namespace.id, roleId))
+        ) {
+          return undefined;
+        }
+        return role;
+      });
+    });
+    if (deleted === undefined) {
       throw new ScopeViolationError("The IAM Role does not belong to the exact Namespace.");
     }
+    return deleted;
   }
 
   async listIAMAccessBindings(
@@ -1384,8 +1422,13 @@ export class OpenClawController {
     });
     await this.verifyNamespacePolicyResource(namespace.id, input.resourceKind, input.resourceId);
     const driver = this.iamPolicyDriver("createNamespaceAccessBinding");
-    return this.mutate((state) =>
-      this.iamPolicyOperation(() =>
+    return this.mutate(async (state) => {
+      await this.holdIAMPolicyAuthority(state, principalId, namespace.id, {
+        kind: input.resourceKind,
+        id: input.resourceId,
+        namespaceId: namespace.id,
+      });
+      return this.iamPolicyOperation(() =>
         driver.createNamespaceAccessBinding!(
           { policy: state.iamPolicy },
           {
@@ -1398,8 +1441,8 @@ export class OpenClawController {
             resourceId: input.resourceId,
           },
         ),
-      ),
-    );
+      );
+    });
   }
 
   async getIAMAccessBinding(
@@ -1425,26 +1468,45 @@ export class OpenClawController {
     return binding;
   }
 
+  // Returns the removed AccessBinding so the caller can audit who lost access.
   async deleteIAMAccessBinding(
     principalId: string,
     namespaceId: string,
     bindingId: string,
-  ): Promise<void> {
+  ): Promise<Readonly<AccessBinding>> {
     if (!isNonEmptyString(bindingId)) {
       throw new ScopeViolationError("The exact IAM AccessBinding identity is missing.");
     }
     const namespace = await this.admitIAMPolicyOperation(principalId, namespaceId);
+    const reader = this.iamPolicyDriver("getNamespaceAccessBinding");
     const driver = this.iamPolicyDriver("deleteNamespaceAccessBinding");
-    const deleted = await this.mutate((state) =>
-      this.iamPolicyOperation(() =>
-        driver.deleteNamespaceAccessBinding!({ policy: state.iamPolicy }, namespace.id, bindingId),
-      ),
-    );
-    if (!deleted) {
+    const deleted = await this.mutate(async (state) => {
+      await this.holdIAMPolicyAuthority(state, principalId, namespace.id);
+      return this.iamPolicyOperation(async () => {
+        const binding = await reader.getNamespaceAccessBinding!(
+          { policy: state.iamPolicy },
+          namespace.id,
+          bindingId,
+        );
+        if (
+          binding === undefined ||
+          !(await driver.deleteNamespaceAccessBinding!(
+            { policy: state.iamPolicy },
+            namespace.id,
+            bindingId,
+          ))
+        ) {
+          return undefined;
+        }
+        return binding;
+      });
+    });
+    if (deleted === undefined) {
       throw new ScopeViolationError(
         "The IAM AccessBinding does not belong to the exact Namespace.",
       );
     }
+    return deleted;
   }
 
   async listAgents(
@@ -2781,8 +2843,8 @@ export class OpenClawController {
     principalId: string,
     namespaceId: string,
   ): Promise<readonly Readonly<SecretMetadata>[]> {
+    const namespace = await this.getNamespace(principalId, namespaceId);
     return this.read(async (state) => {
-      const namespace = await this.exactNamespace(state, namespaceId);
       const readable: Readonly<SecretMetadata>[] = [];
       for (const secret of await state.secrets.listSecrets(namespace.id)) {
         if (
@@ -3033,8 +3095,8 @@ export class OpenClawController {
     principalId: string,
     namespaceId: string,
   ): Promise<readonly Readonly<CredentialSourceMetadata>[]> {
+    const namespace = await this.getNamespace(principalId, namespaceId);
     return this.read(async (state) => {
-      const namespace = await this.exactNamespace(state, namespaceId);
       const readable: Readonly<CredentialSourceMetadata>[] = [];
       for (const source of await state.credentialSources.listCredentialSources(namespace.id)) {
         if (
@@ -4337,20 +4399,10 @@ export class OpenClawController {
         ),
         metadata,
       );
-      const sandboxConfiguration =
-        sandbox?.configureAgent !== undefined
-          ? frozenValues(sandbox.configureAgent(frozenValues(configuration.values)))
-          : configuration.values;
-      const admittedConfiguration = frozenValues(
-        compute.runtimeLogging === "driver"
-          ? sandboxConfiguration
-          : admitLoggingConfiguration(sandboxConfiguration, this.loggingLevel),
-      );
-      await configurationDriver.validate({ ...configuration, values: admittedConfiguration });
       if (!validExecutionMode(lockedAgent.executionMode)) {
         throw new ScopeViolationError("The persisted Agent Harness execution mode is invalid.");
       }
-      const configuredHarnessId = resolveConfiguredHarnessId(admittedConfiguration);
+      const configuredHarnessId = resolveConfiguredHarnessId(configuration.values);
       const approvedHarness = resolveHarness(configuredHarnessId, lockedAgent.executionMode);
       if (
         approvedHarness === undefined ||
@@ -4362,12 +4414,27 @@ export class OpenClawController {
       if (approvedHarness.id !== configuredHarnessId) {
         throw new ScopeViolationError("The approved Harness does not match the native runtime.");
       }
-      if (
-        (approvedHarness.id === "openclaw" && lockedAgent.executionMode !== "embedded") ||
-        (approvedHarness.id === "codex" && lockedAgent.executionMode !== "dedicated") ||
-        (approvedHarness.id !== "openclaw" && approvedHarness.id !== "codex")
-      ) {
-        throw new ScopeViolationError("The selected Harness does not support this execution mode.");
+      const revisionHarness = Object.freeze({
+        ...approvedHarness,
+        mode: lockedAgent.executionMode,
+      });
+      requireDedicatedNativeSandbox(revisionHarness, sandbox);
+      const sandboxConfiguration =
+        sandbox?.configureAgent !== undefined
+          ? frozenValues(
+              sandbox.configureAgent(frozenValues(configuration.values), revisionHarness),
+            )
+          : configuration.values;
+      const admittedConfiguration = frozenValues(
+        compute.runtimeLogging === "driver"
+          ? sandboxConfiguration
+          : admitLoggingConfiguration(sandboxConfiguration, this.loggingLevel),
+      );
+      await configurationDriver.validate({ ...configuration, values: admittedConfiguration });
+      if (resolveConfiguredHarnessId(admittedConfiguration) !== configuredHarnessId) {
+        throw new ScopeViolationError(
+          "A Sandbox Driver cannot change the selected Harness runtime.",
+        );
       }
       if (compute.validateHarnessAuth === undefined) {
         throw new DependencyUnavailableError(
@@ -4376,7 +4443,7 @@ export class OpenClawController {
       }
       try {
         compute.validateHarnessAuth(
-          { ...approvedHarness, mode: lockedAgent.executionMode },
+          revisionHarness,
           harnessAuth,
           admittedConfiguration,
           configuration.secretBindings,
@@ -4459,11 +4526,7 @@ export class OpenClawController {
           configurationKind: configuration.kind,
           configurationGeneration: configuration.generation,
           configuration: admittedConfiguration,
-          harness: {
-            id: approvedHarness.id,
-            version: approvedHarness.version,
-            mode: lockedAgent.executionMode,
-          },
+          harness: revisionHarness,
           compute: { id: compute.id, implementation: compute.implementation },
           ...(sandbox === undefined ? {} : { sandboxDriverId: sandbox.id }),
           ...(secretDriver === undefined
@@ -4557,7 +4620,7 @@ export class OpenClawController {
   }
 
   /**
-   * Begin logical deletion of one exact, authorized, empty Namespace.
+   * Begin or retry logical deletion of one exact, authorized, empty Namespace.
    * Driver effects remain deferred to handleNamespaceLifecycle().
    */
   async deleteNamespace(principalId: string, namespaceId: string): Promise<Readonly<Namespace>> {
@@ -4576,7 +4639,56 @@ export class OpenClawController {
         id: namespace.id,
         namespaceId: namespace.id,
       });
+      // Keep in-flight teardown idempotent. The original caller can explicitly
+      // retry terminal work after repairing the dependency or permission failure.
+      // Another authorized caller can take over only once the initiating actor
+      // no longer holds delete permission on this Namespace (for example, it
+      // was offboarded), so terminal teardown is never stranded.
       if (namespace.status === "deleting") {
+        const workId = `namespace:${namespace.id}:reconcile:deleted`;
+        const work = await state.operations.findWork(workId);
+        if (work?.state === "failed_permanent") {
+          const takeover = work.actorId !== principalId;
+          if (
+            takeover &&
+            (
+              await this.authorizationDecision(work.actorId, "delete", {
+                kind: "namespace",
+                id: namespace.id,
+                namespaceId: namespace.id,
+              })
+            ).decision.allowed
+          ) {
+            throw new AuthorizationDeniedError("Only the initiating actor can retry deletion.");
+          }
+          if (
+            !(await state.operations.retryFailedNamespaceDeletion(
+              namespace.id,
+              work.actorId,
+              principalId,
+            ))
+          ) {
+            throw new ResourceConflictError("The Namespace deletion work changed during retry.");
+          }
+          await state.audit.append({
+            id: `aud_${crypto.randomUUID()}`,
+            installationId: this.installation.id,
+            namespaceId: namespace.id,
+            occurredAt: this.timestamp(),
+            kind: "mutation",
+            actorId: principalId,
+            source: "occ",
+            action: "openclaw.namespaces.delete.retry",
+            resource: { kind: "namespace", id: namespace.id, namespaceId: namespace.id },
+            outcome: "success",
+            details: {
+              workId,
+              previousAttemptCount: work.attemptCount,
+              previousReasonCode: work.reasonCode,
+              ...(takeover ? { takeover: true, previousActorId: work.actorId } : {}),
+            },
+          });
+        }
         return namespace;
       }
       if (await state.namespaces.hasAgents(namespace.id)) {
@@ -4661,15 +4773,33 @@ export class OpenClawController {
       await state.workspaceSetups.delete(namespace.id, agent.id);
       // Keep in-flight teardown idempotent. The original caller can explicitly
       // retry terminal work after repairing the dependency or permission failure.
+      // Another authorized caller can take over only once the initiating actor
+      // no longer holds delete permission on this Agent (for example, it was
+      // offboarded), so terminal teardown is never stranded.
       if (agent.status === "deleting") {
         const workId = `agent:${agent.id}:reconcile:deleted`;
         const work = await state.operations.findWork(workId);
         if (work?.state === "failed_permanent") {
-          if (work.actorId !== principalId) {
+          const takeover = work.actorId !== principalId;
+          if (
+            takeover &&
+            (
+              await this.authorizationDecision(work.actorId, "delete", {
+                kind: "agent",
+                id: agent.id,
+                namespaceId: namespace.id,
+              })
+            ).decision.allowed
+          ) {
             throw new AuthorizationDeniedError("Only the initiating actor can retry deletion.");
           }
           if (
-            !(await state.operations.retryFailedAgentDeletion(namespace.id, agent.id, principalId))
+            !(await state.operations.retryFailedAgentDeletion(
+              namespace.id,
+              agent.id,
+              work.actorId,
+              principalId,
+            ))
           ) {
             throw new ResourceConflictError("The Agent deletion work changed during retry.");
           }
@@ -4688,6 +4818,7 @@ export class OpenClawController {
               workId,
               previousAttemptCount: work.attemptCount,
               previousReasonCode: work.reasonCode,
+              ...(takeover ? { takeover: true, previousActorId: work.actorId } : {}),
             },
           });
         }
@@ -5248,14 +5379,18 @@ export class OpenClawController {
         : agent === undefined
           ? await this.serviceAccountHarnessAuthSnapshot(state, namespaceId, backendId, binding)
           : await this.admitHarnessAuth(state, principalId, { ...agent, harnessAuth: binding });
-    const configuration =
-      this.sandboxDriver()?.configureAgent?.(plan.configuration.values) ??
-      plan.configuration.values;
     const harness = {
-      id: resolveConfiguredHarnessId(configuration),
+      id: resolveConfiguredHarnessId(plan.configuration.values),
       version: "provisioning",
       mode: plan.executionMode,
     };
+    const sandbox = this.sandboxDriver();
+    requireDedicatedNativeSandbox(harness, sandbox);
+    const configuration =
+      sandbox?.configureAgent?.(plan.configuration.values, harness) ?? plan.configuration.values;
+    if (resolveConfiguredHarnessId(configuration) !== harness.id) {
+      throw new ScopeViolationError("A Sandbox Driver cannot change the selected Harness runtime.");
+    }
     if (compute.validateHarnessAuth === undefined) {
       throw new DependencyUnavailableError(
         "The Compute Driver cannot validate Harness authentication.",
@@ -6395,8 +6530,36 @@ export class OpenClawController {
     return this.read((state) => this.exactNamespace(state, namespaceId));
   }
 
+  /**
+   * Re-checks the admitted actor inside the policy write's transaction and holds that
+   * authority until COMMIT. The Namespace lock orders this write after, or before, every
+   * other policy write and deletion in the Namespace, so a revocation there cannot commit
+   * in between; the account hold does the same for a disable. The actor's Installation
+   * grants have no runtime writer that removes them.
+   */
+  private async holdIAMPolicyAuthority(
+    state: PlatformUnitOfWork,
+    principalId: string,
+    namespaceId: string,
+    target?: ResourceRef,
+  ): Promise<void> {
+    await this.lockNamespace(state, namespaceId);
+    if (!(await state.installations.holdPrincipalAccount(principalId))) {
+      throw new AuthorizationDeniedError("The acting account is disabled.");
+    }
+    await this.authorize(principalId, "administer", {
+      kind: "installation",
+      id: this.installation.id,
+    });
+    await this.authorize(principalId, "read", { kind: "namespace", id: namespaceId, namespaceId });
+    if (target !== undefined) {
+      await this.authorize(principalId, "read", target);
+    }
+  }
+
   private assertNamespacePolicyResourceKind(kind: ResourceKind): void {
     if (
+      kind !== "namespace" &&
       kind !== "agent" &&
       kind !== "agent_revision" &&
       kind !== "configuration" &&
@@ -6428,6 +6591,9 @@ export class OpenClawController {
           throw new ScopeViolationError("IAM Role Permissions are invalid.");
         }
         this.assertNamespacePolicyResourceKind(permission.resourceKind);
+        if (permission.resourceKind === "namespace" && permission.action !== "read") {
+          throw new ScopeViolationError("IAM Namespace Role Permissions support only read.");
+        }
         const key = `${permission.action}\u0000${permission.resourceKind}`;
         if (seen.has(key)) {
           throw new ScopeViolationError("IAM Role Permissions contain duplicates.");
@@ -6447,6 +6613,13 @@ export class OpenClawController {
     resourceId: string,
   ): Promise<void> {
     await this.read(async (state) => {
+      if (resourceKind === "namespace") {
+        if (resourceId !== namespaceId) {
+          throw new ScopeViolationError("The IAM target must be the exact Namespace.");
+        }
+        await this.exactNamespace(state, namespaceId);
+        return;
+      }
       if (resourceKind === "agent") {
         if ((await state.agents.findAgent(namespaceId, resourceId)) === undefined) {
           throw new ScopeViolationError("The IAM target Agent does not belong to the Namespace.");

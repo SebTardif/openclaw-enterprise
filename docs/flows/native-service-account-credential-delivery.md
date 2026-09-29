@@ -184,6 +184,13 @@ failure; an app-server or plugin failure seen earlier waits for the probe
 result, so a probe failure still wins. Termination stops the probe and exits
 without waiting. Without that port the probe runs first, as before.
 
+A process that listens before readiness is not reachable early. Services do not
+publish unready addresses, and Envoy routes only to ready endpoints. API-server
+proxy address blocks reach only the status port. Native ports admit only the
+approved gateway clients or Envoy peer and, for a Harness, its own Agent's
+gateway, which dials the Service. The app-server also requires its capability
+token.
+
 Embedded OpenClaw consumes the selected provider's native API key and runs one bounded native
 primary-model probe in the actual gateway startup, with tools and fallback
 disabled. With a runtime status port, `startOpenClawAuthenticationProbe` runs it

@@ -48,6 +48,7 @@ import {
   provisioningEffectReceipt as provisioningEffectReceiptForRecord,
   provisioningPendingEffect,
   type ClaimedWork,
+  type ProvisioningEffectReceipt,
   type PlatformUnitOfWork,
   type PostgresPool,
   type PostgresQueryClient,
@@ -87,6 +88,11 @@ export interface ControllerWorkerOptions {
 type Observation = NamespaceEnsureResult | NamespaceDeleteResult;
 type Outcome = "success" | "pending" | "retry" | "permanent";
 
+// A revision whose runtime is not ready yet is progress, not a failure. Recheck
+// it on a short fixed cadence so earlier transient failures on the same Work do
+// not stretch readiness waits through the queue's exponential retry backoff.
+const REVISION_READINESS_RECHECK_MS = 500;
+
 interface DispatchResult {
   readonly outcome: Outcome;
   readonly code: string;
@@ -114,6 +120,11 @@ interface AgentDeletionDispatchResult extends DispatchResult {
   readonly namespace?: Readonly<Namespace>;
   readonly agent?: Readonly<Agent>;
   readonly revisions?: readonly Readonly<AgentRevision>[];
+  readonly delayMs?: number;
+  readonly abandonedProvisioningEffect?: {
+    readonly workId: string;
+    readonly receipt: ProvisioningEffectReceipt;
+  };
 }
 
 function positiveInteger(value: number, name: string): number {
@@ -369,6 +380,8 @@ function uniqueSecretRefs(bindings: SecretBindings): SecretReference[] {
   return [...refs.values()];
 }
 
+const MAX_STOPPED_PREDECESSOR_RECORDS = 4_096;
+
 export class ControllerWorker {
   private readonly metrics: OccMetrics | undefined;
   private passOutcome: WorkOutcome = "error";
@@ -406,6 +419,19 @@ export class ControllerWorker {
   private stopping = false;
   private lastHealthAt = 0;
   private pendingHealth: Promise<void> | undefined;
+  /**
+   * Predecessors this process stopped for an exclusive successor, by revision ID.
+   * The dispatch guard supersedes a predecessor's own work once an exclusive
+   * successor exists, so only a late effect from a lost claim (or an edit outside
+   * the worker) can recreate it. Compute reports such a predecessor as a
+   * not-ready successor rather than an error, so each record is stopped again
+   * after one lease, then after two, four and so on: a returned predecessor is
+   * always stopped again, at a cost that grows only logarithmically with time.
+   */
+  private readonly stoppedPredecessors = new Map<
+    string,
+    { readonly stoppedAt: number; readonly restopAfterMs: number }
+  >();
   private readonly deployTimings = new Map<string, DeployTiming>();
 
   constructor(options: ControllerWorkerOptions) {
@@ -753,6 +779,9 @@ export class ControllerWorker {
     if (typeof stage !== "function") {
       throw new Error(`The selected production Compute Driver requires ${operation}.`);
     }
+    if (operation === "activateRevision") {
+      this.stoppedPredecessors.delete(revision.id);
+    }
     await stage.call(this.compute, revision, context);
   }
 
@@ -929,17 +958,59 @@ export class ControllerWorker {
     revision: Readonly<AgentRevision>,
     context: ComputeRevisionContext,
   ): Promise<{ readonly observation: ComputeReadiness; readonly context: ComputeRevisionContext }> {
+    // Preparing a revision can recreate its runtime, so it is no longer known stopped.
+    this.stoppedPredecessors.delete(revision.id);
+    let earlier: readonly Readonly<AgentRevision>[] = [];
     if (this.compute.requiresStoppedPredecessors?.(revision) === true) {
-      const earlier = await this.state.read(async (view) =>
+      earlier = await this.state.read(async (view) =>
         (await view.revisions.listRevisions(revision.namespaceId, revision.agentId)).filter(
           (candidate) => candidate.revision < revision.revision,
         ),
       );
+      await this.stopPredecessors(claim, earlier);
+    }
+    try {
+      return await this.prepareAfterPredecessors(claim, revision, context);
+    } catch (error) {
+      // A failed pass may stem from a predecessor that came back; sweep it again.
       for (const previous of earlier) {
-        await this.closeRevisionCredentials(claim, previous);
-        await this.withClaimHeartbeat(claim, () => this.compute.stopRevision(previous));
+        this.stoppedPredecessors.delete(previous.id);
+      }
+      throw error;
+    }
+  }
+
+  private async stopPredecessors(
+    claim: ClaimedWork,
+    earlier: readonly Readonly<AgentRevision>[],
+  ): Promise<void> {
+    for (const previous of earlier) {
+      const record = this.stoppedPredecessors.get(previous.id);
+      if (record !== undefined && Date.now() - record.stoppedAt < record.restopAfterMs) {
+        continue;
+      }
+      await this.closeRevisionCredentials(claim, previous);
+      await this.withClaimHeartbeat(claim, () => this.compute.stopRevision(previous));
+      this.stoppedPredecessors.delete(previous.id);
+      this.stoppedPredecessors.set(previous.id, {
+        stoppedAt: Date.now(),
+        restopAfterMs: record === undefined ? this.leaseDurationMs : record.restopAfterMs * 2,
+      });
+      if (this.stoppedPredecessors.size > MAX_STOPPED_PREDECESSOR_RECORDS) {
+        // Forgetting a record only costs one repeated idempotent stop.
+        const oldest = this.stoppedPredecessors.keys().next().value;
+        if (oldest !== undefined) {
+          this.stoppedPredecessors.delete(oldest);
+        }
       }
     }
+  }
+
+  private async prepareAfterPredecessors(
+    claim: ClaimedWork,
+    revision: Readonly<AgentRevision>,
+    context: ComputeRevisionContext,
+  ): Promise<{ readonly observation: ComputeReadiness; readonly context: ComputeRevisionContext }> {
     let prepared = context;
     if (revision.repositoryCredentials !== undefined) {
       const repositoryCredentials = await this.repositoryCredentials.prepare(claim, revision);
@@ -1434,6 +1505,7 @@ export class ControllerWorker {
         pendingProvisioningEffect === undefined
           ? undefined
           : provisioningEffectReceiptForRecord(provisioning!);
+      let abandonedProvisioningEffect: AgentDeletionDispatchResult["abandonedProvisioningEffect"];
       if (
         provisioning?.progress.pendingEffect !== undefined &&
         (pendingProvisioningEffect === undefined ||
@@ -1443,14 +1515,35 @@ export class ControllerWorker {
           settledProvisioningEffect.owner !== pendingProvisioningEffect.owner ||
           settledProvisioningEffect.targetId !== pendingProvisioningEffect.targetId)
       ) {
-        await this.finalizeAgentDeletion(claim, {
-          outcome: "pending",
-          code: "PROVISIONING_EFFECT_PENDING",
-          namespace,
-          agent,
-          revisions,
-        });
-        return;
+        // A cancelled provisioning never runs again, so nothing else will settle
+        // its effect. After a former claim's lease has run out, this teardown
+        // removes what the effect could have written and settles it itself.
+        // Malformed or conflicting evidence stays fail-closed.
+        const abandonAfterMs = provisioning.updatedAt.getTime() + this.leaseDurationMs - Date.now();
+        if (
+          provisioning.status !== "cancelled" ||
+          pendingProvisioningEffect?.ownerPresent !== true ||
+          settledProvisioningEffect !== undefined ||
+          abandonAfterMs > 0
+        ) {
+          await this.finalizeAgentDeletion(claim, {
+            outcome: "pending",
+            code: "PROVISIONING_EFFECT_PENDING",
+            namespace,
+            agent,
+            revisions,
+            ...(abandonAfterMs > 0 ? { delayMs: Math.ceil(abandonAfterMs) } : {}),
+          });
+          return;
+        }
+        abandonedProvisioningEffect = {
+          workId: provisioning.workId,
+          receipt: {
+            kind: pendingProvisioningEffect.kind,
+            owner: pendingProvisioningEffect.owner!,
+            targetId: pendingProvisioningEffect.targetId,
+          },
+        };
       }
       if (revisions.length > 0 && this.compute.bindAgent !== undefined) {
         await this.withClaimHeartbeat(claim, async () => {
@@ -1472,6 +1565,7 @@ export class ControllerWorker {
         namespace,
         agent,
         revisions,
+        ...(abandonedProvisioningEffect === undefined ? {} : { abandonedProvisioningEffect }),
       };
     } catch (error) {
       if (error instanceof WorkClaimLostError) {
@@ -1517,7 +1611,12 @@ export class ControllerWorker {
       if (claim.agentId === undefined) {
         throw new Error("The worker Agent deletion context is unavailable.");
       }
-      const completed = await this.state.transactWithQueue(async (_unit, queue) => {
+      const abandoned = result.abandonedProvisioningEffect;
+      const completed = await this.state.transactWithQueue(async (unit, queue) => {
+        if (abandoned !== undefined) {
+          // Committed only with the finalizer's claim check in this transaction.
+          await unit.provisioning.settleEffect(abandoned.workId, abandoned.receipt);
+        }
         const completed = await queue.completeAgentDeletion(
           claim,
           claim.namespaceId,
@@ -1555,6 +1654,13 @@ export class ControllerWorker {
         }
         if (terminalFailure) {
           await queue.fail(claim, { code: result.code });
+        } else if (result.outcome === "pending") {
+          // Convergence waits do not consume the bounded failure budget.
+          await queue.defer(
+            claim,
+            { code: result.code },
+            result.delayMs === undefined ? {} : { delayMs: result.delayMs },
+          );
         } else {
           await queue.retry(claim, { code: result.code });
         }
@@ -2583,6 +2689,13 @@ export class ControllerWorker {
             : { outcome: "retry", code: "DEPENDENCY_UNAVAILABLE" };
       }
     }
+    if (
+      resolved.outcome === "retry" &&
+      claim.attemptCount >= this.maxAttempts &&
+      (await this.continueExhaustedMaintenance(claim, resolved.code))
+    ) {
+      return;
+    }
     let activated: Readonly<AgentRevision> | undefined;
     let stoppedCandidate: Readonly<AgentRevision> | undefined;
     let committedOutcome: WorkOutcome =
@@ -2649,7 +2762,11 @@ export class ControllerWorker {
           ...(resolved.resultData === undefined ? {} : { resultData: resolved.resultData }),
         });
       } else if (resolved.outcome === "pending") {
-        await queue.defer(claim, { code: resolved.code });
+        await queue.defer(
+          claim,
+          { code: resolved.code },
+          resolved.code === "REVISION_INCOMPLETE" ? { delayMs: REVISION_READINESS_RECHECK_MS } : {},
+        );
       } else if (resolved.outcome === "permanent" || claim.attemptCount >= this.maxAttempts) {
         await queue.fail(claim, {
           code: resolved.code,
@@ -2894,6 +3011,70 @@ export class ControllerWorker {
       outcome: "pending",
       code,
     });
+  }
+
+  // A dependency outage that outlasts one maintenance claim's retries must not
+  // retire the authorized active runtime. Fail only this bounded claim and keep
+  // the maintenance chain, as finalizeActiveRevision does for failed
+  // observations. The queue still refuses continuation past the credential
+  // deadline, and the next pass re-checks authority before any new material.
+  private async continueExhaustedMaintenance(claim: ClaimedWork, code: string): Promise<boolean> {
+    const revisionId = claim.revisionId;
+    if (
+      claim.agentId === undefined ||
+      revisionId === undefined ||
+      claim.namespaceTarget !== undefined ||
+      !new RegExp(`^agent_revision:${revisionId}:maintenance:(0|[1-9][0-9]*)$`).test(
+        claim.idempotencyKey,
+      )
+    ) {
+      return false;
+    }
+    let continued = false;
+    await this.state.transactWithQueue(async (unit, queue) => {
+      if ((await queue.heartbeat(claim)) === undefined) {
+        throw new WorkClaimLostError();
+      }
+      const agent = await unit.agents.lockAgent(claim.namespaceId, claim.agentId!);
+      if (agent?.activeRevisionId !== revisionId || agent.desiredRuntimeState !== "running") {
+        return;
+      }
+      const namespace = await unit.namespaces.findNamespace(claim.namespaceId);
+      const revision = await unit.revisions.findRevision(
+        claim.namespaceId,
+        claim.agentId!,
+        revisionId,
+      );
+      if (
+        namespace?.status !== "ready" ||
+        revision === undefined ||
+        revision.servicePrincipalId !== agent.servicePrincipalId ||
+        this.revisionMaintenanceInterval(revision) === undefined ||
+        (revision.repositoryCredentials !== undefined &&
+          Date.now() >= revision.repositoryCredentials.deadlineWallMs)
+      ) {
+        return;
+      }
+      await queue.fail(claim, { code }, { continuingRevision: true });
+      await this.enqueueMaintenance(queue, claim, revision);
+      continued = true;
+    }, this.queueOptions);
+    if (!continued) {
+      return false;
+    }
+    this.passOutcome = "permanent";
+    this.emit({
+      event: "worker.completed",
+      ...workLogFields(claim),
+      namespaceId: claim.namespaceId,
+      agentId: claim.agentId,
+      revisionId,
+      result: "retry",
+      outcome: "retry",
+      code,
+      ...this.deployTimingFields(claim),
+    });
+    return true;
   }
 
   private async enqueueMaintenance(

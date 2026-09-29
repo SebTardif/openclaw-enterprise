@@ -151,6 +151,9 @@ function sessionFromRow(row: Row): HumanAuthenticationSession {
   };
 }
 
+// Pending external sign-in attempts per Installation. A full table evicts its oldest attempts.
+const pendingAttemptCapacity = 1000;
+
 const userColumns = `u.id AS user_id, u.email, u.name, u.email_verified, u.image,
   u.created_at AS user_created_at, u.updated_at AS user_updated_at`;
 
@@ -741,7 +744,7 @@ export class PostgresHumanAuthentication {
     return this.state.transact(async (unit) => {
       const account = await this.guardAccounts(unit, userId, actor, expectedVersion);
       if (account.disabled !== false) {
-        throw new ScopeViolationError("The authentication account is disabled.");
+        throw new ResourceConflictError("The authentication account is disabled.");
       }
       const [existing] = await this.query(
         unit,
@@ -837,7 +840,7 @@ export class PostgresHumanAuthentication {
           [userId],
         );
         if (recovery !== undefined) {
-          throw new ScopeViolationError("The recovery account cannot be disabled.");
+          throw new ResourceConflictError("The recovery account cannot be disabled.");
         }
       }
       if (operation === "enable" && account.disabled !== true) {
@@ -910,8 +913,11 @@ export class PostgresHumanAuthentication {
       }
       await this.guardActor(unit, actor, [userId, designation.user_id as string]);
       const account = await this.guardAccounts(unit, userId, actor, expectedVersion);
-      if (account.principal_id !== principalId || account.disabled !== false) {
+      if (account.principal_id !== principalId) {
         throw new ScopeViolationError("The recovery account is unavailable.");
+      }
+      if (account.disabled !== false) {
+        throw new ResourceConflictError("The authentication account is disabled.");
       }
       // The database has no composite key tying method_id to user_id, so the method is only
       // ever derived here from the target's own credential rows, never taken from input.
@@ -1001,8 +1007,17 @@ export class PostgresHumanAuthentication {
         `SELECT count(*)::integer AS count FROM occ.human_authentication_attempts WHERE installation_id = $1`,
         [this.installationId],
       );
-      if ((capacity!.count as number) >= 1000) {
-        throw new ResourceConflictError("Authentication attempt capacity is unavailable.");
+      // Any client can start an attempt, so a full table must not refuse new starts: that would
+      // let one client block provider sign-in for everyone. Evict the oldest pending attempts.
+      const excess = (capacity!.count as number) - (pendingAttemptCapacity - 1);
+      if (excess > 0) {
+        await this.query(
+          unit,
+          `DELETE FROM occ.human_authentication_attempts WHERE state_hash IN
+           (SELECT state_hash FROM occ.human_authentication_attempts WHERE installation_id = $1
+            ORDER BY expires_at, state_hash LIMIT $2)`,
+          [this.installationId, excess],
+        );
       }
       const [row] = await this.query(
         unit,

@@ -770,6 +770,12 @@ export interface AuthorizationRequest {
   readonly resource: ResourceRef;
 }
 
+/** Asks whether one identity already holds every grant of another identity. */
+export interface IdentityAccessCoverageRequest {
+  readonly principalId: string;
+  readonly targetIdentityId: string;
+}
+
 export interface AuthorizationDecision {
   readonly allowed: boolean;
   readonly reason: string;
@@ -914,6 +920,12 @@ export interface IAMDriver extends Driver {
   readonly namespacePolicyTransaction?: "platform-unit-of-work";
   lookupIdentity(input: IdentityLookup): Promise<Identity | undefined>;
   authorize(request: AuthorizationRequest): Promise<AuthorizationDecision>;
+  /**
+   * True only when `principalId` holds every grant of `targetIdentityId` at the
+   * same or a broader scope. Credential issuance for another identity requires it;
+   * a Driver without it cannot issue such credentials.
+   */
+  coversIdentityAccess?(request: IdentityAccessCoverageRequest): Promise<boolean>;
   listNamespaceRoles?(
     context: IAMPolicyReadContext,
     namespaceId: string,
@@ -978,6 +990,7 @@ export interface IAMPolicyManagementContext {
 }
 
 export type ManagedIAMResourceKind =
+  | "namespace"
   | "agent"
   | "agent_revision"
   | "configuration"
@@ -1097,6 +1110,7 @@ export interface SandboxDriver extends Driver {
   readonly facets: readonly SandboxFacet[];
   configureAgent?(
     configuration: Readonly<OpenClawConfigurationDocument>,
+    harness: Readonly<RevisionHarnessDescriptor>,
   ): OpenClawConfigurationDocument;
   ensureNamespace?(context: SandboxNamespaceContext): Promise<void>;
   provisionHarness?(context: SandboxHarnessContext): Promise<SandboxResourceRef>;

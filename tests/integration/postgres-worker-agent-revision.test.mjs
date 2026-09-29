@@ -4,16 +4,16 @@ import { request as httpsRequest } from "node:https";
 import { createControlledClock } from "../fixtures/repository-credentials/clock.mjs";
 import test from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
+import { fileURLToPath } from "node:url";
+import { prepareFile } from "../../scripts/ci/prepare.mjs";
 import { createOccMetrics } from "../../apps/controller/src/metrics/index.ts";
 import { PostgresMetricsSnapshot } from "../../packages/occ/src/index.ts";
 import { encodeRepositoryCredentialSessionFiles } from "../../apps/controller/src/drivers/repo/github/credentials/client/config.ts";
 import {
   authorizedPrincipal,
-  cleanupBackendFixtures,
   createAccessTokenServiceAccount,
   createBackendWorkerDrivers,
   createBackendController,
-  databaseUrl,
   ensureInstallation,
   poolWithOneBackendBindingReadFault,
   backendDefinition,
@@ -22,9 +22,42 @@ import {
   waitFor,
 } from "../helpers/postgres-backend-state.mjs";
 
+async function prepareDatabase(context) {
+  assert.ok(
+    process.env.OPENCLAW_ENTERPRISE_CI_STATE,
+    "Worker tests require an owned PostgreSQL fixture; see docs/testing/postgresql.md.",
+  );
+  const prepared = await prepareFile({
+    lane: "postgres-application",
+    file: fileURLToPath(import.meta.url),
+    statePath: process.env.OPENCLAW_ENTERPRISE_CI_STATE,
+  });
+  const pools = new Set();
+  const workers = new Set();
+  let disposal;
+  function dispose() {
+    return (disposal ??= (async () => {
+      // Work claims span the entire database. Join every worker owned by this
+      // fixture before dropping it; never rewrite another worker's live claim.
+      for (const worker of workers) {
+        await worker.stop();
+      }
+      for (const pool of pools) {
+        if (!pool.ended) {
+          await pool.end();
+        }
+      }
+      await prepared.cleanup();
+    })());
+  }
+  context.after(dispose);
+  return { url: prepared.env.OCC_TEST_DATABASE_URL, pools, workers, dispose };
+}
+
 async function setup(
   context,
   {
+    database,
     leaseDurationMs = 30_000,
     maxAttempts = 5,
     onHealthy,
@@ -48,8 +81,14 @@ async function setup(
     import("../../packages/occ/src/state/postgres-state.ts"),
     import("../../packages/occ/src/state/postgres-work-queue.ts"),
   ]);
-  const observerPool = new Pool({ connectionString: databaseUrl, max: 8 });
-  const createWorkerPool = () => new Pool({ connectionString: databaseUrl, max: 1 });
+  database ??= await prepareDatabase(context);
+  function createPool(max) {
+    const pool = new Pool({ connectionString: database.url, max });
+    database.pools.add(pool);
+    return pool;
+  }
+  const observerPool = createPool(8);
+  const createWorkerPool = () => createPool(1);
   let workerPool = createWorkerPool();
   const state = new PostgresPlatformState(observerPool);
   const installation = await ensureInstallation(state, "revision-worker");
@@ -70,31 +109,6 @@ async function setup(
     createdAt: new Date().toISOString(),
   };
   let worker;
-  context.after(async () => {
-    if (worker === undefined) {
-      await workerPool.end();
-    } else {
-      await worker.stop();
-    }
-    // Every case in this file shares one database, and every worker claims from
-    // the whole queue. Close this case's unfinished work (deferred repository
-    // cleanup, retries, abandoned claims) so a later case's worker cannot run it
-    // through that case's recording Compute and repository doubles.
-    await observerPool.query(
-      `UPDATE occ.controller_work
-       SET state = 'failed_permanent',
-           claim_token = NULL,
-           lease_expires_at = NULL,
-           completed_at = clock_timestamp(),
-           reason_code = 'TEST_FIXTURE_CLEANUP',
-           result_data = NULL,
-           updated_at = clock_timestamp()
-       WHERE namespace_id = $1 AND state IN ('queued', 'claimed')`,
-      [namespace.id],
-    );
-    await observerPool.end();
-  });
-
   await state.transact((unit) => unit.namespaces.createNamespace(namespace));
   const compute = {
     ...createDevelopmentComputeDriver(),
@@ -321,6 +335,7 @@ async function setup(
       ...(convergenceTimeoutMs === undefined ? {} : { convergenceTimeoutMs }),
       emit,
     });
+    database.workers.add(worker);
     return worker.start();
   }
 
@@ -333,6 +348,7 @@ async function setup(
   }
 
   return {
+    database,
     installation,
     controller,
     actor,
@@ -509,6 +525,55 @@ function repositoryAttempts(fixture, revision) {
 }
 
 test(
+  "worker fixture disposal preserves another database's live claim and activation",
+  requiresPostgres,
+  async (context) => {
+    const first = await setup(context);
+    const firstOwner = await first.agent("isolated-first");
+    await first.revision(firstOwner, 1);
+    const second = await setup(context);
+    const queue = new second.PostgresWorkQueue(second.observerPool);
+    assert.equal(await queue.claim(), undefined, "workers cannot claim another fixture's work");
+
+    const owner = await second.agent("isolated-second");
+    const candidate = await second.revision(owner, 1);
+    const release = Promise.withResolvers();
+    let preparing = false;
+    try {
+      await second.start({
+        ...second.compute,
+        async prepareRevision(revision) {
+          preparing = true;
+          await release.promise;
+          return second.compute.prepareRevision(revision);
+        },
+      });
+      await waitFor("second fixture to hold its claim during preparation", async () =>
+        preparing ? true : undefined,
+      );
+      const before = await second.work(candidate, "claimed");
+      assert.equal(typeof before.claim_token, "string");
+
+      await first.database.dispose();
+      const renewed = await queue.heartbeat({
+        idempotencyKey: candidate.idempotencyKey,
+        claimToken: before.claim_token,
+      });
+      assert.equal(renewed?.claimToken, before.claim_token);
+      release.resolve();
+      await second.work(candidate, "succeeded");
+      const activated = await second.state.read((view) =>
+        view.agents.findAgent(second.namespace.id, owner.id),
+      );
+      assert.equal(activated.activeRevisionId, candidate.id);
+    } finally {
+      // Release Compute before the registered owner teardown joins its worker.
+      release.resolve();
+    }
+  },
+);
+
+test(
   "exclusive replacement blocks overlap, supersedes old maintenance and recovers through a new revision",
   { ...requiresPostgres, timeout: 30_000 },
   async (context) => {
@@ -581,6 +646,141 @@ test(
       view.agents.findAgent(fixture.namespace.id, owner.id),
     );
     assert.equal(current.activeRevisionId, recovery.id);
+  },
+);
+
+function countingExclusiveCompute(fixture, { ready, onPrepare } = {}) {
+  const running = new Set();
+  const prepared = [];
+  const stops = new Map();
+  const compute = {
+    ...fixture.compute,
+    requiresStoppedPredecessors: () => true,
+    async prepareRevision(revision) {
+      const overlap = [...running].filter((id) => id !== revision.id);
+      running.add(revision.id);
+      prepared.push(revision.id);
+      await onPrepare?.(revision, overlap);
+      // The candidate cannot become ready while any predecessor still runs.
+      const exclusive = [...running].every((id) => id === revision.id);
+      return {
+        ...(await fixture.compute.prepareRevision(revision)),
+        ready: exclusive && (ready?.(revision) ?? true),
+      };
+    },
+    async stopRevision(revision) {
+      stops.set(revision.id, (stops.get(revision.id) ?? 0) + 1);
+      running.delete(revision.id);
+    },
+    async retireRevision(revision) {
+      running.delete(revision.id);
+    },
+  };
+  const count = (revision) => stops.get(revision.id) ?? 0;
+  const preparations = (revision) => prepared.filter((id) => id === revision.id).length;
+  return { compute, running, count, preparations };
+}
+
+async function enqueueMaintenance(fixture, owner, revision) {
+  const maintenance = {
+    id: revision.id,
+    idempotencyKey: `agent_revision:${revision.id}:maintenance:${randomUUID()}`,
+  };
+  await fixture.state.transactWithQueue((_unit, queue) =>
+    queue.enqueue({
+      idempotencyKey: maintenance.idempotencyKey,
+      namespaceId: fixture.namespace.id,
+      agentId: owner.id,
+      revisionId: revision.id,
+      actorId: fixture.actor.id,
+      availableAt: new Date(0),
+    }),
+  );
+  return maintenance;
+}
+
+test(
+  "exclusive replacement stops each predecessor once across pending passes and maintenance",
+  { ...requiresPostgres, timeout: 60_000 },
+  async (context) => {
+    const fixture = await setup(context);
+    const owner = await fixture.agent("exclusive-sweep-once", "dedicated");
+    let pendingPasses = 4;
+    const driver = countingExclusiveCompute(fixture, {
+      ready: (revision) => revision.revision !== 2 || pendingPasses-- <= 0,
+    });
+    await fixture.start(driver.compute);
+    const first = await fixture.revision(owner, 1);
+    await fixture.work(first, "succeeded");
+    const replacement = await fixture.revision(owner, 2);
+    await fixture.work(replacement, "succeeded", 30_000);
+    assert.ok(driver.preparations(replacement) >= 5, "the replacement must repeat pending passes");
+    // Exactly one stop holds because the fixture lease (30 s) outlasts this pending
+    // window; with a shorter lease the scheduled re-stop would add more.
+    assert.equal(driver.count(first), 1, "pending passes must not repeat the predecessor stop");
+
+    for (let index = 0; index < 2; index += 1) {
+      await fixture.work(await enqueueMaintenance(fixture, owner, replacement), "succeeded");
+    }
+    assert.equal(driver.count(first), 1, "maintenance must not repeat the predecessor stop");
+
+    const recovery = await fixture.revision(owner, 3);
+    await fixture.work(recovery, "succeeded");
+    assert.equal(driver.count(replacement), 1);
+    assert.equal(driver.count(first), 1, "a recorded predecessor is skipped by later sweeps");
+    assert.deepEqual([...driver.running], [recovery.id]);
+  },
+);
+
+test(
+  "a predecessor that comes back after the sweep is stopped again",
+  { ...requiresPostgres, timeout: 60_000 },
+  async (context) => {
+    for (const { leaseDurationMs, label, returns } of [
+      // A late Compute effect makes the next pass fail, which forgets the record.
+      { leaseDurationMs: 30_000, label: "failed-pass", returns: 1 },
+      // A late effect keeps the candidate pending until one lease has elapsed.
+      { leaseDurationMs: 1_000, label: "lease-restop", returns: 1 },
+      // It comes back again after that re-stop; the next one follows two leases later.
+      { leaseDurationMs: 1_000, label: "repeated-restop", returns: 2 },
+    ]) {
+      const fixture = await setup(context, { leaseDurationMs });
+      const owner = await fixture.agent(`exclusive-resurrection-${label}`, "dedicated");
+      let first;
+      let resurrections = 0;
+      const driver = countingExclusiveCompute(fixture, {
+        async onPrepare(revision, overlap) {
+          if (revision.revision !== 2) {
+            return;
+          }
+          if (resurrections < returns && driver.count(first) > resurrections) {
+            // Model a lost claim's late Compute write landing after each stop.
+            resurrections += 1;
+            driver.running.add(first.id);
+          } else if (overlap.length > 0 && label === "failed-pass") {
+            driver.running.delete(revision.id);
+            throw new Error("predecessor still holds the exclusive resource");
+          }
+        },
+      });
+      await fixture.start(driver.compute);
+      first = await fixture.revision(owner, 1);
+      await fixture.work(first, "succeeded");
+      const replacement = await fixture.revision(owner, 2);
+      await fixture.work(replacement, "succeeded", 30_000);
+      assert.equal(resurrections, returns);
+      assert.equal(
+        driver.count(first),
+        returns + 1,
+        `${label}: the returned predecessor is stopped again`,
+      );
+      assert.deepEqual([...driver.running], [replacement.id]);
+      const current = await fixture.state.read((view) =>
+        view.agents.findAgent(fixture.namespace.id, owner.id),
+      );
+      assert.equal(current.activeRevisionId, replacement.id);
+      await fixture.stop();
+    }
   },
 );
 
@@ -1229,14 +1429,197 @@ test(
       ["recover", "open"],
     );
     await fixture.stop();
-    // Keep unresolved evidence, but quiesce this stopped fixture's queue so
-    // another test's worker cannot consume its cleanup or maintenance Work.
-    await fixture.observerPool.query(
-      `UPDATE occ.controller_work SET state = 'queued', claim_token = NULL,
-       lease_expires_at = NULL, available_at = 'infinity'
-       WHERE namespace_id = $1 AND state IN ('queued', 'claimed')`,
-      [candidate.namespaceId],
+  },
+);
+
+test(
+  "exhausted repository maintenance during a dependency outage keeps the active runtime",
+  requiresPostgres,
+  async (context) => {
+    const repository = repositoryBoundary();
+    // One attempt makes the first unavailable dependency exhaust the claim, as
+    // a longer outage exhausts the default retries.
+    const fixture = await setup(context, { repoDriver: repository.driver, maxAttempts: 1 });
+    const owner = await fixture.agent("repository-maintenance-outage");
+    const candidate = await fixture.revision(owner, 1, undefined, repository.snapshot);
+    const stopped = [];
+    let iamUnavailable = false;
+    const compute = {
+      ...fixture.compute,
+      async stopRevision(revision) {
+        stopped.push(revision.id);
+        return fixture.compute.stopRevision(revision);
+      },
+    };
+    const withUnavailableIAM = (drivers) => {
+      const createIAMDriver = drivers.createIAMDriver;
+      return {
+        ...drivers,
+        createIAMDriver(state) {
+          const iam = createIAMDriver(state);
+          return {
+            id: iam.id,
+            implementation: iam.implementation,
+            capability: iam.capability,
+            lookupIdentity: iam.lookupIdentity.bind(iam),
+            async authorize(request) {
+              if (iamUnavailable) {
+                throw new Error("IAM is temporarily unavailable");
+              }
+              return iam.authorize(request);
+            },
+          };
+        },
+      };
+    };
+    const startWorker = () =>
+      fixture.start(
+        compute,
+        () => {},
+        undefined,
+        undefined,
+        fixture.createWorkerPool(),
+        withUnavailableIAM,
+      );
+    await startWorker();
+    await fixture.work(candidate, "succeeded");
+    await fixture.stop();
+
+    iamUnavailable = true;
+    const maintenance = await fixture.observerPool.query(
+      `UPDATE occ.controller_work SET available_at = clock_timestamp()
+       WHERE revision_id = $1 AND state = 'queued' AND idempotency_key LIKE $2
+       RETURNING idempotency_key`,
+      [candidate.id, `agent_revision:${candidate.id}:maintenance:%`],
     );
+    assert.equal(maintenance.rowCount, 1);
+    const outage = { id: candidate.id, idempotencyKey: maintenance.rows[0].idempotency_key };
+    await startWorker();
+    await fixture.work(outage, "failed_permanent");
+    await fixture.stop();
+    const failed = await fixture.observerPool.query(
+      "SELECT reason_code FROM occ.controller_work WHERE idempotency_key = $1",
+      [outage.idempotencyKey],
+    );
+    assert.equal(failed.rows[0].reason_code, "DEPENDENCY_UNAVAILABLE");
+    const retirement = await fixture.observerPool.query(
+      `SELECT idempotency_key FROM occ.controller_work
+       WHERE revision_id = $1 AND idempotency_key LIKE $2`,
+      [candidate.id, `agent_revision:${candidate.id}:repository_cleanup:retire:%`],
+    );
+    assert.equal(retirement.rowCount, 0, "an outage must not retire the authorized runtime");
+    assert.deepEqual(stopped, []);
+    const agent = await fixture.state.read((view) =>
+      view.agents.findAgent(fixture.namespace.id, owner.id),
+    );
+    assert.equal(agent.activeRevisionId, candidate.id);
+    assert.equal(agent.desiredRuntimeState, "running");
+
+    // The maintenance chain continues, so the runtime is kept current once
+    // the dependency recovers.
+    iamUnavailable = false;
+    const next = await fixture.observerPool.query(
+      `UPDATE occ.controller_work SET available_at = clock_timestamp()
+       WHERE revision_id = $1 AND state = 'queued' AND idempotency_key LIKE $2
+       RETURNING idempotency_key`,
+      [candidate.id, `agent_revision:${candidate.id}:maintenance:%`],
+    );
+    assert.equal(next.rowCount, 1);
+    assert.notEqual(next.rows[0].idempotency_key, outage.idempotencyKey);
+    await startWorker();
+    await fixture.work(
+      { id: candidate.id, idempotencyKey: next.rows[0].idempotency_key },
+      "succeeded",
+    );
+    await fixture.stop();
+    assert.deepEqual(stopped, []);
+  },
+);
+
+test(
+  "an expired exhausted repository maintenance claim keeps the active runtime",
+  requiresPostgres,
+  async (context) => {
+    const repository = repositoryBoundary();
+    const fixture = await setup(context, { repoDriver: repository.driver, maxAttempts: 1 });
+    const owner = await fixture.agent("repository-maintenance-lease-expiry");
+    const candidate = await fixture.revision(owner, 1, undefined, repository.snapshot);
+    const stopped = [];
+    const compute = {
+      ...fixture.compute,
+      async stopRevision(revision) {
+        stopped.push(revision.id);
+        return fixture.compute.stopRevision(revision);
+      },
+    };
+    await fixture.start(compute);
+    await fixture.work(candidate, "succeeded");
+    await fixture.stop();
+
+    // A worker claims the maintenance item on its last attempt and crashes
+    // before it finishes, so only lease expiry can release the claim.
+    const maintenance = await fixture.observerPool.query(
+      `UPDATE occ.controller_work SET available_at = clock_timestamp()
+       WHERE revision_id = $1 AND state = 'queued' AND idempotency_key LIKE $2
+       RETURNING idempotency_key`,
+      [candidate.id, `agent_revision:${candidate.id}:maintenance:%`],
+    );
+    assert.equal(maintenance.rowCount, 1);
+    const crashedKey = maintenance.rows[0].idempotency_key;
+    const queue = new fixture.PostgresWorkQueue(fixture.observerPool, {
+      leaseDurationMs: 30_000,
+      maxAttempts: 1,
+      random: () => 0,
+    });
+    const crashed = await queue.claim();
+    assert.equal(crashed?.idempotencyKey, crashedKey);
+    await fixture.observerPool.query(
+      `UPDATE occ.controller_work
+       SET lease_expires_at = clock_timestamp() - interval '1 second'
+       WHERE idempotency_key = $1 AND claim_token = $2::uuid`,
+      [crashedKey, crashed.claimToken],
+    );
+    const recovery = await queue.recoverStale();
+    assert.equal(recovery.recovered, 1);
+
+    const failed = await fixture.observerPool.query(
+      "SELECT state, reason_code FROM occ.controller_work WHERE idempotency_key = $1",
+      [crashedKey],
+    );
+    assert.deepEqual(failed.rows[0], { state: "failed_permanent", reason_code: "LEASE_EXPIRED" });
+    const retirement = await fixture.observerPool.query(
+      `SELECT idempotency_key FROM occ.controller_work
+       WHERE revision_id = $1 AND idempotency_key LIKE $2`,
+      [candidate.id, `agent_revision:${candidate.id}:repository_cleanup:retire:%`],
+    );
+    assert.equal(retirement.rowCount, 0, "a crashed worker must not retire the active runtime");
+    const agent = await fixture.state.read((view) =>
+      view.agents.findAgent(fixture.namespace.id, owner.id),
+    );
+    assert.equal(agent.activeRevisionId, candidate.id);
+    assert.equal(agent.desiredRuntimeState, "running");
+
+    // The maintenance chain continues with the next bucket.
+    const next = await fixture.observerPool.query(
+      `UPDATE occ.controller_work SET available_at = clock_timestamp()
+       WHERE revision_id = $1 AND state = 'queued' AND idempotency_key LIKE $2
+       RETURNING idempotency_key, attempt_count, actor_id`,
+      [candidate.id, `agent_revision:${candidate.id}:maintenance:%`],
+    );
+    assert.equal(next.rowCount, 1);
+    const bucket = BigInt(crashedKey.slice(crashedKey.lastIndexOf(":") + 1));
+    assert.deepEqual(next.rows[0], {
+      idempotency_key: `agent_revision:${candidate.id}:maintenance:${bucket + 1n}`,
+      attempt_count: 0,
+      actor_id: crashed.actorId,
+    });
+    await fixture.start(compute);
+    await fixture.work(
+      { id: candidate.id, idempotencyKey: next.rows[0].idempotency_key },
+      "succeeded",
+    );
+    await fixture.stop();
+    assert.deepEqual(stopped, []);
   },
 );
 
@@ -1374,12 +1757,6 @@ for (const loss of ["missing", "closed-repair"]) {
         assert.equal(repository.calls.filter(({ operation }) => operation === "open").length, 2);
         assert.equal(delivered.filter(({ kind }) => kind === "new").length, 2);
         assert.deepEqual(stopped, []);
-        await fixture.observerPool.query(
-          `UPDATE occ.controller_work SET state = 'queued', claim_token = NULL,
-           lease_expires_at = NULL, available_at = 'infinity'
-           WHERE namespace_id = $1 AND state IN ('queued', 'claimed')`,
-          [candidate.namespaceId],
-        );
         return;
       }
       await fixture.work(
@@ -1470,14 +1847,6 @@ for (const loss of ["missing", "closed-repair"]) {
       assert.notEqual(fresh.admissionId, original.admissionId);
       assert.equal((await repositoryAttempts(fixture, candidate))[0].phase, retained.phase);
       assert.equal(repository.calls.filter(({ operation }) => operation === "open").length, 2);
-      // The worker is stopped. Preserve unresolved rows while removing only
-      // this fixture's Work from subsequent tests' scheduling horizon.
-      await fixture.observerPool.query(
-        `UPDATE occ.controller_work SET state = 'queued', claim_token = NULL,
-         lease_expires_at = NULL, available_at = 'infinity'
-         WHERE namespace_id = $1 AND state IN ('queued', 'claimed')`,
-        [candidate.namespaceId],
-      );
     },
   );
 }
@@ -3351,6 +3720,313 @@ test(
 );
 
 test(
+  "another authorized actor takes over failed Agent deletion once the initiator loses permission",
+  requiresPostgres,
+  async (context) => {
+    const fixture = await setup(context, { maxAttempts: 1 });
+    const owner = await fixture.agent("delete-takeover");
+    const revision = await fixture.revision(owner, 1);
+    let unavailable = true;
+    let retirementAttempts = 0;
+    await fixture.start({
+      ...fixture.compute,
+      async retireRevision(target) {
+        assert.equal(target.id, revision.id);
+        retirementAttempts += 1;
+        if (unavailable) {
+          throw new Error("Compute temporarily unavailable during teardown");
+        }
+      },
+    });
+    await fixture.work(revision, "succeeded");
+    const deletion = await fixture.requestDeletion(owner);
+    await fixture.work(deletion, "failed_permanent");
+    const observe = () =>
+      fixture.state.read((view) => view.operations.findWork(deletion.idempotencyKey));
+    const exhausted = await observe();
+    assert.equal(exhausted.actorId, fixture.actor.id);
+
+    const otherActor = `delete-successor-${randomUUID()}`;
+    await fixture.observerPool.query(
+      `INSERT INTO occ.iam_identities (id, kind, issuer, subject)
+       SELECT $1, kind, issuer, $1 FROM occ.iam_identities WHERE id = $2`,
+      [otherActor, fixture.actor.id],
+    );
+    await fixture.observerPool.query(
+      `INSERT INTO occ.iam_access_bindings
+         (id, namespace_id, identity_subject_id, role_id, resource_kind, resource_id)
+       SELECT 'binding-' || gen_random_uuid(), namespace_id, $1, role_id,
+              resource_kind, resource_id
+       FROM occ.iam_access_bindings WHERE identity_subject_id = $2`,
+      [otherActor, fixture.actor.id],
+    );
+    // The initiator is offboarded: it no longer holds any access.
+    await fixture.observerPool.query(
+      `DELETE FROM occ.iam_access_bindings WHERE identity_subject_id = $1`,
+      [fixture.actor.id],
+    );
+    // A caller without delete permission still cannot take over.
+    await assert.rejects(
+      fixture.controller.deleteAgent(
+        `unprivileged-${randomUUID()}`,
+        fixture.namespace.id,
+        owner.id,
+      ),
+    );
+    assert.deepEqual(await observe(), exhausted);
+
+    unavailable = false;
+    await fixture.controller.deleteAgent(otherActor, fixture.namespace.id, owner.id);
+    const retried = await observe();
+    assert.ok(
+      retried === undefined || ["queued", "claimed"].includes(retried.state),
+      "an authorized takeover must requeue the exhausted teardown",
+    );
+    if (retried !== undefined) {
+      assert.equal(retried.actorId, otherActor);
+      assert.equal(retried.idempotencyKey, exhausted.idempotencyKey);
+    }
+    await waitFor("taken-over deletion to remove its Agent", async () =>
+      (await fixture.state.read((view) =>
+        view.agents.findAgent(fixture.namespace.id, owner.id),
+      )) === undefined
+        ? true
+        : undefined,
+    );
+    assert.equal(retirementAttempts, 2);
+    const { rows: retryAudit } = await fixture.observerPool.query(
+      `SELECT actor_id AS "actorId", outcome, details FROM occ.audit_events
+       WHERE namespace_id = $1 AND resource_id = $2 AND action = 'openclaw.agents.delete.retry'`,
+      [fixture.namespace.id, owner.id],
+    );
+    assert.deepEqual(
+      retryAudit.map((event) => ({
+        actorId: event.actorId,
+        outcome: event.outcome,
+        takeover: event.details.takeover,
+        previousActorId: event.details.previousActorId,
+      })),
+      [
+        {
+          actorId: otherActor,
+          outcome: "success",
+          takeover: true,
+          previousActorId: fixture.actor.id,
+        },
+      ],
+    );
+  },
+);
+
+test(
+  "repeating Namespace deletion recovers a teardown that exceeded its convergence deadline",
+  requiresPostgres,
+  async (context) => {
+    const fixture = await setup(context);
+    const namespace = {
+      id: `ns_${randomUUID()}`,
+      name: `delete-exhausted-${randomUUID()}`,
+      status: "ready",
+      createdAt: new Date().toISOString(),
+    };
+    await fixture.state.transact((unit) => unit.namespaces.createNamespace(namespace));
+    // A stuck finalizer keeps the Namespace terminating past the deadline.
+    let terminating = true;
+    let deleteAttempts = 0;
+    await fixture.start(
+      {
+        ...fixture.compute,
+        async deleteNamespace(target) {
+          assert.equal(target.id, namespace.id);
+          deleteAttempts += 1;
+          return { namespaceId: target.id, namespaceDeleted: !terminating };
+        },
+      },
+      () => {},
+      1,
+    );
+    const deletion = {
+      id: namespace.id,
+      idempotencyKey: `namespace:${namespace.id}:reconcile:deleted`,
+    };
+    const observe = () =>
+      fixture.state.read((view) => view.operations.findWork(deletion.idempotencyKey));
+    await fixture.controller.deleteNamespace(fixture.actor.id, namespace.id);
+    await fixture.work(deletion, "failed_permanent");
+    const exhausted = await observe();
+    assert.equal(exhausted.reasonCode, "CONVERGENCE_DEADLINE_EXCEEDED");
+    assert.equal(deleteAttempts, 1);
+    const stranded = await fixture.state.read((view) =>
+      view.namespaces.findNamespace(namespace.id),
+    );
+    assert.equal(stranded.status, "deleting");
+
+    // A rejected caller cannot replenish the worker's attempt budget.
+    await assert.rejects(
+      fixture.controller.deleteNamespace(`unprivileged-${randomUUID()}`, namespace.id),
+    );
+    assert.deepEqual(await observe(), exhausted);
+
+    // Retrying before the teardown is repaired keeps the original deadline and
+    // fails again after one pass instead of looping.
+    const repeated = await fixture.controller.deleteNamespace(fixture.actor.id, namespace.id);
+    assert.equal(repeated.status, "deleting");
+    const retried = await observe();
+    assert.ok(
+      ["queued", "claimed"].includes(retried.state),
+      "authorized repeated DELETE must requeue the failed Namespace teardown",
+    );
+    assert.equal(retried.idempotencyKey, exhausted.idempotencyKey);
+    assert.equal(retried.actorId, exhausted.actorId);
+    assert.equal(retried.reasonCode, undefined);
+    await waitFor("unrepaired retry to fail again", async () => {
+      const work = await observe();
+      return deleteAttempts === 2 && work.state === "failed_permanent" ? work : undefined;
+    });
+
+    terminating = false;
+    await fixture.controller.deleteNamespace(fixture.actor.id, namespace.id);
+    await fixture.work(deletion, "succeeded");
+    assert.equal(deleteAttempts, 3);
+    assert.equal(
+      await fixture.state.read((view) => view.namespaces.findNamespace(namespace.id)),
+      undefined,
+    );
+    const { rows: retryAudit } = await fixture.observerPool.query(
+      `SELECT actor_id AS "actorId", outcome, details FROM occ.audit_events
+       WHERE namespace_id = $1 AND action = 'openclaw.namespaces.delete.retry'
+       ORDER BY occurred_at, id`,
+      [namespace.id],
+    );
+    assert.deepEqual(
+      retryAudit.map(({ actorId, outcome, details }) => ({
+        actorId,
+        outcome,
+        workId: details.workId,
+        previousReasonCode: details.previousReasonCode,
+      })),
+      Array.from({ length: 2 }, () => ({
+        actorId: fixture.actor.id,
+        outcome: "success",
+        workId: deletion.idempotencyKey,
+        previousReasonCode: "CONVERGENCE_DEADLINE_EXCEEDED",
+      })),
+    );
+  },
+);
+
+test(
+  "another authorized actor takes over failed Namespace deletion once the initiator loses permission",
+  requiresPostgres,
+  async (context) => {
+    const fixture = await setup(context);
+    const namespace = {
+      id: `ns_${randomUUID()}`,
+      name: `delete-takeover-${randomUUID()}`,
+      status: "ready",
+      createdAt: new Date().toISOString(),
+    };
+    await fixture.state.transact((unit) => unit.namespaces.createNamespace(namespace));
+    // A stuck finalizer keeps the Namespace terminating past the deadline.
+    let terminating = true;
+    let deleteAttempts = 0;
+    await fixture.start(
+      {
+        ...fixture.compute,
+        async deleteNamespace(target) {
+          assert.equal(target.id, namespace.id);
+          deleteAttempts += 1;
+          return { namespaceId: target.id, namespaceDeleted: !terminating };
+        },
+      },
+      () => {},
+      1,
+    );
+    const deletion = {
+      id: namespace.id,
+      idempotencyKey: `namespace:${namespace.id}:reconcile:deleted`,
+    };
+    const observe = () =>
+      fixture.state.read((view) => view.operations.findWork(deletion.idempotencyKey));
+    await fixture.controller.deleteNamespace(fixture.actor.id, namespace.id);
+    await fixture.work(deletion, "failed_permanent");
+    const exhausted = await observe();
+    assert.equal(exhausted.actorId, fixture.actor.id);
+
+    const otherActor = `delete-successor-${randomUUID()}`;
+    await fixture.observerPool.query(
+      `INSERT INTO occ.iam_identities (id, kind, issuer, subject)
+       SELECT $1, kind, issuer, $1 FROM occ.iam_identities WHERE id = $2`,
+      [otherActor, fixture.actor.id],
+    );
+    await fixture.observerPool.query(
+      `INSERT INTO occ.iam_access_bindings
+         (id, namespace_id, identity_subject_id, role_id, resource_kind, resource_id)
+       SELECT 'binding-' || gen_random_uuid(), namespace_id, $1, role_id,
+              resource_kind, resource_id
+       FROM occ.iam_access_bindings WHERE identity_subject_id = $2`,
+      [otherActor, fixture.actor.id],
+    );
+    // While the initiator still holds delete permission, it keeps ownership.
+    await assert.rejects(fixture.controller.deleteNamespace(otherActor, namespace.id), {
+      message: "Only the initiating actor can retry deletion.",
+    });
+    assert.deepEqual(await observe(), exhausted);
+
+    // The initiator is offboarded: it no longer holds any access.
+    await fixture.observerPool.query(
+      `DELETE FROM occ.iam_access_bindings WHERE identity_subject_id = $1`,
+      [fixture.actor.id],
+    );
+    // A caller without delete permission still cannot take over.
+    await assert.rejects(
+      fixture.controller.deleteNamespace(`unprivileged-${randomUUID()}`, namespace.id),
+    );
+    assert.deepEqual(await observe(), exhausted);
+
+    terminating = false;
+    const repeated = await fixture.controller.deleteNamespace(otherActor, namespace.id);
+    assert.equal(repeated.status, "deleting");
+    const retried = await observe();
+    assert.ok(
+      retried === undefined || ["queued", "claimed", "succeeded"].includes(retried.state),
+      "an authorized takeover must requeue the exhausted teardown",
+    );
+    if (retried !== undefined) {
+      assert.equal(retried.actorId, otherActor);
+      assert.equal(retried.idempotencyKey, exhausted.idempotencyKey);
+    }
+    await fixture.work(deletion, "succeeded");
+    assert.equal(deleteAttempts, 2);
+    assert.equal(
+      await fixture.state.read((view) => view.namespaces.findNamespace(namespace.id)),
+      undefined,
+    );
+    const { rows: retryAudit } = await fixture.observerPool.query(
+      `SELECT actor_id AS "actorId", outcome, details FROM occ.audit_events
+       WHERE namespace_id = $1 AND action = 'openclaw.namespaces.delete.retry'`,
+      [namespace.id],
+    );
+    assert.deepEqual(
+      retryAudit.map(({ actorId, outcome, details }) => ({
+        actorId,
+        outcome,
+        takeover: details.takeover,
+        previousActorId: details.previousActorId,
+      })),
+      [
+        {
+          actorId: otherActor,
+          outcome: "success",
+          takeover: true,
+          previousActorId: fixture.actor.id,
+        },
+      ],
+    );
+  },
+);
+
+test(
   "Agent deletion fails closed when a credential-provisioning Driver cannot delete credentials",
   requiresPostgres,
   async (context) => {
@@ -3854,7 +4530,7 @@ test(
 
     // The shared queue can also deliver an independently authorized stop from
     // another Namespace while this Namespace denies its own Agent's shutdown.
-    const neighbor = await setup(context);
+    const neighbor = await setup(context, { database: fixture.database });
     const neighborOwner = await neighbor.agent("authorized-neighbor-stop");
     const neighborRevision = await neighbor.revision(neighborOwner, 1);
     await neighbor.start(neighbor.compute);
@@ -3932,7 +4608,7 @@ test(
     const owner = await fixture.agent("stop-prepare-race");
     // Other Namespaces share this worker's queue. Their durable stop work must
     // drain without changing this candidate's preparation gate or observations.
-    const foreign = await setup(context);
+    const foreign = await setup(context, { database: fixture.database });
     const foreignOwner = await foreign.agent("stop-prepare-foreign");
     const foreignRevision = await foreign.revision(foreignOwner, 1);
     const foreignStop = await foreign.requestStop(foreignOwner);
@@ -4001,7 +4677,7 @@ test(
 
     // This worker must drain another Namespace's real stop work without adding
     // its effects to this Agent's observations or consuming its injected fault.
-    const foreign = await setup(context);
+    const foreign = await setup(context, { database: fixture.database });
     const foreignOwner = await foreign.agent("stop-publication-foreign");
     const foreignRevision = await foreign.revision(foreignOwner, 1);
     const foreignStop = await foreign.requestStop(foreignOwner);
@@ -4452,7 +5128,7 @@ test(
     const fixture = await setup(context);
     // The shared worker must drain another Namespace without including its
     // Compute effects in this Namespace's issuance-revocation assertions.
-    const foreign = await setup(context);
+    const foreign = await setup(context, { database: fixture.database });
     const foreignOwner = await foreign.agent("issuance-foreign");
     const foreignRevision = await foreign.revision(foreignOwner, 1);
     const provider = backendDefinition();
@@ -4537,14 +5213,12 @@ test(
       },
     });
     const provider = backendDefinition();
-    const cleanup = { serviceAccountIds: [], agentIds: [], revisionIds: [] };
 
     const account = await createAccessTokenServiceAccount(
       fixture.state,
       fixture.namespace.id,
       "transient-provider-read",
     );
-    cleanup.serviceAccountIds.push(account.id);
     await seedBackendBinding(fixture.observerPool, account);
     const owner = await fixture.agent(
       "transient-provider-read",
@@ -4552,7 +5226,6 @@ test(
       account.id,
       provider.id,
     );
-    cleanup.agentIds.push(owner.id);
 
     const effects = [];
     try {
@@ -4571,7 +5244,6 @@ test(
       );
 
       const candidate = await fixture.revision(owner, 1);
-      cleanup.revisionIds.push(candidate.id);
 
       // A different connection can see the committed retry before the worker
       // receives COMMIT's acknowledgment and emits its completion event.
@@ -4626,7 +5298,6 @@ test(
     } finally {
       releaseRetry.resolve();
       await fixture.stop();
-      await cleanupBackendFixtures(fixture.observerPool, fixture.namespace.id, cleanup);
     }
   },
 );
@@ -4852,6 +5523,66 @@ test(
       [fixture.namespace.id, owner.id],
     );
     assert.equal(active.rows[0].active_revision_id, candidate.id);
+  },
+);
+
+test(
+  "real PostgreSQL rechecks a not-ready runtime on a short fixed delay after transient failures",
+  requiresPostgres,
+  async (context) => {
+    const fixture = await setup(context);
+    const owner = await fixture.agent("readiness-recheck");
+    const candidate = await fixture.revision(owner, 1);
+    const recheckDelaysMs = [];
+    let observations = 0;
+
+    await fixture.start({
+      ...fixture.compute,
+      async prepareRevision(revision) {
+        if (revision.id !== candidate.id) {
+          return fixture.compute.prepareRevision(revision);
+        }
+        observations += 1;
+        // Two dependency failures raise the attempt count, so the queue's
+        // exponential retry backoff would now allow up to 4 s per recheck.
+        if (observations <= 2) {
+          throw new Error("transient Compute dependency failure");
+        }
+        if (observations > 3) {
+          // The claimed row keeps the due time chosen by the previous deferral;
+          // its audit evidence records when that deferral committed.
+          const deferred = await fixture.observerPool.query(
+            `SELECT EXTRACT(EPOCH FROM (work.available_at - evidence.occurred_at)) * 1000
+                AS delay_ms
+             FROM occ.controller_work AS work
+             CROSS JOIN LATERAL (
+               SELECT occurred_at FROM occ.audit_events
+               WHERE resource_id = work.revision_id
+                 AND details->>'workId' = work.idempotency_key
+                 AND details->>'reasonCode' = 'REVISION_INCOMPLETE'
+               ORDER BY occurred_at DESC LIMIT 1
+             ) AS evidence
+             WHERE work.idempotency_key = $1`,
+            [candidate.idempotencyKey],
+          );
+          recheckDelaysMs.push(Number(deferred.rows[0].delay_ms));
+        }
+        const observation = await fixture.compute.prepareRevision(revision);
+        return observations <= 5 ? { ...observation, ready: false } : observation;
+      },
+    });
+
+    const completed = await fixture.work(candidate, "succeeded", 30_000);
+    assert.equal(observations, 6);
+    // Failures consumed two attempts; readiness rechecks refunded theirs.
+    assert.equal(completed.attempt_count, 3);
+    assert.equal(recheckDelaysMs.length, 3);
+    for (const delayMs of recheckDelaysMs) {
+      assert.ok(
+        delayMs > 450 && delayMs <= 500,
+        `readiness recheck must wait about 500 ms, not the retry backoff (${delayMs} ms)`,
+      );
+    }
   },
 );
 
@@ -5305,14 +6036,15 @@ test(
   "a lost retirement claim preserves the activated replacement and cannot complete stolen work",
   requiresPostgres,
   async (context) => {
+    const releaseRetirement = Promise.withResolvers();
+    // Release the held effect before fixture teardown joins the worker on failure.
+    context.after(() => releaseRetirement.resolve());
     const fixture = await setup(context);
     const owner = await fixture.agent("stale-retirement");
     const first = await fixture.revision(owner, 1);
-    const releaseRetirement = Promise.withResolvers();
     const effects = [];
     const events = [];
     let retirements = 0;
-    context.after(() => releaseRetirement.resolve());
     await fixture.start(
       {
         ...fixture.compute,

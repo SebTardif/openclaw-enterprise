@@ -1,5 +1,8 @@
 # Implementation specifications
 
+[Independent image and chart publication](41-independent-image-chart-publication.md) — Implementing;
+default image-only publication with a separate opt-in chart job.
+
 [Default production observability](36-production-observability.md) — Implemented locally;
 production telemetry defaults, separate demo stack, and local k3d/CI acceptance.
 See the [implementation plan](36-production-observability-plan.md) and
@@ -93,8 +96,9 @@ templates with variables, CRUD APIs, and console selection.
 [Agent egress for 0.x](40-agent-egress-0x.md) — Deferred custom proxy; 0.x uses
 OpenShell, OpenClaw secret proxy and Codex sandbox controls instead.
 
-[GitHub sign-in for existing accounts](31-human-federated-sign-in.md) — Proposed;
-administrator-provisioned password accounts with an optional GitHub identity; implemented by PR #305 and its M1 follow-ups.
+[GitHub sign-in for existing accounts](31-human-federated-sign-in.md) — Implementing;
+administrator-provisioned password accounts with an optional GitHub identity; M1 to M4
+implemented by #305, #520, #521 and #522; M1.1 (GitHub off) deferred.
 
 [Basic role-based access control](31-basic-rbac.md) — Direction; deferred past 0.x.
 Personal and team Agent access, exact grants, and withdrawal; see the current-source amendment.
