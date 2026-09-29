@@ -11,10 +11,10 @@ OpenShell version this integration targets,
 Secret-backed app-server token or projected workload identity a dedicated Agent
 requires. The model API key is no longer a blocker: the paired
 [OpenShell Credential Gateway](openshell-credential-gateway.md) delivers it. The Enterprise Driver rejects deployment rather
-than starting an incorrectly credentialed Harness. The real integration keeps
-that rejection proof and has a separate verification-only compatibility bridge
-for a real in-Sandbox model turn. That bridge is not a supported deployment
-path.
+than starting an incorrectly credentialed Harness. The integration tests retain
+a verification-only PVC staging fixture. The adapter does not accept that bridge
+as proof of material delivery, so it cannot make the current Codex provisioning
+path available.
 
 Embedded OpenClaw also fails when OpenShell is selected; the integration is
 designed only for dedicated Harnesses. Kubernetes Compute requires dedicated
@@ -22,6 +22,14 @@ native OpenClaw to use a provisioning SandboxDriver that declares networking,
 filesystem, and process containment. The bundled OpenShell Driver is the current
 implementation of that contract. See the
 [upstream requirements](#current-upstream-preconditions) before evaluating it.
+
+The adapter also refuses repository-bound revisions and plugin-runtime material
+before creating a Sandbox. This includes dedicated Codex with no optional plugins,
+which still reads its immutable runtime manifest and Codex configuration. A plugin
+snapshot, file path, inline runtime document, or ready-marker environment entry
+does not establish delivery. The missing producer must bind the complete set to
+the current revision and provider workload, including restart and replacement;
+the verification-only PVC staging bridge does not satisfy that requirement.
 
 ## Ownership model
 
@@ -265,11 +273,13 @@ origin, rewrites its port to the configured gateway endpoint for local
 port-forwards, and requires a valid route before provisioning succeeds.
 
 OpenShell v0.1.0 strips `Authorization` before proxying, while Codex accepts only
-bearer authorization. The positive integration therefore expects the protected
-app server's `401` through this route and runs its real model turn on Pod
-loopback. It does not treat the test bridge as supported or replace Compute's
-Agent Service. A Sandbox without a replayable Create receipt must be removed;
-the Driver does not mutate it with a later `ExposeService` call.
+bearer authorization. The retained compatibility fixture expects the protected
+app server's `401` through this route and places its model turn on Pod loopback.
+Current Codex requests are blocked by material admission before Sandbox creation,
+so those fixture expectations are not current positive execution evidence. The
+bridge is not supported and does not replace Compute's Agent Service. A Sandbox
+without a replayable Create receipt must be removed; the Driver does not mutate
+it with a later `ExposeService` call.
 
 Native OpenClaw does not accept inbound Harness traffic. Its enrolled node host
 opens the connection to the Agent Gateway, so the Driver sends an empty service
@@ -362,6 +372,9 @@ Common fail-closed errors include:
   provider's status in OpenShell.
 - `OpenShell gateway Service is unavailable.`
 - `OpenShell gateway Pod is not ready.`
+- `OpenShell material delivery is unavailable for ...`
+  The selected adapter has no accepted repository/plugin material producer. Do not
+  remove the requirement or substitute shared environment/PVC content.
 - `OpenShell SandboxDriver supports only dedicated Codex or OpenClaw Harness revisions.`
 - `OpenShell v0.1.0 cannot receive secretKeyRef environment APP_SERVER_TOKEN ...`
 

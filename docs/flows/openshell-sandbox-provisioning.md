@@ -1,7 +1,7 @@
 ---
 created: "2026-09-21"
-updated: 2026-09-28
-last_updated_session: oce-pr-440-sync
+updated: 2026-09-29
+last_updated_session: authoring-run/27083620-6cdd-4ef0-bb22-aa2f3eee8f2a
 ---
 
 # OpenShell Sandbox provisioning flow
@@ -21,9 +21,9 @@ The model credential no longer needs a Secret projection: a
 provider to the Sandbox, and the supervisor proxy injects the key. The regular
 Agent workflow with stock OpenShell still stops before Sandbox creation because
 `v0.1.0` cannot accept the Secret-backed app-server token or projected workload
-identity. The verification-only compatibility path stages those inputs without
-changing the production fail-closed contract and completes real model turns
-inside the Sandbox.
+identity. The repository retains a verification-only PVC staging fixture, but
+the adapter does not accept it as a material supplier. Required repository and
+plugin material still stop provisioning before Sandbox creation.
 
 The local Kubernetes development profile installs the pinned Gateway and
 renders the workspace chart into the Installation configuration, in either a
@@ -55,10 +55,12 @@ graph TD
   F --> Q["<b>Attach sources</b><br/>attachForRevision"]
   Q --> G{"<b>Secret environment</b><br/>App-server token?"}
   G -- "yes" --> R["<b>Reject provisioning</b><br/>Candidate stays inactive"]
-  G -- "no" --> H["<b>Create Sandbox</b><br/>Providers and exposure"]
+  G -- "no" --> W{"<b>Material required?</b><br/>Repository or plugin files"}
+  W -- "yes: supplier missing" --> R
+  W -- "no" --> H["<b>Create Sandbox</b><br/>Providers and exposure"]
   H --> I{"<b>Native projections</b><br/>Supported?"}
   I -- "no: stock v0.1.0" --> R
-  I -. "verification bridge" .-> V{"<b>Harness</b>"}
+  I -. "fixture only; material guard applies" .-> V{"<b>Harness</b>"}
   V -- "Codex" --> J["<b>Sandbox ready</b><br/>App-server route"]
   J --> K["<b>Verify route</b><br/>Protected 401"]
   K --> L["<b>Run model turn</b><br/>Sandbox loopback"]
@@ -78,7 +80,7 @@ graph TD
   classDef blocked fill:#F3F4F6,stroke:#98A2AE,color:#44505F,stroke-width:1px
   class A,B,F state
   class D,E,Q,H,J,K,L,M,N,O,P,T,U operation
-  class C,G,I,S,V gate
+  class C,G,I,S,V,W gate
   class X,R blocked
   linkStyle default stroke:#8B949E,stroke-width:1px
 ```
@@ -191,7 +193,16 @@ least one executable path and sends those binary identities with its endpoints.
 
 The regular Harness requirements still contain the Secret-backed
 `APP_SERVER_TOKEN`. `environment` rejects it before any gateway mutation, so the
-candidate revision remains inactive. Requests without such entries continue.
+candidate revision remains inactive. Requests without such entries continue to
+`apps/controller/src/drivers/sandbox/openshell-material.ts:unavailableOpenShellMaterial`.
+That check refuses repository-bound revisions and required plugin-runtime
+configuration before `createSandbox`. Dedicated Codex needs `runtime.json` and
+`config.toml` even without optional plugins. An admitted plugin snapshot or a
+plugin-runtime environment pointer also requires material delivery; a file path,
+inline document, or ready-marker name does not prove that delivery. The adapter
+has no accepted producer, so it does not send those requests. Each invocation
+checks the current revision, including replacement after a material-free request.
+The ordinary Kubernetes material store and native Git initialization stay unchanged.
 `sandboxProviders` appends each attachment to the static `providers` list and
 rejects a name outside the OCC `oce-cs-` shape or one that repeats a static
 provider. The development profile and real-runtime fixture bind the provider
@@ -221,9 +232,11 @@ returns the same result; a Sandbox that predates replayable creation fails.
 
 Stock `v0.1.0` still lacks the exact projected identity and volume support
 required by the request, including the immutable plugin-runtime ConfigMap
-mounted by Kubernetes Compute. Any request that reaches
-the gateway without those shapes still fails closed. Any other gateway failure
-also prevents readiness.
+mounted by Kubernetes Compute. The adapter now rejects required repository and
+plugin material before the gateway call; the verification-only PVC staging bridge
+is not an accepted producer. Material-free requests still require all existing
+identity, configuration, network, and provider checks. Gateway failures also
+prevent readiness.
 
 For private node routing, OpenShell's policy proxy opens the connection from its
 supervisor Pod rather than the Harness Pod. The Helm-owned Envoy NetworkPolicy
@@ -284,17 +297,14 @@ Kubernetes Compute delete the Kubernetes namespace.
   through the API. Mode `1` selects a verification-only compatibility path: an
   operator Job stages the app-server token, plugin-runtime files, and projected
   workload token in revision-specific PVC subpaths, never the model key. The
-  test asserts that Harness processes hold only the OpenShell placeholder. The provider-owned
-  Sandbox exposes its app-server port at create time. The test observes the
-  protected app server's authentication rejection because v0.1.0 strips its bearer header,
-  then runs the real model and tool checks from inside the Pod. This mode proves
-  v0.1.0 containment, the Compute-created node route, Helm NetworkPolicy
-  enforcement, exposed-route reachability, and lifecycle behavior. It does not
-  prove native workload projection or an authenticated model turn through the
-  exposed route. The tested runtime uses the OpenClaw source commit pinned by
-  `deploy/runtime/Dockerfile`; that source provides the native worker's
-  `connect --ephemeral` path and the workspace-node
-  `--pair-if-needed` and `--commands` options required by the test.
+  adapter does not accept that staging as a producer: material-bearing requests
+  now fail before Sandbox creation. The retained fixture is not current positive
+  model-turn evidence. An accepted producer/consumer join and fresh, separately
+  authorized runtime verification are required before such a claim.
+- `node --test tests/conformance/openshell-material.test.mjs` exercises the real
+  Driver's missing-material refusal with controlled external transport. It also
+  preserves the material-free native OpenClaw request and Secret-environment
+  refusal; it does not establish installed workload delivery.
 - `OpenShell v0.1.0 cannot receive secretKeyRef environment APP_SERVER_TOKEN ...`
   identifies the current fail-closed boundary.
 - `OCC_TEST_OPENSHELL_HARNESS=openclaw` runs two native sessions over one
@@ -313,6 +323,8 @@ Kubernetes Compute delete the Kubernetes namespace.
 [keep this for the user to add notes. do not change between edits]
 
 ## Changelog
+
+- 2026-09-29 21:24: Refused missing repository and plugin material before Sandbox creation, preserving existing admission checks. (authoring-run/27083620-6cdd-4ef0-bb22-aa2f3eee8f2a - afb96eec06558462eade80c95924ce6bc262d3f6)
 
 - 2026-09-28 02:55: Added outbound-only native OpenClaw with broker CA trust. (oce-pr-440-sync - e2b739f51f89)
 
