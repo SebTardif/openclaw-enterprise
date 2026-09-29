@@ -56,8 +56,12 @@ function beginNativePoolEnd(pool: pg.Pool): Promise<void> {
 }
 
 function isAborted(signal?: AbortSignal): boolean {
-  if (signal === undefined) return false;
-  if (abortSignalGetter === undefined) throw new Error("Abort signal unavailable.");
+  if (signal === undefined) {
+    return false;
+  }
+  if (abortSignalGetter === undefined) {
+    throw new Error("Abort signal unavailable.");
+  }
   return abortSignalGetter.call(signal) === true;
 }
 
@@ -91,7 +95,6 @@ function retainOwnerListener(emitter: EventEmitter, ownerListener: (error: Error
 }
 
 function createObservedPool(config: pg.PoolConfig, protectDisposal = false): pg.Pool {
-  let owner: pg.Pool;
   class ObservedClient extends pg.Client {
     constructor(options?: pg.ClientConfig) {
       super(options);
@@ -122,7 +125,7 @@ function createObservedPool(config: pg.PoolConfig, protectDisposal = false): pg.
     }
   }
   Object.freeze(ObservedClient.prototype);
-  owner = new pg.Pool({ ...config, Client: ObservedClient });
+  const owner: pg.Pool = new pg.Pool({ ...config, Client: ObservedClient });
   // pg-pool uses this.Client for each checkout, independent of options.Client.
   // Freeze that selection before exposing the pool to composition.
   Object.defineProperty(owner, "Client", {
@@ -214,20 +217,28 @@ function createOwnedPool(config: pg.PoolConfig): pg.Pool {
             rejectReservationWaiters(gate);
             const selectedObservation = ownedPools.get(selected);
             const reservationObservation = ownedPools.get(reservation);
-            if (selectedObservation !== undefined) selectedObservation.ending = true;
-            if (reservationObservation !== undefined) reservationObservation.ending = true;
+            if (selectedObservation !== undefined) {
+              selectedObservation.ending = true;
+            }
+            if (reservationObservation !== undefined) {
+              reservationObservation.ending = true;
+            }
             return Promise.allSettled([
               beginNativePoolEnd(selected),
               beginNativePoolEnd(reservation),
               waitForReservationDrain(gate),
             ]).then((results) => {
               const failed = results.find((result) => result.status === "rejected");
-              if (failed?.status === "rejected") throw failed.reason;
+              if (failed?.status === "rejected") {
+                throw failed.reason;
+              }
               // Both native pool ends and any identified private disposal have
               // settled. A pool fault observed during that wait still fails
               // shutdown even if the reservation gate itself stayed healthy.
               const fault = observationFailure();
-              if (fault !== undefined) throw fault;
+              if (fault !== undefined) {
+                throw fault;
+              }
             });
           })();
       if (callback) {
@@ -236,8 +247,11 @@ function createOwnedPool(config: pg.PoolConfig): pg.Pool {
             // A pool error can arrive after the operation resolves but before
             // the callback is invoked. Preserve that already-observed fault.
             const fault = observationFailure();
-            if (fault !== undefined) callback(fault);
-            else callback();
+            if (fault !== undefined) {
+              callback(fault);
+            } else {
+              callback();
+            }
           },
           (error: unknown) =>
             callback(error instanceof Error ? error : new Error("PostgreSQL pool end failed.")),
@@ -279,7 +293,9 @@ function waitForReservationDrain(gate: ReservationGate): Promise<void> {
       gate.failure ?? new Error("PostgreSQL reservation disposal is uncertain."),
     );
   }
-  if (!gate.active) return Promise.resolve();
+  if (!gate.active) {
+    return Promise.resolve();
+  }
   return new Promise<void>((resolve, reject) => {
     gate.drains.add({ resolve, reject });
   });
@@ -295,14 +311,18 @@ function cleanReservationWaiter(waiter: ReservationWaiter): void {
 function releaseReservationGate(gate: ReservationGate, client: pg.Client | undefined): void {
   // A delayed duplicate remove for an older client cannot free a newer
   // checkout's permit.
-  if (!gate.active || gate.activeClient !== client) return;
+  if (!gate.active || gate.activeClient !== client) {
+    return;
+  }
   gate.activeClient = undefined;
   if (gate.faulted || gate.ending) {
     gate.active = false;
     for (const drain of gate.drains) {
       if (gate.faulted) {
         drain.reject(gate.failure ?? new Error("PostgreSQL reservation disposal is uncertain."));
-      } else drain.resolve();
+      } else {
+        drain.resolve();
+      }
     }
     gate.drains.clear();
     return;
@@ -360,7 +380,9 @@ async function acquireReservationGate(
     if (signal) {
       EventTarget.prototype.addEventListener.call(signal, "abort", onAbort, { once: true });
     }
-    if (isAborted(signal)) onAbort();
+    if (isAborted(signal)) {
+      onAbort();
+    }
   });
 }
 
@@ -400,7 +422,9 @@ function releaseClientlessPermit(
 /** Exact State-owned pool identity and its continuously installed observer. */
 export function isPasswordBudgetPool(pool: unknown): pool is pg.Pool {
   try {
-    if (pool === null || typeof pool !== "object") return false;
+    if (pool === null || typeof pool !== "object") {
+      return false;
+    }
     const selected = pool as pg.Pool;
     const reservation = reservationPools.get(selected);
     const gate = reservationGates.get(selected);
@@ -424,7 +448,9 @@ async function checkoutOwnedPasswordBudgetClient(
   signal?: AbortSignal,
   state?: { nativeStarted: boolean },
 ): Promise<pg.PoolClient> {
-  if (!isPasswordBudgetPool(pool)) throw new Error("PostgreSQL pool unavailable.");
+  if (!isPasswordBudgetPool(pool)) {
+    throw new Error("PostgreSQL pool unavailable.");
+  }
   const reservation = reservationPools.get(pool);
   const gate = reservationGates.get(pool);
   if (reservation === undefined || gate === undefined) {
@@ -447,7 +473,9 @@ async function checkoutOwnedPasswordBudgetClient(
     throw new Error("PostgreSQL pool unavailable.");
   }
   try {
-    if (state !== undefined) state.nativeStarted = true;
+    if (state !== undefined) {
+      state.nativeStarted = true;
+    }
     const client = await checkout.call(reservation);
     gate.activeClient = client;
     return client;
@@ -487,7 +515,9 @@ export function beginPasswordBudgetCheckout(
 /** Verify the already-installed owner observer before the first SQL and after queries. */
 export function isPasswordBudgetClient(pool: pg.Pool, client: unknown): boolean {
   try {
-    if (client === null || typeof client !== "object" || !isPasswordBudgetPool(pool)) return false;
+    if (client === null || typeof client !== "object" || !isPasswordBudgetPool(pool)) {
+      return false;
+    }
     const observation = ownedClients.get(client as pg.Client);
     const reservation = reservationPools.get(pool);
     return (
@@ -506,7 +536,9 @@ export function isPasswordBudgetClient(pool: pg.Pool, client: unknown): boolean 
 // idle connection. A client is admitted only when both protocol status and
 // all native query queues are settled. Unknown shapes fail closed.
 export function isPasswordBudgetClientIdle(pool: pg.Pool, client: unknown): boolean {
-  if (!isPasswordBudgetClient(pool, client)) return false;
+  if (!isPasswordBudgetClient(pool, client)) {
+    return false;
+  }
   try {
     const state = client as {
       _txStatus?: unknown;
@@ -627,7 +659,9 @@ export function freezePasswordBudgetTls(ssl: pg.ClientConfig["ssl"]): Readonly<{
   cert?: string;
   key?: string;
 }> {
-  if (!ssl) throw new Error("PostgreSQL TLS unavailable.");
+  if (!ssl) {
+    throw new Error("PostgreSQL TLS unavailable.");
+  }
   const source = typeof ssl === "object" ? ssl : {};
   if (
     source.rejectUnauthorized === false ||
@@ -644,8 +678,12 @@ export function freezePasswordBudgetTls(ssl: pg.ClientConfig["ssl"]): Readonly<{
     cert?: string;
     key?: string;
   } = { rejectUnauthorized: true };
-  if (typeof source.ca === "string") result.ca = source.ca;
-  if (typeof source.cert === "string") result.cert = source.cert;
+  if (typeof source.ca === "string") {
+    result.ca = source.ca;
+  }
+  if (typeof source.cert === "string") {
+    result.cert = source.cert;
+  }
   if (typeof source.key === "string") {
     Object.defineProperty(result, "key", {
       value: source.key,

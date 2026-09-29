@@ -17,34 +17,49 @@ const scenarios = new Map();
 let nextDatabase = 0;
 pg.Client.prototype.connect = function (callback) {
   const scenario = scenarios.get(this.database);
-  if (!scenario) throw new Error("Unexpected synthetic client");
+  if (!scenario) {
+    throw new Error("Unexpected synthetic client");
+  }
   scenario.client = this;
   scenario.observedBeforeConnect = this.listenerCount("error") > 0;
   scenario.connects += 1;
   this._txStatus = "I";
   this.readyForQuery = true;
-  if (scenario.stallCheckout) scenario.completeCheckout = () => callback(null);
-  else queueMicrotask(() => callback(null));
+  if (scenario.stallCheckout) {
+    scenario.completeCheckout = () => callback(null);
+  } else {
+    queueMicrotask(() => callback(null));
+  }
 };
 pg.Client.prototype.query = async function (sql, args) {
   const scenario = scenarios.get(this.database);
-  if (!scenario) throw new Error("Unexpected synthetic query");
+  if (!scenario) {
+    throw new Error("Unexpected synthetic query");
+  }
   scenario.calls.push({ sql, args, client: this });
   if (scenario.step) {
     const result = await scenario.step(sql, () =>
       this.emit("error", new Error("synthetic transport")),
     );
-    if (result !== undefined) return result;
+    if (result !== undefined) {
+      return result;
+    }
   }
-  if (sql.startsWith("BEGIN")) return { command: "BEGIN", rowCount: null, rows: [] };
-  if (sql === "COMMIT") return { command: "COMMIT", rowCount: null, rows: [] };
+  if (sql.startsWith("BEGIN")) {
+    return { command: "BEGIN", rowCount: null, rows: [] };
+  }
+  if (sql === "COMMIT") {
+    return { command: "COMMIT", rowCount: null, rows: [] };
+  }
   return { rowCount: 1, rows: [scenario.row ?? { status: "allowed", retry_after_seconds: null }] };
 };
 pg.Client.prototype.end = function (callback) {
   this._ending = true;
   const scenario = scenarios.get(this.database);
   if (scenario?.endThrows && scenario.privateClients.includes(this)) {
-    if (callback && scenario.retainEndBeforeThrow) scenario.pendingEnds.push(callback);
+    if (callback && scenario.retainEndBeforeThrow) {
+      scenario.pendingEnds.push(callback);
+    }
     throw new Error("synthetic native end failure");
   }
   if (callback && scenario?.holdEnd && scenario.privateClients.includes(this)) {
@@ -56,7 +71,9 @@ pg.Client.prototype.end = function (callback) {
 };
 pg.Pool.prototype._acquireClient = function (client, ...args) {
   const scenario = scenarios.get(client.database);
-  if (!scenario) throw new Error("Unexpected synthetic pool acquisition");
+  if (!scenario) {
+    throw new Error("Unexpected synthetic pool acquisition");
+  }
   scenario.pools.add(this);
   if (this !== scenario.publicPool) {
     scenario.privateClients.push(client);
@@ -77,10 +94,16 @@ pg.Pool.prototype._acquireClient = function (client, ...args) {
 };
 pg.Pool.prototype._release = function (client, idleListener, error) {
   const scenario = scenarios.get(client.database);
-  if (!scenario) throw new Error("Unexpected synthetic pool release");
+  if (!scenario) {
+    throw new Error("Unexpected synthetic pool release");
+  }
   scenario.releases.push(error === true);
-  if (scenario.releaseEvent) client.emit("error", new Error("synthetic release event"));
-  if (scenario.releaseThrows) throw new Error("synthetic failed release");
+  if (scenario.releaseEvent) {
+    client.emit("error", new Error("synthetic release event"));
+  }
+  if (scenario.releaseThrows) {
+    throw new Error("synthetic failed release");
+  }
   return original.release.call(this, client, idleListener, error);
 };
 // Import after installing the no-socket transport so the owner's captured
@@ -127,7 +150,9 @@ async function harness(t, options = {}) {
     // A throwing synthetic release deliberately leaves a pool client behind.
     // The test owns this no-socket pool and settles it explicitly.
     for (const ownedPool of scenario.pools) {
-      for (const client of [...ownedPool._clients]) ownedPool._remove(client);
+      for (const client of [...ownedPool._clients]) {
+        ownedPool._remove(client);
+      }
     }
     if (!pool.ending) {
       if (options.onThrows || options.releaseThrows || options.endThrows) {
@@ -185,7 +210,9 @@ test("limited and cleanup-unavailable results require acknowledged COMMIT", asyn
   const lost = await harness(t, {
     row: { status: "unavailable", retry_after_seconds: null },
     step(sql) {
-      if (sql === "COMMIT") throw new Error("synthetic lost COMMIT");
+      if (sql === "COMMIT") {
+        throw new Error("synthetic lost COMMIT");
+      }
     },
   });
   assert.deepEqual(await lost.passwordBudget.reserve(new Uint8Array(32)), { status: "unknown" });
@@ -242,7 +269,9 @@ test("an error during BEGIN or reservation prevents later SQL", async (t) => {
   for (const stage of ["BEGIN", "SELECT"]) {
     const h = await harness(t, {
       step(sql, emit) {
-        if (sql.startsWith(stage)) emit();
+        if (sql.startsWith(stage)) {
+          emit();
+        }
       },
     });
     assert.deepEqual(await h.passwordBudget.reserve(new Uint8Array(32)), { status: "unavailable" });
@@ -257,7 +286,9 @@ test("an error during BEGIN or reservation prevents later SQL", async (t) => {
 test("query rejection without an event discards without further SQL", async (t) => {
   const h = await harness(t, {
     step(sql) {
-      if (sql.startsWith("SELECT")) throw new Error("query rejected");
+      if (sql.startsWith("SELECT")) {
+        throw new Error("query rejected");
+      }
     },
   });
   assert.deepEqual(await h.passwordBudget.reserve(new Uint8Array(32)), { status: "unavailable" });
@@ -270,17 +301,23 @@ test("failed or malformed COMMIT and release-time event are unknown without repl
   for (const options of [
     {
       step(sql) {
-        if (sql === "COMMIT") throw new Error("lost COMMIT");
+        if (sql === "COMMIT") {
+          throw new Error("lost COMMIT");
+        }
       },
     },
     {
       step(sql) {
-        if (sql === "COMMIT") return { command: "ROLLBACK", rowCount: null, rows: [] };
+        if (sql === "COMMIT") {
+          return { command: "ROLLBACK", rowCount: null, rows: [] };
+        }
       },
     },
     {
       step(sql) {
-        if (sql === "COMMIT") return { rowCount: null, rows: [] };
+        if (sql === "COMMIT") {
+          return { rowCount: null, rows: [] };
+        }
       },
     },
     { releaseEvent: true },
@@ -301,7 +338,9 @@ test("stalled COMMIT is unknown and never sends ROLLBACK", async (t) => {
   const h = await harness(t, {
     timeout: 25,
     step(sql) {
-      if (sql === "COMMIT") return new Promise(() => {});
+      if (sql === "COMMIT") {
+        return new Promise(() => {});
+      }
     },
   });
   assert.deepEqual(await h.passwordBudget.reserve(new Uint8Array(32)), { status: "unknown" });
@@ -314,8 +353,12 @@ test("failed discard retains the owner observer and closes further admission", a
     const h = await harness(t, {
       releaseThrows: true,
       step(sql) {
-        if (mode === "before" && sql.startsWith("SELECT")) throw new Error("query failure");
-        if (mode === "unknown" && sql === "COMMIT") throw new Error("lost COMMIT");
+        if (mode === "before" && sql.startsWith("SELECT")) {
+          throw new Error("query failure");
+        }
+        if (mode === "unknown" && sql === "COMMIT") {
+          throw new Error("lost COMMIT");
+        }
       },
     });
     assert.deepEqual(await h.passwordBudget.reserve(new Uint8Array(32)), {
@@ -406,7 +449,9 @@ test("owner observer exists before native connection and survives normal removal
   const listeners = EventEmitter.prototype.listeners.call(client, "error");
   assert.ok(listeners.length >= 1);
   client.removeAllListeners("error");
-  for (const listener of listeners) client.removeListener("error", listener);
+  for (const listener of listeners) {
+    client.removeListener("error", listener);
+  }
   assert.ok(client.listenerCount("error") >= 1);
   h.pool.removeAllListeners("error");
   assert.ok(h.pool.listenerCount("error") >= 1);
@@ -961,12 +1006,18 @@ test("shutdown rejects idle selected and private pool faults before and during e
         }
         const fault = location === "selected" ? h.pool : privatePool;
         assert.ok(fault);
-        if (timing === "before") fault.emit("error", new Error("synthetic pool fault"));
+        if (timing === "before") {
+          fault.emit("error", new Error("synthetic pool fault"));
+        }
         const ending = endInForm(h.pool, form);
-        if (timing === "during") fault.emit("error", new Error("synthetic pool fault"));
+        if (timing === "during") {
+          fault.emit("error", new Error("synthetic pool fault"));
+        }
         await assert.rejects(ending, /pool observation unavailable/);
         assert.equal(h.pool.ended, true);
-        if (privatePool) assert.equal(privatePool.ended, true);
+        if (privatePool) {
+          assert.equal(privatePool.ended, true);
+        }
         assert.deepEqual(h.scenario.calls, []);
       }
     }
@@ -982,7 +1033,9 @@ test("shutdown waits for active private disposal before reporting observed pool 
         const privatePool = [...h.scenario.pools].find((pool) => pool !== h.pool);
         assert.ok(privatePool);
         const fault = location === "selected" ? h.pool : privatePool;
-        if (timing === "before") fault.emit("error", new Error("synthetic pool fault"));
+        if (timing === "before") {
+          fault.emit("error", new Error("synthetic pool fault"));
+        }
         let settled = false;
         const ending = endInForm(h.pool, form).then(
           () => {
@@ -994,7 +1047,9 @@ test("shutdown waits for active private disposal before reporting observed pool 
             return error;
           },
         );
-        if (timing === "during") fault.emit("error", new Error("synthetic pool fault"));
+        if (timing === "during") {
+          fault.emit("error", new Error("synthetic pool fault"));
+        }
         client.release(true);
         assert.equal(h.scenario.pendingEnds.length, 1);
         await new Promise((resolve) => setImmediate(resolve));
@@ -1088,7 +1143,9 @@ test("selected and ordinary shutdown immediately refuse callback public checkout
       const ending = endInForm(pool, form);
       const error = await new Promise((resolve) => {
         pool.connect((error, client) => {
-          if (client) client.release();
+          if (client) {
+            client.release();
+          }
           resolve(error);
         });
       });
@@ -1246,8 +1303,9 @@ test("pool shutdown waits for removed private client end in Promise and callback
           })
         : new Promise((resolve, reject) => {
             h.pool.end((error) => {
-              if (error) reject(error);
-              else {
+              if (error) {
+                reject(error);
+              } else {
                 settled = true;
                 resolve();
               }

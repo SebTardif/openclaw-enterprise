@@ -10,7 +10,9 @@ import test from "node:test";
 const manifestPath = process.env.OCC_PASSWORD_BUDGET_FIXTURE_MANIFEST;
 
 async function fixture(path = manifestPath) {
-  if (!isAbsolute(path ?? "")) throw new Error("A private absolute fixture manifest is required.");
+  if (!isAbsolute(path ?? "")) {
+    throw new Error("A private absolute fixture manifest is required.");
+  }
   const metadata = await lstat(path);
   if (!metadata.isFile() || (metadata.mode & 0o077) !== 0) {
     throw new Error("The fixture manifest must be a private regular file.");

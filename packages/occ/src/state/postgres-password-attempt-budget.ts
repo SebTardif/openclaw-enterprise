@@ -69,7 +69,9 @@ function observePool(pool: PostgresPool): PoolObservation {
     throw new TypeError("The password budget requires an observable PostgreSQL pool.");
   }
   const existing = poolObservations.get(pool);
-  if (existing !== undefined) return existing;
+  if (existing !== undefined) {
+    return existing;
+  }
   const observation: PoolObservation = {
     faulted: false,
     listener: () => {
@@ -89,7 +91,9 @@ function observePool(pool: PostgresPool): PoolObservation {
 }
 
 function poolIsObserved(pool: PostgresPool, observation: PoolObservation): boolean {
-  if (observation.faulted || !isPasswordBudgetPool(pool)) return false;
+  if (observation.faulted || !isPasswordBudgetPool(pool)) {
+    return false;
+  }
   try {
     if (EventEmitter.prototype.listeners.call(pool, "error").includes(observation.listener)) {
       return true;
@@ -103,7 +107,9 @@ function poolIsObserved(pool: PostgresPool, observation: PoolObservation): boole
 
 function retainEmitterListener(client: PostgresClient, listener: (error: Error) => void): boolean {
   try {
-    if (!(client instanceof EventEmitter)) return false;
+    if (!(client instanceof EventEmitter)) {
+      return false;
+    }
     if (!EventEmitter.prototype.listeners.call(client, "error").includes(listener)) {
       EventEmitter.prototype.on.call(client, "error", listener);
     }
@@ -127,7 +133,9 @@ export function matchesPostgresPasswordBudgetPair(
   selectedAuthPool: unknown,
 ): boolean {
   try {
-    if (pair === null || typeof pair !== "object") return false;
+    if (pair === null || typeof pair !== "object") {
+      return false;
+    }
     const actual = pairs.get(pair as PostgresPasswordBudgetPair);
     const observation = actual === undefined ? undefined : poolObservations.get(actual.pool);
     if (
@@ -168,9 +176,13 @@ function reservation(result: {
   rows: unknown[];
   rowCount: number | null;
 }): PasswordAttemptReservation | undefined {
-  if (result.rowCount !== 1 || result.rows.length !== 1) return undefined;
+  if (result.rowCount !== 1 || result.rows.length !== 1) {
+    return undefined;
+  }
   const row = result.rows[0];
-  if (row === null || typeof row !== "object" || Array.isArray(row)) return undefined;
+  if (row === null || typeof row !== "object" || Array.isArray(row)) {
+    return undefined;
+  }
   const keys = Reflect.ownKeys(row);
   if (keys.length !== 2 || !keys.includes("status") || !keys.includes("retry_after_seconds")) {
     return undefined;
@@ -180,8 +192,12 @@ function reservation(result: {
   if (status === undefined || !("value" in status) || delay === undefined || !("value" in delay)) {
     return undefined;
   }
-  if (status.value === "allowed" && delay.value === null) return allowed;
-  if (status.value === "unavailable" && delay.value === null) return unavailable;
+  if (status.value === "allowed" && delay.value === null) {
+    return allowed;
+  }
+  if (status.value === "unavailable" && delay.value === null) {
+    return unavailable;
+  }
   if (
     status.value === "limited" &&
     typeof delay.value === "number" &&
@@ -247,7 +263,9 @@ export function createPostgresStateWithPasswordBudget(
     }
     try {
       connected.release(true);
-      if (listening) connected.removeListener?.("error", onLateError);
+      if (listening) {
+        connected.removeListener?.("error", onLateError);
+      }
     } catch {
       checkoutUncertain = true;
     }
@@ -272,7 +290,9 @@ export function createPostgresStateWithPasswordBudget(
       try {
         const pending = checkoutAttempt.client.then(
           (connected) => {
-            if (!abandoned) return connected;
+            if (!abandoned) {
+              return connected;
+            }
             discardUnusedClient(connected);
             return undefined;
           },
@@ -281,7 +301,9 @@ export function createPostgresStateWithPasswordBudget(
         const timeout = new Promise<undefined>((resolve) => {
           timer = setTimeout(() => {
             abandoned = true;
-            if (!checkoutAttempt.cancel()) checkoutUncertain = true;
+            if (!checkoutAttempt.cancel()) {
+              checkoutUncertain = true;
+            }
             resolve(undefined);
           }, timeoutMs);
         });
@@ -289,9 +311,13 @@ export function createPostgresStateWithPasswordBudget(
       } catch {
         return unavailable;
       } finally {
-        if (timer !== undefined) clearTimeout(timer);
+        if (timer !== undefined) {
+          clearTimeout(timer);
+        }
       }
-      if (client === undefined) return unavailable;
+      if (client === undefined) {
+        return unavailable;
+      }
       if (checkoutUncertain) {
         discardUnusedClient(client);
         return unavailable;
@@ -310,7 +336,7 @@ export function createPostgresStateWithPasswordBudget(
       let released = false;
       let releaseSucceeded = false;
       let listenerAttempted = false;
-      let result: PasswordAttemptReservation = unavailable;
+      let result: PasswordAttemptReservation;
       const onError = (): void => {
         observedError = true;
       };
@@ -323,7 +349,9 @@ export function createPostgresStateWithPasswordBudget(
           throw new Error("PostgreSQL client unavailable.");
         }
         const remaining = Math.ceil(deadline - performance.now());
-        if (remaining <= 0) throw new Error("PostgreSQL operation timed out.");
+        if (remaining <= 0) {
+          throw new Error("PostgreSQL operation timed out.");
+        }
         let timer: ReturnType<typeof setTimeout> | undefined;
         try {
           const pending = acquiredClient.query(statement, parameters);
@@ -343,7 +371,9 @@ export function createPostgresStateWithPasswordBudget(
           }
           return response;
         } finally {
-          if (timer !== undefined) clearTimeout(timer);
+          if (timer !== undefined) {
+            clearTimeout(timer);
+          }
         }
       };
       try {
