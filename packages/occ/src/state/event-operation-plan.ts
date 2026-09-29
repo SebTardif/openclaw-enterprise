@@ -26,9 +26,7 @@ const bindingFields = [
 ] as const;
 
 /** Owner-selected comparison values. None is an authentication capability. */
-export type EventOperationBinding = Readonly<
-  Record<(typeof bindingFields)[number], string>
->;
+export type EventOperationBinding = Readonly<Record<(typeof bindingFields)[number], string>>;
 export interface EventOperationExpectation {
   readonly binding: EventOperationBinding;
   readonly literalInput: string;
@@ -63,19 +61,13 @@ export interface SelectedEventOriginalCustody {
     witness: object,
     work: (scope: object) => Promise<void>,
   ): Promise<object | undefined>;
-  inspectOriginalRequest(
-    unit: PlatformUnitOfWork,
-    scope: object,
-  ): EventOriginalRequestProjection;
+  inspectOriginalRequest(unit: PlatformUnitOfWork, scope: object): EventOriginalRequestProjection;
   inspectSettlement(
     unit: PlatformUnitOfWork,
     scope: object,
     receipt: object,
   ): "committed" | "unknown";
-  readOriginalStatus(
-    unit: PlatformUnitOfWork,
-    scope: object,
-  ): Promise<object | undefined>;
+  readOriginalStatus(unit: PlatformUnitOfWork, scope: object): Promise<object | undefined>;
   inspectOriginalStatus(
     unit: PlatformUnitOfWork,
     scope: object,
@@ -90,8 +82,7 @@ export class EventOperationPlanUnavailable extends Error {
   }
 }
 export type EventPlanResult<T> =
-  | { readonly status: "committed"; readonly value: T }
-  | { readonly status: "unknown" };
+  { readonly status: "committed"; readonly value: T } | { readonly status: "unknown" };
 export type EventOriginalStatus =
   | {
       readonly status: "known";
@@ -100,9 +91,7 @@ export type EventOriginalStatus =
   | { readonly status: "unknown" };
 
 function record<T extends object>(value: T): Readonly<T> {
-  return Object.freeze(
-    Object.assign(Object.create(null), value),
-  ) as Readonly<T>;
+  return Object.freeze(Object.assign(Object.create(null), value)) as Readonly<T>;
 }
 function unavailable(): never {
   throw new EventOperationPlanUnavailable();
@@ -149,10 +138,7 @@ function snapshot(value: EventOperationExpectation): EventOperationExpectation {
   if (Reflect.ownKeys(descriptors).length !== bindingFields.length) {
     unavailable();
   }
-  const binding = Object.create(null) as Record<
-    (typeof bindingFields)[number],
-    string
-  >;
+  const binding = Object.create(null) as Record<(typeof bindingFields)[number], string>;
   for (const field of bindingFields) {
     const descriptor = descriptors[field];
     if (
@@ -167,10 +153,7 @@ function snapshot(value: EventOperationExpectation): EventOperationExpectation {
   }
   return record({ binding: Object.freeze(binding), literalInput });
 }
-function same(
-  left: EventOperationExpectation,
-  right: EventOperationExpectation,
-): boolean {
+function same(left: EventOperationExpectation, right: EventOperationExpectation): boolean {
   return (
     left.literalInput === right.literalInput &&
     bindingFields.every((field) => left.binding[field] === right.binding[field])
@@ -183,9 +166,7 @@ function same(
  * protected State scope after their owner-reviewed contract is supplied. This
  * adapter never dispatches, writes a journal, creates cookies or permits replay.
  */
-export function createEventOperationPlanAdapter(
-  selected?: SelectedEventOriginalCustody,
-) {
+export function createEventOperationPlanAdapter(selected?: SelectedEventOriginalCustody) {
   const plans = new WeakMap<
     EventOperationPlan,
     {
@@ -244,37 +225,26 @@ export function createEventOperationPlanAdapter(
     };
     try {
       expectation = snapshot(expected);
-      const receipt = await selected.withOriginalRequest(
-        unit,
-        witness,
-        async (ownedScope) => {
-          if (!open || entered || !object(ownedScope)) {
-            poisoned = true;
-            unavailable();
-          }
-          entered = true;
-          scope = ownedScope;
+      const receipt = await selected.withOriginalRequest(unit, witness, async (ownedScope) => {
+        if (!open || entered || !object(ownedScope)) {
+          poisoned = true;
+          unavailable();
+        }
+        entered = true;
+        scope = ownedScope;
+        inspect();
+        try {
+          value = await work(ownedScope, inspect, expectation);
           inspect();
-          try {
-            value = await work(ownedScope, inspect, expectation);
-            inspect();
-            finished = true;
-          } catch {
-            poisoned = true;
-            unavailable();
-          }
-        },
-      );
+          finished = true;
+        } catch {
+          poisoned = true;
+          unavailable();
+        }
+      });
       // Ignore owner-returned application values. Only our actual completed
       // callback and that same owner's authenticated physical settlement count.
-      if (
-        !entered ||
-        !finished ||
-        poisoned ||
-        !scope ||
-        !object(receipt) ||
-        lost?.aborted
-      ) {
+      if (!entered || !finished || poisoned || !scope || !object(receipt) || lost?.aborted) {
         return unknown();
       }
       const settlement = selected.inspectSettlement(unit, scope, receipt);
@@ -300,21 +270,16 @@ export function createEventOperationPlanAdapter(
         return unknown();
       }
       attempted.add(witness);
-      return within(
-        unit,
-        witness,
-        expected,
-        async (_scope, inspect, expectation) => {
-          const plan = Object.freeze(Object.create(null)) as EventOperationPlan;
-          const entry = { unit, expectation, inspect, used: false };
-          plans.set(plan, entry);
-          try {
-            return await work(plan);
-          } finally {
-            plans.delete(plan);
-          }
-        },
-      );
+      return within(unit, witness, expected, async (_scope, inspect, expectation) => {
+        const plan = Object.freeze(Object.create(null)) as EventOperationPlan;
+        const entry = { unit, expectation, inspect, used: false };
+        plans.set(plan, entry);
+        try {
+          return await work(plan);
+        } finally {
+          plans.delete(plan);
+        }
+      });
     },
     async claimEventOperation(
       unit: PlatformUnitOfWork,
@@ -333,47 +298,38 @@ export function createEventOperationPlanAdapter(
       witness: object,
       expected: EventOperationExpectation,
     ): Promise<EventOriginalStatus> {
-      const result = await within(
-        unit,
-        witness,
-        expected,
-        async (scope, inspect, expectation) => {
-          inspect();
-          const receipt = await selected!.readOriginalStatus(unit, scope);
-          inspect();
-          if (!object(receipt)) {
-            return unknown();
-          }
-          const observed = selected!.inspectOriginalStatus(
-            unit,
-            scope,
-            receipt,
-          );
-          inspect();
-          if (!object(observed)) {
-            return unknown();
-          }
-          const fields = Object.getOwnPropertyDescriptors(observed);
-          const settlement = fields.settlement;
-          const outcome = fields.outcome;
-          if (
-            !settlement ||
-            !("value" in settlement) ||
-            settlement.value !== "acknowledged" ||
-            !outcome ||
-            !("value" in outcome) ||
-            !["pending", "completed", "failed"].includes(outcome.value) ||
-            !same(expectation, snapshot(observed))
-          ) {
-            return unknown();
-          }
-          // This is authenticated status data, NEVER permission for another send.
-          return record({
-            status: "known" as const,
-            outcome: outcome.value as "pending" | "completed" | "failed",
-          });
-        },
-      );
+      const result = await within(unit, witness, expected, async (scope, inspect, expectation) => {
+        inspect();
+        const receipt = await selected!.readOriginalStatus(unit, scope);
+        inspect();
+        if (!object(receipt)) {
+          return unknown();
+        }
+        const observed = selected!.inspectOriginalStatus(unit, scope, receipt);
+        inspect();
+        if (!object(observed)) {
+          return unknown();
+        }
+        const fields = Object.getOwnPropertyDescriptors(observed);
+        const settlement = fields.settlement;
+        const outcome = fields.outcome;
+        if (
+          !settlement ||
+          !("value" in settlement) ||
+          settlement.value !== "acknowledged" ||
+          !outcome ||
+          !("value" in outcome) ||
+          !["pending", "completed", "failed"].includes(outcome.value) ||
+          !same(expectation, snapshot(observed))
+        ) {
+          return unknown();
+        }
+        // This is authenticated status data, NEVER permission for another send.
+        return record({
+          status: "known" as const,
+          outcome: outcome.value as "pending" | "completed" | "failed",
+        });
+      });
       return result.status === "committed" ? result.value : unknown();
     },
   });

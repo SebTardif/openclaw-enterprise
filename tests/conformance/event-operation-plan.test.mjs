@@ -104,8 +104,7 @@ function protocolOwner() {
       if (state.abortOnSettlement) {
         state.loss.abort();
       }
-      return scopes.get(scope) === selectedUnit &&
-        settlements.get(receipt) === scope
+      return scopes.get(scope) === selectedUnit && settlements.get(receipt) === scope
         ? "committed"
         : "unknown";
     },
@@ -153,52 +152,32 @@ test("missing custody and structural plans cannot establish event authority", as
   });
   assert.equal(result.status, "unknown");
   assert.equal(called, false);
-  await assert.rejects(
-    adapter.claimEventOperation({}, {}),
-    EventOperationPlanUnavailable,
-  );
-  assert.equal(
-    (await adapter.originalStatus({}, {}, expectation())).status,
-    "unknown",
-  );
+  await assert.rejects(adapter.claimEventOperation({}, {}), EventOperationPlanUnavailable);
+  assert.equal((await adapter.originalStatus({}, {}, expectation())).status, "unknown");
 });
 
 test("one recognized conditional scope yields one plan only in its original unit", async () => {
   const { adapter, unit, witness, state } = protocolOwner();
   let leaked;
-  const result = await adapter.withPlan(
-    unit,
-    witness,
-    expectation(),
-    async (plan) => {
-      leaked = plan;
-      await assert.rejects(
-        adapter.claimEventOperation({}, plan),
-        EventOperationPlanUnavailable,
-      );
-      await assert.rejects(
-        adapter.claimEventOperation(unit, { ...plan }),
-        EventOperationPlanUnavailable,
-      );
-      await assert.rejects(
-        createEventOperationPlanAdapter().claimEventOperation(unit, plan),
-        EventOperationPlanUnavailable,
-      );
-      const binding = await adapter.claimEventOperation(unit, plan);
-      assert.deepEqual({ ...binding }, expectation().binding);
-      await assert.rejects(
-        adapter.claimEventOperation(unit, plan),
-        EventOperationPlanUnavailable,
-      );
-      return "original-unit-result";
-    },
-  );
+  const result = await adapter.withPlan(unit, witness, expectation(), async (plan) => {
+    leaked = plan;
+    await assert.rejects(adapter.claimEventOperation({}, plan), EventOperationPlanUnavailable);
+    await assert.rejects(
+      adapter.claimEventOperation(unit, { ...plan }),
+      EventOperationPlanUnavailable,
+    );
+    await assert.rejects(
+      createEventOperationPlanAdapter().claimEventOperation(unit, plan),
+      EventOperationPlanUnavailable,
+    );
+    const binding = await adapter.claimEventOperation(unit, plan);
+    assert.deepEqual({ ...binding }, expectation().binding);
+    await assert.rejects(adapter.claimEventOperation(unit, plan), EventOperationPlanUnavailable);
+    return "original-unit-result";
+  });
   assert.equal(result.status, "committed");
   assert.equal(result.value, "original-unit-result");
-  await assert.rejects(
-    adapter.claimEventOperation(unit, leaked),
-    EventOperationPlanUnavailable,
-  );
+  await assert.rejects(adapter.claimEventOperation(unit, leaked), EventOperationPlanUnavailable);
   assert.equal(
     (
       await adapter.withPlan(unit, witness, expectation(), async () =>
@@ -256,11 +235,7 @@ test("literal input is not normalized and accessor or malformed comparisons are 
     },
   };
   assert.equal(
-    (
-      await adapter.withPlan(unit, witness, expected, async () =>
-        assert.fail("accessor"),
-      )
-    ).status,
+    (await adapter.withPlan(unit, witness, expected, async () => assert.fail("accessor"))).status,
     "unknown",
   );
   assert.equal(getters, 0);
@@ -271,15 +246,10 @@ test("literal validation preserves well-formed UTF-16 without requiring the newe
     const { adapter, unit, witness, state } = protocolOwner();
     state.expected = { ...state.expected, literalInput };
     let consumed = false;
-    const result = await adapter.withPlan(
-      unit,
-      witness,
-      state.expected,
-      async (plan) => {
-        await adapter.claimEventOperation(unit, plan);
-        consumed = true;
-      },
-    );
+    const result = await adapter.withPlan(unit, witness, state.expected, async (plan) => {
+      await adapter.claimEventOperation(unit, plan);
+      consumed = true;
+    });
     assert.equal(result.status, accepted ? "committed" : "unknown");
     assert.equal(consumed, accepted);
     assert.equal(state.calls, accepted ? 1 : 0);
@@ -303,10 +273,7 @@ test("literal validation preserves well-formed UTF-16 without requiring the newe
   for (let unit = 0xd800; unit <= 0xdfff; unit += 1) {
     const surrogate = String.fromCharCode(unit);
     await checkLiteral(surrogate, false);
-    await checkLiteral(
-      unit <= 0xdbff ? `${surrogate}\udc00` : `\ud800${surrogate}`,
-      true,
-    );
+    await checkLiteral(unit <= 0xdbff ? `${surrogate}\udc00` : `\ud800${surrogate}`, true);
   }
 });
 
@@ -316,17 +283,12 @@ test("withdrawal, session replacement and lost original unit after a wait hide t
       const { adapter, unit, witness, state } = protocolOwner();
       const gate = deferred();
       const entered = deferred();
-      const pending = adapter.withPlan(
-        unit,
-        witness,
-        expectation(),
-        async (plan) => {
-          await adapter.claimEventOperation(unit, plan);
-          entered.resolve();
-          await gate.promise;
-          return "must-not-escape";
-        },
-      );
+      const pending = adapter.withPlan(unit, witness, expectation(), async (plan) => {
+        await adapter.claimEventOperation(unit, plan);
+        entered.resolve();
+        await gate.promise;
+        return "must-not-escape";
+      });
       await entered.promise;
       if (change === "withdrawal") {
         state.loss.abort();
@@ -347,19 +309,11 @@ test("withdrawal, session replacement and lost original unit after a wait hide t
 
 test("scope loss before consumption refuses the plan and remains unknown", async () => {
   const { adapter, unit, witness, state } = protocolOwner();
-  const result = await adapter.withPlan(
-    unit,
-    witness,
-    expectation(),
-    async (plan) => {
-      state.loss.abort();
-      await assert.rejects(
-        adapter.claimEventOperation(unit, plan),
-        EventOperationPlanUnavailable,
-      );
-      return "hidden";
-    },
-  );
+  const result = await adapter.withPlan(unit, witness, expectation(), async (plan) => {
+    state.loss.abort();
+    await assert.rejects(adapter.claimEventOperation(unit, plan), EventOperationPlanUnavailable);
+    return "hidden";
+  });
   assert.equal(result.status, "unknown");
 });
 
@@ -368,23 +322,15 @@ test("unknown COMMIT or forged settlement does not expose work or permit witness
     await t.test(failure, async () => {
       const { adapter, unit, witness, state } = protocolOwner();
       state[failure] = true;
-      const result = await adapter.withPlan(
-        unit,
-        witness,
-        expectation(),
-        async (plan) => {
-          await adapter.claimEventOperation(unit, plan);
-          return { cookie: "not-published" };
-        },
-      );
+      const result = await adapter.withPlan(unit, witness, expectation(), async (plan) => {
+        await adapter.claimEventOperation(unit, plan);
+        return { cookie: "not-published" };
+      });
       assert.equal(result.status, "unknown");
       assert.equal(Object.hasOwn(result, "value"), false);
       assert.equal(
-        (
-          await adapter.withPlan(unit, witness, expectation(), async () =>
-            assert.fail("retry"),
-          )
-        ).status,
+        (await adapter.withPlan(unit, witness, expectation(), async () => assert.fail("retry")))
+          .status,
         "unknown",
       );
       assert.equal(state.calls, 1);
@@ -400,19 +346,14 @@ test("missing, repeated or prematurely detached owner callbacks cannot manufactu
       let calls = 0;
       let plan;
       const gate = deferred();
-      const result = await adapter.withPlan(
-        unit,
-        witness,
-        expectation(),
-        async (value) => {
-          calls++;
-          plan = value;
-          if (failure === "early") {
-            await gate.promise;
-          }
-          return "not-committed";
-        },
-      );
+      const result = await adapter.withPlan(unit, witness, expectation(), async (value) => {
+        calls++;
+        plan = value;
+        if (failure === "early") {
+          await gate.promise;
+        }
+        return "not-committed";
+      });
       assert.equal(result.status, "unknown");
       assert.ok(calls <= 1);
       if (plan) {
@@ -459,10 +400,7 @@ test("exact original status requires owner-recognized receipts and both acknowle
       } else {
         state[failure] = true;
       }
-      assert.equal(
-        (await adapter.originalStatus(unit, witness, expectation())).status,
-        "unknown",
-      );
+      assert.equal((await adapter.originalStatus(unit, witness, expectation())).status, "unknown");
     });
   }
 });
@@ -478,11 +416,8 @@ test("withdrawal while exact-original status is pending suppresses disclosure", 
 
 test("a serialized original witness is not admitted by the selected owner", async () => {
   const { adapter, unit, witness } = protocolOwner();
-  const result = await adapter.withPlan(
-    unit,
-    { ...witness },
-    expectation(),
-    async () => assert.fail("forged witness"),
+  const result = await adapter.withPlan(unit, { ...witness }, expectation(), async () =>
+    assert.fail("forged witness"),
   );
   assert.equal(result.status, "unknown");
 });
@@ -490,15 +425,10 @@ test("a serialized original witness is not admitted by the selected owner", asyn
 test("settlement inspection cannot publish a result after scope loss", async () => {
   const { adapter, unit, witness, state } = protocolOwner();
   state.abortOnSettlement = true;
-  const result = await adapter.withPlan(
-    unit,
-    witness,
-    expectation(),
-    async (plan) => {
-      await adapter.claimEventOperation(unit, plan);
-      return "hidden-after-loss";
-    },
-  );
+  const result = await adapter.withPlan(unit, witness, expectation(), async (plan) => {
+    await adapter.claimEventOperation(unit, plan);
+    return "hidden-after-loss";
+  });
   assert.equal(result.status, "unknown");
   assert.equal(Object.hasOwn(result, "value"), false);
 });
