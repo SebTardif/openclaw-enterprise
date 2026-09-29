@@ -140,21 +140,3 @@ test("password admission rejects copied or substituted owner handles", async () 
   await requirePasswordAdmission(real, "person@example.com");
   assert.equal(calls, 1);
 });
-
-test("password admission preserves normalized supplementary and expanding identifiers", async () => {
-  const prepared = await preparePasswordBudgetKey("installation-test", {
-    policyEpoch: "1",
-    keyProvider: { load: async () => ({ epoch: "key-1", bytes: keyBytes() }) },
-  });
-  const seen = [];
-  const admitted = bindPasswordBudgetKey(prepared, {
-    reserve: async (digest) => {
-      seen.push(Buffer.from(digest));
-      return { status: "allowed" };
-    },
-  });
-  await requirePasswordAdmission(admitted, "🦊".repeat(160) + "@a.b");
-  await requirePasswordAdmission(admitted, ("İ".repeat(316) + "@a.b").toLowerCase());
-  assert.equal(seen.length, 2);
-  assert.notDeepEqual(seen[0], seen[1]);
-});

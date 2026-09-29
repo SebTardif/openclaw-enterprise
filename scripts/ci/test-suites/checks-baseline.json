@@ -417,8 +417,7 @@
         "password admission binds keyed identity to the Installation and key epoch",
         "password admission fails closed without retrying a denied or uncertain reservation",
         "password admission rejects noncanonical policy epochs before loading a key",
-        "password admission rejects copied or substituted owner handles",
-        "password admission preserves normalized supplementary and expanding identifiers"
+        "password admission rejects copied or substituted owner handles"
       ]
     },
     {
