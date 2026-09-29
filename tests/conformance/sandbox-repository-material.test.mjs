@@ -138,6 +138,56 @@ function fixture() {
   };
 }
 
+function fixtureWithRecipientUid(uid) {
+  const f = fixture();
+  f.selected.pod.uid = uid;
+  f.setCurrent(structuredClone(f.selected));
+  f.observation.recipient.pod.uid = uid;
+  return f;
+}
+
+for (const code of [...Array.from({ length: 33 }, (_, index) => index), 0x7f]) {
+  test(`current recipient rejects U+${code.toString(16).padStart(4, "0")} before inspection`, async () => {
+    const f = fixtureWithRecipientUid(`pod${String.fromCharCode(code)}uid`);
+    assert.equal(await f.check(), false);
+    assert.equal(f.inspections(), 0);
+  });
+}
+
+for (const [label, uid] of [
+  ["lower printable boundary", "!"],
+  ["upper printable boundary", "~"],
+  ["first non-ASCII code unit", "\u0080"],
+  ["non-ASCII whitespace", "\u00a0"],
+  ["surrogate pair", "pod-\u{1f600}"],
+  ["256 code units", "x".repeat(256)],
+  ["256 code units including surrogate pairs", "\u{1f600}".repeat(128)],
+]) {
+  test(`matching component recipient preserves ${label}`, async () => {
+    const f = fixtureWithRecipientUid(uid);
+    assert.equal(await f.check(), true);
+    assert.equal(f.inspections(), 1);
+  });
+}
+
+for (const [label, uid] of [
+  ["undefined", undefined],
+  ["null", null],
+  ["number", 42],
+  ["boolean", false],
+  ["object", {}],
+  ["array", []],
+  ["empty string", ""],
+  ["257 code units", "x".repeat(257)],
+  ["257 code units including surrogate pairs", `${"\u{1f600}".repeat(128)}x`],
+]) {
+  test(`current recipient rejects ${label} before inspection`, async () => {
+    const f = fixtureWithRecipientUid(uid);
+    assert.equal(await f.check(), false);
+    assert.equal(f.inspections(), 0);
+  });
+}
+
 test("expectation reuses original sessions, generation and private material locations", () => {
   const f = fixture();
   const original = repositoryMaterialSpec(f.revision, f.bindings);

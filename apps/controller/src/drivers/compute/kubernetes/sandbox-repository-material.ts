@@ -115,13 +115,14 @@ function fields(value: unknown, keys: readonly string[]): Record<string, unknown
 }
 
 function identity(value: unknown): string {
-  if (
-    typeof value !== "string" ||
-    value.length === 0 ||
-    value.length > 256 ||
-    /[\u0000-\u0020\u007f]/.test(value)
-  ) {
+  if (typeof value !== "string" || value.length === 0 || value.length > 256) {
     return invalid();
+  }
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code <= 0x20 || code === 0x7f) {
+      return invalid();
+    }
   }
   return value;
 }
