@@ -18,7 +18,7 @@ The worker reauthorizes current revision work before dispatch. This does not est
 
 ## Cutover contract
 
-Proposed flow. Solid admission exists in source today. Dashed handoffs require decisions, implementation and proof. [SVG](39-kubernetes-runtime-activation/request-lifecycle.svg) · [editable source](39-kubernetes-runtime-activation/request-lifecycle.mmd).
+Proposed flow. Solid admission exists in source today. Dashed handoffs require decisions, implementation and proof. [SVG](42-kubernetes-runtime-activation/request-lifecycle.svg) · [editable source](42-kubernetes-runtime-activation/request-lifecycle.mmd).
 
 ```mermaid
 ---
