@@ -9,10 +9,10 @@ The selected IAM Driver resolves the authenticated account or service identity
 to an explicitly provisioned Principal or ServicePrincipal and owns
 [authorization](authorization.md).
 
-For a sign-in procedure, see
+For sign-in, see
 [human administrator sign-in](authentication/service-api-keys.md#sign-in-as-a-human-administrator).
-For non-Agent automation, see the [service-key procedure](authentication/service-api-keys.md).
-The [platform console](console.md) at `/console/` uses these session endpoints. Public signup, generic OIDC, and bearer
+For non-Agent automation, see [service-key procedure](authentication/service-api-keys.md).
+The [platform console](console.md) at `/console/` uses session endpoints. Public signup, generic OIDC, and bearer
 credentials are unsupported.
 
 ## Installation and account ownership
