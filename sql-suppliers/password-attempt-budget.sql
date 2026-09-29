@@ -204,7 +204,7 @@ BEGIN
     SELECT 1 FROM pg_catalog.pg_auth_members m
       JOIN inherited r ON m.member = r.roleid WHERE m.admin_option
   ) INTO admin_authority;
-  IF unexpected OR admin_authority OR app_oid IS NULL
+  IF unexpected OR app_oid IS NULL
      OR has_table_privilege('occ_app', 'occ.password_attempt_budget_control', 'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER,MAINTAIN')
      OR has_table_privilege('occ_app', 'occ.password_attempt_budget_rows', 'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER,MAINTAIN')
      OR has_function_privilege('occ_app', 'occ.password_budget_close(text)', 'EXECUTE')
@@ -230,6 +230,10 @@ BEGIN
                AND a.grantee = app_oid AND a.privilege_type = 'EXECUTE' AND NOT a.is_grantable)
   ) THEN
     RAISE EXCEPTION 'password budget object privileges are unsafe' USING ERRCODE = '42501';
+  END IF;
+  -- Diagnose ADMIN only after every other unsafe-role/object check passed.
+  IF admin_authority THEN
+    RAISE EXCEPTION 'password budget application has role administration authority' USING ERRCODE = '42501';
   END IF;
 END;
 $$;

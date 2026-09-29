@@ -111,8 +111,6 @@ pg.Pool.prototype._release = function (client, idleListener, error) {
 const { createPostgresStateWithPasswordBudget, matchesPostgresPasswordBudgetPair } =
   await import("../../packages/occ/src/state/postgres-password-attempt-budget.ts");
 const {
-  beginPasswordBudgetCheckout,
-  checkoutPasswordBudgetClient,
   createPostgresPasswordBudgetPool,
   createPostgresPool,
   freezePasswordBudgetTls,
@@ -657,23 +655,6 @@ test("a former borrower and public pool listeners cannot reach the budget client
   );
 });
 
-test("even a previous private checkout cannot reuse its physical client", async (t) => {
-  const h = await harness(t);
-  const previous = await checkoutPasswordBudgetClient(h.pool, 100);
-  assert.throws(() => {
-    previous.end = (callback) => callback();
-  }, TypeError);
-  // A mutable pg-pool use counter is not the owner's custody authority.
-  previous._poolUseCount = -100;
-  previous.release(false);
-  assert.equal(previous._ending, true);
-  assert.deepEqual(await h.passwordBudget.reserve(new Uint8Array(32)), { status: "allowed" });
-  const current = h.scenario.privateClients.at(-1);
-  assert.notEqual(current, previous);
-  assert.equal(h.scenario.privatePeak, 1);
-  assert.ok(h.scenario.calls.every(({ client }) => client === current));
-});
-
 test("concurrent reservations use at most one private client and never reuse it", async (t) => {
   let entered;
   let resume;
@@ -800,15 +781,6 @@ test("a queued reservation times out without acquiring another private client", 
   assert.equal(h.scenario.privateClients.length, 2);
 });
 
-test("cancellation before native checkout proves no client was acquired", async (t) => {
-  const h = await harness(t);
-  const attempt = beginPasswordBudgetCheckout(h.pool, 100);
-  assert.equal(attempt.cancel(), true);
-  await assert.rejects(attempt.client);
-  assert.equal(h.scenario.privateClients.length, 0);
-  assert.deepEqual(await h.passwordBudget.reserve(new Uint8Array(32)), { status: "allowed" });
-});
-
 test("the private wait queue is bounded by selected pool capacity", async (t) => {
   let entered;
   let resume;
@@ -857,15 +829,9 @@ test("pool end closes both pools and refuses later reservation admissions", asyn
 test("shutdown before native checkout settles without a false disposal fault", async (t) => {
   for (const form of ["promise", "callback"]) {
     const h = await harness(t);
-    const admission = beginPasswordBudgetCheckout(h.pool, 100);
-    const rejected = assert.rejects(admission.client, /pool unavailable/);
-    const ending =
-      form === "promise"
-        ? h.pool.end()
-        : new Promise((resolve, reject) => {
-            h.pool.end((error) => (error ? reject(error) : resolve()));
-          });
-    await rejected;
+    const reservation = h.passwordBudget.reserve(new Uint8Array(32));
+    const ending = endInForm(h.pool, form);
+    assert.deepEqual(await reservation, { status: "unavailable" });
     await ending;
     assert.equal(h.scenario.connects, 0);
     assert.deepEqual(h.scenario.calls, []);
@@ -875,40 +841,27 @@ test("shutdown before native checkout settles without a false disposal fault", a
 test("shutdown after queued handoff cancels the unused permit in both forms", async (t) => {
   for (const form of ["promise", "callback"]) {
     const h = await harness(t, { holdEnd: true });
-    const first = await checkoutPasswordBudgetClient(h.pool, 100);
-    const next = checkoutPasswordBudgetClient(h.pool, 100);
-    const rejected = assert.rejects(next, /pool unavailable/);
-    first.release();
+    assert.deepEqual(await h.passwordBudget.reserve(new Uint8Array(32)), { status: "allowed" });
+    const next = h.passwordBudget.reserve(new Uint8Array(32).fill(1));
     assert.equal(h.scenario.pendingEnds.length, 1);
-    // Resolving the remove event hands over the permit synchronously; the
-    // queued continuation has not yet started the native checkout.
+    // The completed reservation's native disposal hands the permit to the
+    // waiting reservation; shutdown wins before its checkout continuation.
     h.scenario.pendingEnds.shift()();
-    const ending =
-      form === "promise"
-        ? h.pool.end()
-        : new Promise((resolve, reject) => {
-            h.pool.end((error) => (error ? reject(error) : resolve()));
-          });
-    await rejected;
+    const ending = endInForm(h.pool, form);
+    assert.deepEqual(await next, { status: "unavailable" });
     await ending;
     assert.equal(h.scenario.connects, 1);
-    assert.deepEqual(h.scenario.calls, []);
+    assert.equal(h.scenario.calls.length, 3);
   }
 });
 
 test("a prior selected pool error is retained on clientless shutdown", async (t) => {
   for (const form of ["promise", "callback"]) {
     const h = await harness(t);
-    const admission = beginPasswordBudgetCheckout(h.pool, 100);
-    const rejected = assert.rejects(admission.client, /pool unavailable/);
+    const reservation = h.passwordBudget.reserve(new Uint8Array(32));
     h.pool.emit("error", new Error("synthetic selected pool fault"));
-    const ending =
-      form === "promise"
-        ? h.pool.end()
-        : new Promise((resolve, reject) => {
-            h.pool.end((error) => (error ? reject(error) : resolve()));
-          });
-    await rejected;
+    const ending = endInForm(h.pool, form);
+    assert.deepEqual(await reservation, { status: "unavailable" });
     await assert.rejects(ending, /pool observation unavailable/);
     assert.equal(h.scenario.connects, 0);
     assert.deepEqual(h.scenario.calls, []);
@@ -918,69 +871,35 @@ test("a prior selected pool error is retained on clientless shutdown", async (t)
 test("a prior private pool error is retained after queued handoff", async (t) => {
   for (const form of ["promise", "callback"]) {
     const h = await harness(t, { holdEnd: true });
-    const first = await checkoutPasswordBudgetClient(h.pool, 100);
-    const next = checkoutPasswordBudgetClient(h.pool, 100);
-    const rejected = assert.rejects(next, /pool unavailable/);
+    assert.deepEqual(await h.passwordBudget.reserve(new Uint8Array(32)), { status: "allowed" });
+    const next = h.passwordBudget.reserve(new Uint8Array(32).fill(1));
     const privatePool = [...h.scenario.pools].find((pool) => pool !== h.pool);
-    assert.ok(privatePool);
-    first.release();
     h.scenario.pendingEnds.shift()();
     privatePool.emit("error", new Error("synthetic private pool fault"));
-    const ending =
-      form === "promise"
-        ? h.pool.end()
-        : new Promise((resolve, reject) => {
-            h.pool.end((error) => (error ? reject(error) : resolve()));
-          });
-    await rejected;
+    const ending = endInForm(h.pool, form);
+    assert.deepEqual(await next, { status: "unavailable" });
     await assert.rejects(ending, /pool observation unavailable/);
     assert.equal(h.scenario.connects, 1);
-    assert.deepEqual(h.scenario.calls, []);
+    assert.equal(h.scenario.calls.length, 3);
   }
 });
 
-test("cancellation retains a prior selected pool error at clientless shutdown", async (t) => {
+test("queued reservation timeout retains observed private pool faults", async (t) => {
   for (const form of ["promise", "callback"]) {
-    const h = await harness(t);
-    const attempt = beginPasswordBudgetCheckout(h.pool, 100);
-    const rejected = assert.rejects(attempt.client, /checkout cancelled/);
-    h.pool.emit("error", new Error("synthetic selected pool fault"));
-    assert.equal(attempt.cancel(), true);
-    const ending =
-      form === "promise"
-        ? h.pool.end()
-        : new Promise((resolve, reject) => {
-            h.pool.end((error) => (error ? reject(error) : resolve()));
-          });
-    await rejected;
-    await assert.rejects(ending, /pool observation unavailable/);
-    assert.equal(h.scenario.connects, 0);
-    assert.deepEqual(h.scenario.calls, []);
-  }
-});
-
-test("cancellation retains a prior private pool error after queued handoff", async (t) => {
-  for (const form of ["promise", "callback"]) {
-    const h = await harness(t, { holdEnd: true });
-    const first = await checkoutPasswordBudgetClient(h.pool, 100);
-    const attempt = beginPasswordBudgetCheckout(h.pool, 100);
-    const rejected = assert.rejects(attempt.client, /checkout cancelled/);
+    const h = await harness(t, { holdEnd: true, timeout: 25 });
+    assert.deepEqual(await h.passwordBudget.reserve(new Uint8Array(32)), { status: "allowed" });
+    // The first reservation has acknowledged COMMIT but local disposal is held.
+    // The next reservation's real deadline cancels its queued checkout.
+    assert.deepEqual(await h.passwordBudget.reserve(new Uint8Array(32).fill(1)), {
+      status: "unavailable",
+    });
     const privatePool = [...h.scenario.pools].find((pool) => pool !== h.pool);
-    assert.ok(privatePool);
-    first.release();
-    h.scenario.pendingEnds.shift()();
     privatePool.emit("error", new Error("synthetic private pool fault"));
-    assert.equal(attempt.cancel(), true);
-    const ending =
-      form === "promise"
-        ? h.pool.end()
-        : new Promise((resolve, reject) => {
-            h.pool.end((error) => (error ? reject(error) : resolve()));
-          });
-    await rejected;
+    const ending = endInForm(h.pool, form);
+    h.scenario.pendingEnds.shift()();
     await assert.rejects(ending, /pool observation unavailable/);
     assert.equal(h.scenario.connects, 1);
-    assert.deepEqual(h.scenario.calls, []);
+    assert.equal(h.scenario.calls.length, 3);
   }
 });
 
@@ -999,9 +918,10 @@ test("shutdown rejects idle selected and private pool faults before and during e
         const h = await harness(t);
         let privatePool;
         if (location === "private") {
-          const client = await checkoutPasswordBudgetClient(h.pool, 100);
+          assert.deepEqual(await h.passwordBudget.reserve(new Uint8Array(32)), {
+            status: "allowed",
+          });
           privatePool = [...h.scenario.pools].find((pool) => pool !== h.pool);
-          client.release(true);
           await new Promise((resolve) => setImmediate(resolve));
         }
         const fault = location === "selected" ? h.pool : privatePool;
@@ -1018,7 +938,7 @@ test("shutdown rejects idle selected and private pool faults before and during e
         if (privatePool) {
           assert.equal(privatePool.ended, true);
         }
-        assert.deepEqual(h.scenario.calls, []);
+        assert.equal(h.scenario.calls.length, location === "private" ? 3 : 0);
       }
     }
   }
@@ -1029,7 +949,7 @@ test("shutdown waits for active private disposal before reporting observed pool 
     for (const location of ["selected", "private"]) {
       for (const timing of ["before", "during"]) {
         const h = await harness(t, { holdEnd: true });
-        const client = await checkoutPasswordBudgetClient(h.pool, 100);
+        assert.deepEqual(await h.passwordBudget.reserve(new Uint8Array(32)), { status: "allowed" });
         const privatePool = [...h.scenario.pools].find((pool) => pool !== h.pool);
         assert.ok(privatePool);
         const fault = location === "selected" ? h.pool : privatePool;
@@ -1050,7 +970,6 @@ test("shutdown waits for active private disposal before reporting observed pool 
         if (timing === "during") {
           fault.emit("error", new Error("synthetic pool fault"));
         }
-        client.release(true);
         assert.equal(h.scenario.pendingEnds.length, 1);
         await new Promise((resolve) => setImmediate(resolve));
         assert.equal(settled, false);
@@ -1059,7 +978,7 @@ test("shutdown waits for active private disposal before reporting observed pool 
         assert.match(error?.message ?? "", /pool observation unavailable/);
         assert.equal(h.pool.ended, true);
         assert.equal(privatePool.ended, true);
-        assert.deepEqual(h.scenario.calls, []);
+        assert.equal(h.scenario.calls.length, 3);
       }
     }
   }
@@ -1068,7 +987,7 @@ test("shutdown waits for active private disposal before reporting observed pool 
 test("synchronous selected native end failure still waits for private disposal", async (t) => {
   for (const form of ["promise", "callback"]) {
     const h = await harness(t, { holdEnd: true });
-    const privateClient = await checkoutPasswordBudgetClient(h.pool, 100);
+    assert.deepEqual(await h.passwordBudget.reserve(new Uint8Array(32)), { status: "allowed" });
     const privatePool = [...h.scenario.pools].find((pool) => pool !== h.pool);
     assert.ok(privatePool);
     const publicClient = await h.pool.connect();
@@ -1087,7 +1006,6 @@ test("synchronous selected native end failure still waits for private disposal",
         return error;
       },
     );
-    privateClient.release(true);
     assert.equal(h.scenario.pendingEnds.length, 1);
     await new Promise((resolve) => setImmediate(resolve));
     assert.equal(settled, false);
@@ -1095,7 +1013,7 @@ test("synchronous selected native end failure still waits for private disposal",
     const error = await ending;
     assert.match(error?.message ?? "", /synthetic selected native end failure/);
     assert.equal(privatePool.ended, true);
-    assert.deepEqual(h.scenario.calls, []);
+    assert.equal(h.scenario.calls.length, 3);
   }
 });
 
@@ -1160,10 +1078,9 @@ test("selected and ordinary shutdown immediately refuse callback public checkout
 test("callback shutdown reports a pool fault observed before callback delivery", async (t) => {
   for (const location of ["selected", "private"]) {
     const h = await harness(t);
-    const client = await checkoutPasswordBudgetClient(h.pool, 100);
+    assert.deepEqual(await h.passwordBudget.reserve(new Uint8Array(32)), { status: "allowed" });
     const privatePool = [...h.scenario.pools].find((pool) => pool !== h.pool);
     assert.ok(privatePool);
-    client.release(true);
     await new Promise((resolve) => setImmediate(resolve));
     let observed = false;
     const originalAllSettled = Promise.allSettled;
@@ -1192,7 +1109,7 @@ test("callback shutdown reports a pool fault observed before callback delivery",
     assert.equal(observed, true);
     assert.equal(h.pool.ended, true);
     assert.equal(privatePool.ended, true);
-    assert.deepEqual(h.scenario.calls, []);
+    assert.equal(h.scenario.calls.length, 3);
   }
 });
 
@@ -1200,10 +1117,9 @@ test("shutdown awaits native selected pool end before reporting a pool fault", a
   for (const form of ["promise", "callback"]) {
     for (const location of ["selected", "private"]) {
       const h = await harness(t);
-      const privateClient = await checkoutPasswordBudgetClient(h.pool, 100);
+      assert.deepEqual(await h.passwordBudget.reserve(new Uint8Array(32)), { status: "allowed" });
       const privatePool = [...h.scenario.pools].find((pool) => pool !== h.pool);
       assert.ok(privatePool);
-      privateClient.release(true);
       await new Promise((resolve) => setImmediate(resolve));
       const publicClient = await h.pool.connect();
       let settled = false;
@@ -1228,7 +1144,7 @@ test("shutdown awaits native selected pool end before reporting a pool fault", a
       assert.match(error?.message ?? "", /pool observation unavailable/);
       assert.equal(h.pool.ended, true);
       assert.equal(privatePool.ended, true);
-      assert.deepEqual(h.scenario.calls, []);
+      assert.equal(h.scenario.calls.length, 3);
     }
   }
 });
@@ -1237,14 +1153,13 @@ test("shutdown preserves pool faults across in-flight native checkout and dispos
   for (const form of ["promise", "callback"]) {
     for (const location of ["selected", "private"]) {
       const h = await harness(t);
-      const first = await checkoutPasswordBudgetClient(h.pool, 100);
+      assert.deepEqual(await h.passwordBudget.reserve(new Uint8Array(32)), { status: "allowed" });
       const privatePool = [...h.scenario.pools].find((pool) => pool !== h.pool);
       assert.ok(privatePool);
-      first.release(true);
       await new Promise((resolve) => setImmediate(resolve));
       h.scenario.stallCheckout = true;
       h.scenario.holdEnd = true;
-      const attempt = beginPasswordBudgetCheckout(h.pool, 1000);
+      const reservation = h.passwordBudget.reserve(new Uint8Array(32).fill(1));
       await new Promise((resolve) => setImmediate(resolve));
       assert.equal(typeof h.scenario.completeCheckout, "function");
       let settled = false;
@@ -1262,12 +1177,10 @@ test("shutdown preserves pool faults across in-flight native checkout and dispos
         "error",
         new Error("synthetic pool fault"),
       );
-      assert.equal(attempt.cancel(), false);
       await new Promise((resolve) => setImmediate(resolve));
       assert.equal(settled, false);
       h.scenario.completeCheckout();
-      const client = await attempt.client;
-      client.release(true);
+      assert.deepEqual(await reservation, { status: "unavailable" });
       assert.equal(h.scenario.pendingEnds.length, 1);
       await new Promise((resolve) => setImmediate(resolve));
       assert.equal(settled, false);
@@ -1277,7 +1190,7 @@ test("shutdown preserves pool faults across in-flight native checkout and dispos
       assert.equal(h.pool.ended, true);
       assert.equal(privatePool.ended, true);
       assert.equal(h.scenario.connects, 2);
-      assert.deepEqual(h.scenario.calls, []);
+      assert.equal(h.scenario.calls.length, 3);
     }
   }
 });

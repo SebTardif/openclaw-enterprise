@@ -487,14 +487,6 @@ async function checkoutOwnedPasswordBudgetClient(
   }
 }
 
-export async function checkoutPasswordBudgetClient(
-  pool: pg.Pool,
-  timeoutMs: number,
-  signal?: AbortSignal,
-): Promise<pg.PoolClient> {
-  return checkoutOwnedPasswordBudgetClient(pool, timeoutMs, signal);
-}
-
 /** Owner-issued cancellation proof applies only before native checkout starts. */
 export function beginPasswordBudgetCheckout(
   pool: pg.Pool,

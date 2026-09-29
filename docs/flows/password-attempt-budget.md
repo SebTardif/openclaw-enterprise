@@ -104,7 +104,7 @@ direct/transitive role authority, direct/transitive MAINTAIN, and
 direct/inherited ADMIN cases. Missing manifests or skipped expected cases fail
 the lane. No fixture is created by that mapping. Restricted-role PostgreSQL,
 same-server identity, key custody, and the real authentication caller remain
-separate prerequisites.
+separate prerequisites. See the [password-budget fixture contract](../testing/password-attempt-budget.md) for all seven manifests, exact role memberships, and the checked-in positive control.
 
 ## Related docs
 

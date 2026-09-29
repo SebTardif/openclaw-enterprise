@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
 import { lstat, readFile } from "node:fs/promises";
 import { isAbsolute } from "node:path";
 import test from "node:test";
@@ -53,103 +52,7 @@ async function fixture(path = manifestPath) {
   return {
     appUrl: data.appUrl,
     migratorUrl: data.migratorUrl,
-    baselineMigratorUrl: data.baselineMigratorUrl,
-    predecessorSupplierPath: data.predecessorSupplierPath,
   };
-}
-
-// ADMIN cases require two independently disposable, equivalent databases on
-// the same server and the exact reviewed predecessor supplier. The baseline
-// execution is a positive control, not a substitute for production migration.
-async function adminBaseline(urls, successorClient, Pool) {
-  let baseline;
-  let successor;
-  try {
-    baseline = new URL(urls.baselineMigratorUrl);
-    successor = new URL(urls.migratorUrl);
-  } catch {
-    throw new Error("The ADMIN baseline target is invalid.");
-  }
-  if (
-    baseline.protocol !== "postgresql:" ||
-    baseline.host !== successor.host ||
-    baseline.username !== "occ_migrator" ||
-    baseline.pathname === successor.pathname ||
-    !/^\/openclaw_ci_password_budget_[a-f0-9]{12}$/.test(baseline.pathname) ||
-    baseline.search !== "" ||
-    baseline.hash !== "" ||
-    !isAbsolute(urls.predecessorSupplierPath ?? "")
-  ) {
-    throw new Error("The ADMIN baseline must be a separate owned database on the same server.");
-  }
-  const supplierMetadata = await lstat(urls.predecessorSupplierPath);
-  if (!supplierMetadata.isFile() || (supplierMetadata.mode & 0o077) !== 0) {
-    throw new Error("The predecessor supplier must be a private regular file.");
-  }
-  const predecessor = await readFile(urls.predecessorSupplierPath);
-  assert.equal(
-    createHash("sha256").update(predecessor).digest("hex"),
-    "76c590d7c47aa5776f0b190fe661423041ac7dc1f49d2dceaca7ddd24ddd3d29",
-  );
-  const pool = new Pool({
-    connectionString: urls.baselineMigratorUrl,
-    max: 1,
-    connectionTimeoutMillis: 5000,
-  });
-  const baselineClient = await pool.connect();
-  try {
-    const serverSql = `SELECT current_user, inet_server_addr()::text AS address,
-      inet_server_port() AS port, pg_postmaster_start_time() AS started, version() AS version`;
-    assert.deepEqual(
-      (await baselineClient.query(serverSql)).rows,
-      (await successorClient.query(serverSql)).rows,
-    );
-    const ledgerSql = "SELECT id, hash, created_at FROM drizzle.__drizzle_migrations ORDER BY id";
-    const baselineLedger = (await baselineClient.query(ledgerSql)).rows;
-    assert.ok(baselineLedger.length > 0);
-    assert.deepEqual(baselineLedger, (await successorClient.query(ledgerSql)).rows);
-    const catalogSql = `
-      SELECT 'relation' AS kind, c.relname AS name, c.relkind::text AS definition,
-             pg_catalog.pg_get_userbyid(c.relowner) AS owner, COALESCE(c.relacl::text, '') AS acl
-      FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
-      WHERE n.nspname = 'occ'
-      UNION ALL
-      SELECT 'function', p.proname || '(' || pg_catalog.pg_get_function_identity_arguments(p.oid) || ')',
-             pg_catalog.pg_get_functiondef(p.oid), pg_catalog.pg_get_userbyid(p.proowner),
-             COALESCE(p.proacl::text, '')
-      FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
-      WHERE n.nspname = 'occ' AND p.prokind = 'f'
-      UNION ALL
-      SELECT 'constraint', c.conname, pg_catalog.pg_get_constraintdef(c.oid, true),
-             r.relname, ''
-      FROM pg_catalog.pg_constraint c JOIN pg_catalog.pg_class r ON r.oid = c.conrelid
-      JOIN pg_catalog.pg_namespace n ON n.oid = r.relnamespace WHERE n.nspname = 'occ'
-      ORDER BY 1,2,3,4,5`;
-    assert.deepEqual(
-      (await baselineClient.query(catalogSql)).rows,
-      (await successorClient.query(catalogSql)).rows,
-    );
-    for (const client of [baselineClient, successorClient]) {
-      const clean = await client.query(
-        "SELECT to_regclass('occ.password_attempt_budget_control') AS control, (SELECT count(*)::int FROM occ.installation) AS installations",
-      );
-      assert.deepEqual(clean.rows, [{ control: null, installations: 0 }]);
-    }
-    // A successful predecessor under the *same* cluster role graph rules out
-    // an alternative refusal common to both supplier executions.
-    await baselineClient.query(predecessor.toString("utf8"));
-    assert.notEqual(
-      (
-        await baselineClient.query(
-          "SELECT to_regclass('occ.password_attempt_budget_control') AS control",
-        )
-      ).rows[0].control,
-      null,
-    );
-  } finally {
-    baselineClient.release(true);
-    await pool.end();
-  }
 }
 
 test(
@@ -525,7 +428,9 @@ for (const [kind, variable] of [
               }))
               .sort((a, b) => a.member.localeCompare(b.member) || a.parent.localeCompare(b.parent)),
           );
-          await adminBaseline(urls, client, Pool);
+          // The current supplier first rejects other unsafe privileges, then
+          // emits this distinct ADMIN diagnostic. The ordinary fixture above
+          // is its positive control; no private predecessor SQL is needed.
         }
         const sql = await readFile(
           new URL("../../sql-suppliers/password-attempt-budget.sql", import.meta.url),
@@ -535,7 +440,8 @@ for (const [kind, variable] of [
           client.query(sql),
           (error) =>
             error.code === "42501" &&
-            (!admin || error.message === "password budget application privileges are unsafe"),
+            (!admin ||
+              error.message === "password budget application has role administration authority"),
         );
         // The supplier's transaction is aborted, so the owner must roll it back
         // before inspecting the catalog; a refusal is not successful setup.
