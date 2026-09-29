@@ -6,7 +6,11 @@ import { join } from "node:path";
 import { createRequire } from "node:module";
 import { runInNewContext } from "node:vm";
 import test from "node:test";
-import { GATEWAY_RUNTIME_ENTRYPOINT } from "../../apps/controller/src/drivers/compute/kubernetes/runtime-entrypoints.ts";
+import {
+  AGENT_READINESS_ENTRYPOINT,
+  GATEWAY_READINESS_ENTRYPOINT,
+  GATEWAY_RUNTIME_ENTRYPOINT,
+} from "../../apps/controller/src/drivers/compute/kubernetes/runtime-entrypoints.ts";
 import { admitLoggingConfiguration } from "../../packages/contracts/src/index.ts";
 import {
   createKubernetesComputeDriver,
@@ -4327,146 +4331,215 @@ test("embedded startup probes its selected provider and allows graceful Gateway 
       ["credentials rejected", "auth", "AUTHENTICATION_FAILED"],
       ["provider unavailable", "unknown", "MODEL_PROBE_FAILED"],
     ]) {
-      const accepted = failureCode === undefined;
-      await t.test(`${provider}: ${variant}`, async () => {
-        const driver = createKubernetesComputeDriver(options());
-        const candidate = {
-          namespaceId: tenant.id,
-          harness: { id: "openclaw", version: "1.0.0", mode: "embedded" },
-          harnessAuth: apiKeyAuth,
-          configuration: { agents: { defaults: { model: `${provider}/${model}` } } },
-        };
-        const prepared = driver.harnessAuthForRevision(candidate, authContext(candidate), {
-          name: kubernetesGatewayNamespaceName(tenant.id),
-          plane: "control",
-        });
-        const files = new Map();
-        const calls = [];
-        const errors = [];
-        const signals = new Map();
-        const childEvents = new Map();
-        const childSignals = [];
-        const exits = [];
-        const timers = [];
-        let started = false;
-        let held = false;
-        let statusHandler;
-        // Stub native process I/O only: execute the complete generated startup
-        // program and its real probe result validation, without claiming a model turn.
-        runInNewContext(GATEWAY_RUNTIME_ENTRYPOINT, {
-          Buffer,
-          JSON,
-          URL,
-          console: { error: (value) => errors.push(value) },
-          process: {
-            env: {
-              ...Object.fromEntries(
-                prepared.environment.map((entry) => [
-                  entry.name,
-                  entry.value ?? "fixture-model-key",
-                ]),
-              ),
-              OPENCLAW_AGENT_REVISION_ID: "revision-embedded-probe",
-              OPENCLAW_RUNTIME_STATUS_CONTAINER: "gateway",
-              OPENCLAW_RUNTIME_STATUS_PORT: "18791",
-              OPENCLAW_POD_UID: "pod-embedded-probe",
+      // "concurrent" is the Kubernetes path: readiness reads the runtime status
+      // port, so the Gateway starts while the probe runs. "serial" has no status
+      // port and keeps the probe ahead of the Gateway process.
+      for (const mode of ["concurrent", "serial"]) {
+        const accepted = failureCode === undefined;
+        const concurrent = mode === "concurrent";
+        await t.test(`${mode}: ${provider}: ${variant}`, async () => {
+          const driver = createKubernetesComputeDriver(options());
+          const candidate = {
+            namespaceId: tenant.id,
+            harness: { id: "openclaw", version: "1.0.0", mode: "embedded" },
+            harnessAuth: apiKeyAuth,
+            configuration: { agents: { defaults: { model: `${provider}/${model}` } } },
+          };
+          const prepared = driver.harnessAuthForRevision(candidate, authContext(candidate), {
+            name: kubernetesGatewayNamespaceName(tenant.id),
+            plane: "control",
+          });
+          const files = new Map();
+          const calls = [];
+          const errors = [];
+          const signals = new Map();
+          const childEvents = new Map();
+          const childSignals = [];
+          const exits = [];
+          const timers = [];
+          let started = false;
+          let held = false;
+          let statusHandler;
+          let probeChild;
+          const probeOutput = JSON.stringify({
+            auth: {
+              probes: {
+                results: [
+                  {
+                    provider: variant === "wrong provider result" ? "another-provider" : provider,
+                    model: `${provider}/${model}`,
+                    source: "env",
+                    status: probeStatus,
+                  },
+                ],
+              },
             },
-            on(signal, callback) {
-              signals.set(signal, callback);
-            },
-            exit(code) {
-              exits.push(code);
-            },
-          },
-          setTimeout(callback, delay) {
-            timers.push({ callback, delay });
-            return { unref() {} };
-          },
-          setInterval() {
-            held = true;
-          },
-          require(specifier) {
-            if (specifier === "node:http") {
-              return {
-                createServer(handler) {
-                  statusHandler = handler;
-                  return { listen() {} };
-                },
-              };
+          });
+          const recordProbe = (command, args, options) => {
+            calls.push({ command, args: Array.from(args), environment: { ...options.env } });
+          };
+          const emitChild = (event, ...values) => {
+            for (const listener of childEvents.get(event) ?? []) {
+              listener(...values);
             }
-            if (specifier === "node:fs") {
-              return {
-                mkdirSync() {},
-                mkdtempSync() {
-                  return "/isolated-probe";
-                },
-                writeFileSync(path, value) {
-                  files.set(path, value);
-                },
-                rmSync() {},
-              };
-            }
-            if (specifier === "node:child_process") {
-              return {
-                spawnSync(command, args, options) {
-                  calls.push({ command, args: Array.from(args), environment: { ...options.env } });
-                  return {
-                    status: 0,
-                    stdout: JSON.stringify({
-                      auth: {
-                        probes: {
-                          results: [
-                            {
-                              provider:
-                                variant === "wrong provider result" ? "another-provider" : provider,
-                              model: `${provider}/${model}`,
-                              source: "env",
-                              status: probeStatus,
-                            },
-                          ],
+          };
+          const runtimeStatus = () => {
+            let body = "";
+            statusHandler(
+              { method: "GET", url: "/openclaw/runtime/status" },
+              { writeHead() {}, end: (chunk) => (body += chunk) },
+            );
+            return JSON.parse(body);
+          };
+          // Stub native process I/O only: execute the complete generated startup
+          // program and its real probe result validation, without claiming a model turn.
+          runInNewContext(GATEWAY_RUNTIME_ENTRYPOINT, {
+            Buffer,
+            JSON,
+            URL,
+            console: { error: (value) => errors.push(value) },
+            process: {
+              env: {
+                ...Object.fromEntries(
+                  prepared.environment.map((entry) => [
+                    entry.name,
+                    entry.value ?? "fixture-model-key",
+                  ]),
+                ),
+                OPENCLAW_AGENT_REVISION_ID: "revision-embedded-probe",
+                OPENCLAW_RUNTIME_STATUS_CONTAINER: "gateway",
+                ...(concurrent ? { OPENCLAW_RUNTIME_STATUS_PORT: "18791" } : {}),
+                OPENCLAW_POD_UID: "pod-embedded-probe",
+              },
+              on(signal, callback) {
+                signals.set(signal, callback);
+              },
+              exit(code) {
+                exits.push(code);
+              },
+            },
+            setTimeout(callback, delay) {
+              timers.push({ callback, delay });
+              return { unref() {} };
+            },
+            clearTimeout() {},
+            setInterval() {
+              held = true;
+            },
+            require(specifier) {
+              if (specifier === "node:http") {
+                return {
+                  createServer(handler) {
+                    statusHandler = handler;
+                    return { listen() {} };
+                  },
+                };
+              }
+              if (specifier === "node:fs") {
+                return {
+                  mkdirSync() {},
+                  mkdtempSync() {
+                    return "/isolated-probe";
+                  },
+                  writeFileSync(path, value) {
+                    files.set(path, value);
+                  },
+                  rmSync() {},
+                };
+              }
+              if (specifier === "node:child_process") {
+                return {
+                  spawnSync(command, args, options) {
+                    assert.equal(concurrent, false, "the concurrent probe must not block startup");
+                    assert.equal(started, false, "the serial probe precedes the Gateway");
+                    recordProbe(command, args, options);
+                    return { status: 0, stdout: probeOutput };
+                  },
+                  spawn(command, args, options) {
+                    if (args[1] === "models") {
+                      assert.equal(concurrent, true);
+                      recordProbe(command, args, options);
+                      const listeners = new Map();
+                      const stdout = [];
+                      probeChild = {
+                        pid: 7,
+                        stdout: { on: (event, listener) => stdout.push(listener) },
+                        stderr: { on() {} },
+                        on: (event, listener) => listeners.set(event, listener),
+                        kill() {
+                          return true;
                         },
+                        respond() {
+                          for (const listener of stdout) {
+                            listener(Buffer.from(probeOutput));
+                          }
+                          listeners.get("close")(0, null);
+                        },
+                      };
+                      return probeChild;
+                    }
+                    assert.deepEqual(Array.from(args).slice(0, 2), [
+                      "/app/openclaw.mjs",
+                      "gateway",
+                    ]);
+                    started = true;
+                    return {
+                      kill(signal) {
+                        childSignals.push(signal);
                       },
-                    }),
-                  };
-                },
-                spawn() {
-                  started = true;
-                  return {
-                    kill(signal) {
-                      childSignals.push(signal);
-                    },
-                    on(event, callback) {
-                      childEvents.set(event, callback);
-                    },
-                  };
-                },
-              };
+                      on(event, callback) {
+                        childEvents.set(event, [...(childEvents.get(event) ?? []), callback]);
+                      },
+                    };
+                  },
+                };
+              }
+              return nodeRequire(specifier);
+            },
+          });
+          await Promise.resolve();
+          if (concurrent) {
+            // The Gateway listens while the probe runs, but readiness sees "pending".
+            assert.equal(started, true);
+            assert.equal(runtimeStatus().startup, "pending");
+            assert.equal(runtimeStatus().runtimeFailure, undefined);
+            assert.equal(held, false);
+            probeChild.respond();
+            await new Promise((resolve) => setImmediate(resolve));
+          }
+          assert.equal(calls.length, 1);
+          assert.equal(calls[0].args[calls[0].args.indexOf("--probe-provider") + 1], provider);
+          assert.equal(calls[0].environment[credentialName], "fixture-model-key");
+          assert.equal(
+            calls[0].environment[provider === "openai" ? "ANTHROPIC_API_KEY" : "OPENAI_API_KEY"],
+            undefined,
+          );
+          assert.equal(
+            JSON.parse(files.get("/isolated-probe/openclaw.json")).agents.defaults.model,
+            `${provider}/${model}`,
+          );
+          assert.equal(started, concurrent || accepted);
+          assert.equal(held, !accepted);
+          assert.deepEqual(errors, accepted ? [] : ["Harness model authentication probe failed."]);
+          if (concurrent) {
+            const status = runtimeStatus();
+            assert.equal(status.startup, accepted ? "ready" : "failed");
+            assert.equal(status.runtimeFailure?.code, failureCode);
+          }
+          if (!accepted) {
+            // A failed concurrent probe stops the Gateway it had started; the
+            // Gateway's exit must not end the wrapper that holds the evidence.
+            assert.deepEqual(childSignals, concurrent ? ["SIGTERM"] : []);
+            if (concurrent) {
+              emitChild("exit", null, "SIGTERM");
+              assert.deepEqual(exits, []);
+              // Pod termination ends the holding wrapper at once: nothing to drain.
+              signals.get("SIGTERM")();
+              assert.deepEqual(exits, [0]);
+              assert.deepEqual(childSignals, ["SIGTERM"]);
             }
-            return nodeRequire(specifier);
-          },
-        });
-        await Promise.resolve();
-        assert.equal(calls.length, 1);
-        assert.equal(calls[0].args[calls[0].args.indexOf("--probe-provider") + 1], provider);
-        assert.equal(calls[0].environment[credentialName], "fixture-model-key");
-        assert.equal(
-          calls[0].environment[provider === "openai" ? "ANTHROPIC_API_KEY" : "OPENAI_API_KEY"],
-          undefined,
-        );
-        assert.equal(
-          JSON.parse(files.get("/isolated-probe/openclaw.json")).agents.defaults.model,
-          `${provider}/${model}`,
-        );
-        assert.equal(started, accepted);
-        assert.equal(held, !accepted);
-        assert.deepEqual(errors, accepted ? [] : ["Harness model authentication probe failed."]);
-        let body = "";
-        statusHandler(
-          { method: "GET", url: "/openclaw/runtime/status" },
-          { writeHead() {}, end: (chunk) => (body += chunk) },
-        );
-        assert.equal(JSON.parse(body).runtimeFailure?.code, failureCode);
-        if (accepted) {
+            return;
+          }
           signals.get("SIGTERM")();
           assert.deepEqual(childSignals, ["SIGTERM"]);
           // An admitted turn can take longer than the old eight-second wrapper
@@ -4477,12 +4550,438 @@ test("embedded startup probes its selected provider and allows graceful Gateway 
           }
           assert.deepEqual(childSignals, ["SIGTERM"], "must allow a nine-second drain");
           assert.deepEqual(exits, [], "supervisor must wait for the child to finish");
-          childEvents.get("exit")(0, null);
+          emitChild("exit", 0, null);
           assert.deepEqual(exits, [0], "clean Gateway completion exits the supervisor");
-        }
-      });
+        });
+      }
     }
   }
+});
+
+test("an embedded Gateway that exits early waits for its pending model probe", async (t) => {
+  const nodeRequire = createRequire(import.meta.url);
+  for (const accepted of [true, false]) {
+    await t.test(accepted ? "accepted probe" : "rejected probe", async () => {
+      const driver = createKubernetesComputeDriver(options());
+      const candidate = {
+        namespaceId: tenant.id,
+        harness: { id: "openclaw", version: "1.0.0", mode: "embedded" },
+        harnessAuth: apiKeyAuth,
+        configuration: { agents: { defaults: { model: "openai/gpt-5" } } },
+      };
+      const prepared = driver.harnessAuthForRevision(candidate, authContext(candidate), {
+        name: kubernetesGatewayNamespaceName(tenant.id),
+        plane: "control",
+      });
+      const exits = [];
+      const exitListeners = [];
+      let held = false;
+      let statusHandler;
+      let probe;
+      runInNewContext(GATEWAY_RUNTIME_ENTRYPOINT, {
+        Buffer,
+        JSON,
+        URL,
+        console: { error() {} },
+        process: {
+          env: {
+            ...Object.fromEntries(
+              prepared.environment.map((entry) => [entry.name, entry.value ?? "fixture-model-key"]),
+            ),
+            OPENCLAW_AGENT_REVISION_ID: "revision-embedded-early-exit",
+            OPENCLAW_RUNTIME_STATUS_CONTAINER: "gateway",
+            OPENCLAW_RUNTIME_STATUS_PORT: "18791",
+            OPENCLAW_POD_UID: "pod-embedded-early-exit",
+          },
+          on() {},
+          exit(code) {
+            exits.push(code);
+          },
+        },
+        setTimeout() {
+          return { unref() {} };
+        },
+        clearTimeout() {},
+        setInterval() {
+          held = true;
+        },
+        require(specifier) {
+          if (specifier === "node:http") {
+            return {
+              createServer(handler) {
+                statusHandler = handler;
+                return { listen() {} };
+              },
+            };
+          }
+          if (specifier === "node:fs") {
+            return {
+              mkdirSync() {},
+              mkdtempSync: () => "/isolated-probe",
+              writeFileSync() {},
+              rmSync() {},
+            };
+          }
+          if (specifier === "node:child_process") {
+            return {
+              spawn(_command, args) {
+                if (args[1] !== "models") {
+                  return {
+                    kill() {},
+                    on(event, listener) {
+                      if (event === "exit") {
+                        exitListeners.push(listener);
+                      }
+                    },
+                  };
+                }
+                const listeners = {};
+                const stdout = [];
+                probe = {
+                  pid: 9,
+                  stdout: { on: (_event, listener) => stdout.push(listener) },
+                  stderr: { on() {} },
+                  on(event, listener) {
+                    listeners[event] = listener;
+                  },
+                  kill() {},
+                  respond(status) {
+                    const results = [
+                      { provider: "openai", model: "openai/gpt-5", source: "env", status },
+                    ];
+                    for (const listener of stdout) {
+                      listener(Buffer.from(JSON.stringify({ auth: { probes: { results } } })));
+                    }
+                    listeners.close(0, null);
+                  },
+                };
+                return probe;
+              },
+            };
+          }
+          return nodeRequire(specifier);
+        },
+      });
+      await Promise.resolve();
+      for (const listener of exitListeners) {
+        listener(1, null);
+      }
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.deepEqual(exits, [], "the wrapper waits for the probe outcome");
+      probe.respond(accepted ? "ok" : "auth");
+      await new Promise((resolve) => setImmediate(resolve));
+      let body = "";
+      statusHandler(
+        { method: "GET", url: "/openclaw/runtime/status" },
+        { writeHead() {}, end: (chunk) => (body += chunk) },
+      );
+      const status = JSON.parse(body);
+      assert.deepEqual(exits, accepted ? [1] : []);
+      assert.equal(held, !accepted);
+      assert.equal(status.runtimeFailure?.code, accepted ? undefined : "AUTHENTICATION_FAILED");
+      if (!accepted) {
+        assert.equal(status.startup, "failed");
+      }
+    });
+  }
+});
+
+class ReadinessExit extends Error {
+  constructor(code) {
+    super(`readiness exited ${code}`);
+    this.code = code;
+  }
+}
+
+// Execute a generated readiness program against stubbed loopback endpoints.
+// observe(port, path) returns { statusCode, body } for each loopback request.
+function runReadiness(entrypoint, env, observe, marker = undefined) {
+  const nodeRequire = createRequire(import.meta.url);
+  const requests = [];
+  let exitCode;
+  const sandbox = {
+    process: {
+      env,
+      exit(code) {
+        exitCode ??= code;
+        throw new ReadinessExit(code);
+      },
+    },
+    setTimeout() {
+      return {};
+    },
+    clearTimeout() {},
+    require(specifier) {
+      if (specifier === "node:http") {
+        return {
+          get(url, callback) {
+            const { port, pathname } = new URL(url);
+            requests.push(`${port}${pathname}`);
+            const reply = observe(port, pathname);
+            const listeners = {};
+            callback({
+              statusCode: reply.statusCode,
+              setEncoding() {},
+              resume() {},
+              on(event, listener) {
+                listeners[event] = listener;
+              },
+            });
+            listeners.data?.(JSON.stringify(reply.body ?? {}));
+            listeners.end?.();
+            return { on() {} };
+          },
+        };
+      }
+      if (specifier === "node:fs") {
+        return { existsSync: (path) => path === marker };
+      }
+      if (specifier === "ws") {
+        return class {
+          constructor(url, options) {
+            requests.push(`ws:${new URL(url).port}`);
+            assert.match(options.headers.Authorization, /^Bearer \S+$/);
+          }
+          on(event, listener) {
+            if (event === "open") {
+              listener();
+            }
+          }
+          close() {}
+        };
+      }
+      return nodeRequire(specifier);
+    },
+  };
+  try {
+    runInNewContext(entrypoint, sandbox);
+  } catch (error) {
+    if (!(error instanceof ReadinessExit)) {
+      throw error;
+    }
+  }
+  return { exitCode, requests };
+}
+
+// Resolve a rendered container environment the way kubelet would, with fixtures.
+function renderedEnvironment(container) {
+  return Object.fromEntries(
+    (container.env ?? []).map((entry) => [entry.name, entry.value ?? `fixture-${entry.name}`]),
+  );
+}
+
+// Startup states the runtime wrapper publishes. "unreachable" is a wrapper that
+// is not serving its status document (restarting, or not yet listening).
+function assertStartupGatesReadiness(entrypoint, env, nativeRequest, options = {}) {
+  const statusPort = env.OPENCLAW_RUNTIME_STATUS_PORT;
+  assert.equal(statusPort, "18791", "every runtime workload renders the runtime status port");
+  for (const startup of ["pending", "failed", "unreachable", "ready"]) {
+    const result = runReadiness(
+      entrypoint,
+      env,
+      (port, path) => {
+        if (path === "/openclaw/runtime/status") {
+          if (startup === "unreachable") {
+            return { statusCode: 404, body: { error: "not_found" } };
+          }
+          return {
+            statusCode: 200,
+            body: {
+              revisionId: env.OPENCLAW_AGENT_REVISION_ID,
+              startup,
+              ...(startup === "failed"
+                ? {
+                    runtimeFailure: {
+                      component: env.OPENCLAW_RUNTIME_STATUS_CONTAINER,
+                      check: "model-probe",
+                      code: "AUTHENTICATION_FAILED",
+                      checkedAt: "2026-09-29T00:00:00.000Z",
+                    },
+                  }
+                : {}),
+            },
+          };
+        }
+        if (path === "/openclaw/plugin-runtime/status") {
+          return {
+            statusCode: 200,
+            body: { phase: options.pluginPhase ?? "ready", startupId: "startup-1" },
+          };
+        }
+        return { statusCode: 200 };
+      },
+      options.marker,
+    );
+    const nativeChecked = result.requests.includes(nativeRequest);
+    if (startup === "ready" && (options.pluginPhase ?? "ready") === "ready") {
+      assert.equal(result.exitCode, 0, `${startup}: ${result.requests.join(", ")}`);
+      assert.equal(nativeChecked, true);
+    } else {
+      assert.equal(result.exitCode, 1, `${startup} must not be ready`);
+      assert.equal(nativeChecked, false, `${startup} must not reach the native check`);
+    }
+    assert.equal(result.requests[0], `${statusPort}/openclaw/runtime/status`);
+  }
+}
+
+test("rendered Gateway and Harness readiness waits for the runtime startup state", async (t) => {
+  for (const embedded of [true, false]) {
+    await t.test(embedded ? "embedded Gateway" : "dedicated Codex Harness", async () => {
+      const { driver, revision, objects, state, context } = workspaceSetupFixture(embedded);
+      await driver.prepareRevision(revision, context);
+      state.ready = true;
+      await driver.prepareRevision(revision, context).catch(() => undefined);
+      const workloads = [...objects.values()].filter(({ kind }) => kind === "Deployment");
+      const roles = workloads.map(
+        (workload) => workload.spec.template.metadata.labels["openclaw.dev/workload-role"],
+      );
+      assert.deepEqual(roles.sort(), embedded ? ["gateway"] : ["agent", "gateway"]);
+      for (const workload of workloads) {
+        const container = workload.spec.template.spec.containers[0];
+        const env = renderedEnvironment(container);
+        const gateway = container.name === "gateway";
+        const readiness = gateway ? GATEWAY_READINESS_ENTRYPOINT : AGENT_READINESS_ENTRYPOINT;
+        assert.deepEqual(container.readinessProbe.exec.command, ["node", "-e", readiness]);
+        // The runtime wrapper and its readiness read the same status port.
+        assert.ok(container.ports.some((port) => port.containerPort === 18791));
+        // No enabled plugins: no plugin status to wait for, so the startup
+        // state is what holds the native process out of readiness.
+        assert.equal(env.OPENCLAW_PLUGIN_STATUS_PORT, undefined);
+        assertStartupGatesReadiness(
+          readiness,
+          env,
+          gateway ? `${env.OPENCLAW_GATEWAY_PORT}/readyz` : `ws:${env.APP_SERVER_PORT}`,
+          { marker: env.OPENCLAW_PLUGIN_READY_MARKER },
+        );
+      }
+    });
+  }
+  await t.test("Codex Harness without a plugin runtime", () => {
+    // Neither a ready marker nor plugin status exists to hold readiness.
+    assertStartupGatesReadiness(
+      AGENT_READINESS_ENTRYPOINT,
+      {
+        APP_SERVER_PORT: "18790",
+        APP_SERVER_TOKEN: "fixture-transport-token",
+        OPENCLAW_AGENT_REVISION_ID: "revision-no-plugins",
+        OPENCLAW_RUNTIME_STATUS_CONTAINER: "agent",
+        OPENCLAW_RUNTIME_STATUS_PORT: "18791",
+      },
+      "ws:18790",
+    );
+  });
+  await t.test("Codex Harness with plugins", () => {
+    const env = {
+      APP_SERVER_PORT: "18790",
+      APP_SERVER_TOKEN: "fixture-transport-token",
+      OPENCLAW_AGENT_REVISION_ID: "revision-plugins",
+      OPENCLAW_RUNTIME_STATUS_CONTAINER: "agent",
+      OPENCLAW_RUNTIME_STATUS_PORT: "18791",
+      OPENCLAW_PLUGIN_STATUS_CONTAINER: "agent",
+      OPENCLAW_PLUGIN_STATUS_PORT: "18791",
+      OPENCLAW_PLUGIN_READY_MARKER: "/plugin-runtime/ready",
+    };
+    assertStartupGatesReadiness(AGENT_READINESS_ENTRYPOINT, env, "ws:18790", {
+      marker: env.OPENCLAW_PLUGIN_READY_MARKER,
+    });
+    assertStartupGatesReadiness(AGENT_READINESS_ENTRYPOINT, env, "ws:18790", {
+      marker: env.OPENCLAW_PLUGIN_READY_MARKER,
+      pluginPhase: "starting",
+    });
+  });
+  await t.test("without a runtime status port readiness keeps its native check", () => {
+    for (const [entrypoint, env, native] of [
+      [GATEWAY_READINESS_ENTRYPOINT, { OPENCLAW_GATEWAY_PORT: "8080" }, "8080/readyz"],
+      [
+        AGENT_READINESS_ENTRYPOINT,
+        { APP_SERVER_PORT: "4500", APP_SERVER_TOKEN: "fixture-transport-token" },
+        "ws:4500",
+      ],
+    ]) {
+      const result = runReadiness(entrypoint, env, () => ({ statusCode: 200 }));
+      assert.deepEqual(result.requests, [native]);
+      assert.equal(result.exitCode, 0);
+    }
+  });
+});
+
+// The native process may listen before readiness passes. Only readiness-gated
+// Service endpoints may reach it: Services never publish unready addresses,
+// address-block (apiserver proxy) ingress opens only the wrapper's status port,
+// and native ports admit only the Agent's own peers, which dial Services.
+test("native runtime ports are reachable only through readiness-gated peers", async (t) => {
+  const statusPort = 18791;
+  const nativePorts = new Set([8080, 8081, 18790]);
+  const assertIngress = (policies, label) => {
+    for (const policy of policies) {
+      for (const rule of policy.spec.ingress ?? []) {
+        const ports = (rule.ports ?? []).map(({ port }) => port);
+        assert.ok(ports.length > 0, `${label} ${policy.metadata.name}: ingress names its ports`);
+        const addressBlocks = (rule.from ?? []).filter((peer) => peer.ipBlock !== undefined);
+        if (addressBlocks.length > 0) {
+          assert.deepEqual(
+            ports,
+            [statusPort],
+            `${label} ${policy.metadata.name}: address-block ingress opens only the status port`,
+          );
+        }
+        if (ports.some((port) => nativePorts.has(port))) {
+          assert.ok(
+            (rule.from ?? []).length > 0 &&
+              rule.from.every((peer) => peer.ipBlock === undefined && peer.podSelector),
+            `${label} ${policy.metadata.name}: native ports admit only selected peer Pods`,
+          );
+        }
+      }
+    }
+  };
+  for (const embedded of [true, false]) {
+    await t.test(
+      embedded ? "embedded rendered objects" : "dedicated rendered objects",
+      async () => {
+        const { driver, revision, objects, state, context } = workspaceSetupFixture(embedded);
+        await driver.prepareRevision(revision, context);
+        state.ready = true;
+        await driver.prepareRevision(revision, context).catch(() => undefined);
+        const rendered = [...objects.values()];
+        for (const service of rendered.filter(({ kind }) => kind === "Service")) {
+          assert.notEqual(service.spec.publishNotReadyAddresses, true, service.metadata.name);
+        }
+        assertIngress(
+          rendered.filter(({ kind }) => kind === "NetworkPolicy"),
+          embedded ? "embedded" : "dedicated",
+        );
+      },
+    );
+  }
+  await t.test("status proxy address blocks", () => {
+    const tenantNamespace = { name: kubernetesNamespaceName(tenant.id), plane: "execution" };
+    for (const mode of ["embedded", "dedicated"]) {
+      const driver = createKubernetesComputeDriver(
+        options({
+          network: { ...options().network, pluginStatusProxySourceCidrs: ["10.42.0.0/16"] },
+          runtime: { transportSecretPrefix: "transport", gatewayStorageClassName: "local-path" },
+        }),
+      );
+      const revision = routedRevision(driver, {
+        harness: { id: mode === "embedded" ? "openclaw" : "codex", version: "1.0.0", mode },
+        plugins: { plugins: { linear: { enabled: true } } },
+      });
+      const policies = [
+        ...driver.agentNetworkPolicies(revision, tenantNamespace).map(({ resource }) => resource),
+        ...driver.networkPolicies({ namespaceId: tenant.id }, tenantNamespace),
+      ];
+      assert.ok(
+        policies.some((policy) =>
+          (policy.spec.ingress ?? []).some((rule) =>
+            (rule.from ?? []).some((peer) => peer.ipBlock?.cidr === "10.42.0.0/16"),
+          ),
+        ),
+        "the status proxy address block is rendered",
+      );
+      assertIngress(policies, mode);
+    }
+  });
 });
 
 test("SDK resource requirements still require explicit CPU and memory requests and limits", () => {

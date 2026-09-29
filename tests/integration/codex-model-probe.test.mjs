@@ -207,23 +207,29 @@ test(
       scenarios.map((scenario) =>
         t.test(scenario.name, { concurrency: true }, async (t) => {
           const launcher = await startLauncher(t, scenario.input);
+          // The runtime status port lets readiness see the probe, so app-server
+          // starts at once and the probe runs alongside it.
+          await waitFor(() => launcher.output().includes("APP_SERVER_STARTED"), launcher.errors);
           await waitFor(
             () =>
-              launcher.output().includes("APP_SERVER_STARTED") ||
+              launcher.errors().includes('"code":"READY"') ||
               launcher.errors().includes("Harness model authentication probe failed."),
             launcher.errors,
           );
-          const snapshot = await launcher.snapshot();
+          let snapshot = await launcher.snapshot();
+          if (scenario.ready && !snapshot.ready) {
+            await delay(500);
+            snapshot = await launcher.snapshot();
+          }
           assert.equal(snapshot.ready, scenario.ready ?? false);
+          assert.equal(snapshot.status.startup, scenario.ready ? "ready" : "failed");
           assert.equal(snapshot.calls.filter((args) => args.includes("login")).length, 1);
           assert.equal(
             snapshot.calls.filter((args) => args.includes("exec")).length,
             scenario.attempts,
           );
-          assert.equal(
-            snapshot.calls.filter((args) => args.includes("app-server")).length,
-            scenario.ready ? 1 : 0,
-          );
+          // A failed probe stops the app-server it had started and holds.
+          assert.equal(snapshot.calls.filter((args) => args.includes("app-server")).length, 1);
           assert.equal(snapshot.status.runtimeFailure?.code, scenario.code);
           assert.deepEqual(snapshot.probeDirectories, []);
           assert.doesNotMatch(
@@ -258,10 +264,9 @@ test(
       await launcher.stop();
       const result = await Promise.race([launcher.exited, delay(3000).then(() => "still running")]);
       assert.notEqual(result, "still running");
-      assert.equal(launcher.output(), "");
       const calls = await launcher.calls();
       assert.equal(calls.filter((args) => args.includes("exec")).length, 1);
-      assert.equal(calls.filter((args) => args.includes("app-server")).length, 0);
+      assert.equal(calls.filter((args) => args.includes("app-server")).length, 1);
       assert.equal(
         launcher
           .errors()

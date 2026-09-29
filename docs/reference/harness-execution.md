@@ -112,7 +112,13 @@ Kubernetes rejects `runtime`; its managed validation remains unchanged.
 
 Codex rejects missing or conflicting runtime inputs before starting its app
 server. After login, a bounded native model turn must succeed before the server
-starts; local credential storage alone does not prove provider acceptance.
+becomes ready; local credential storage alone does not prove provider acceptance.
+On Kubernetes the app-server and the embedded gateway start while their probe
+runs. Readiness first reads the wrapper's private startup state, which stays
+`pending` until the probe passes and becomes `failed` if it fails, so the
+process never receives Service traffic before the probe passes. A failed probe
+stops the process and holds the same runtime failure. Without that private
+status port, as on Docker, the probe still runs before the process starts.
 Login state stays in its
 bounded ephemeral home. Gateway transport and workload identity credentials
 remain separate. A dedicated gateway receives no model credential. Model auth

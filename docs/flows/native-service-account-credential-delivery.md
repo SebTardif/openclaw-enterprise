@@ -1,7 +1,7 @@
 ---
 created: 2026-08-24
-updated: 2026-09-28
-last_updated_session: authoring-run/3b7cc615-9e7b-416a-aec7-fe13c38cace1
+updated: 2026-09-29
+last_updated_session: authoring-run/074a5e05-eb1c-4279-b6c7-174c3d89ba7b
 ---
 
 # Harness Authentication Binding Flow
@@ -170,11 +170,25 @@ attempts within one monotonic 61-second budget. Only the subprocess's
 unexplained `SIGKILL` is a nonretryable failure. The next process timeout is the
 smaller of 30 seconds and the remaining budget. No termination handler is
 installed during the delay, so stopping the launcher prevents the second call.
-Only successful validation starts the app-server and publishes readiness.
+Only successful validation publishes readiness.
+
+With `OPENCLAW_RUNTIME_STATUS_PORT` (every Kubernetes runtime Gateway and
+Harness), `startCodexWithConcurrentProbe` starts the app-server and plugin
+installation right after login and runs the same attempts through
+`startBoundedProbe`, which keeps `spawnSync`'s timeout, output bound and
+signal. The private runtime status reports `startup: pending` until the probe
+passes; `GATEWAY_READINESS_ENTRYPOINT` and `AGENT_READINESS_ENTRYPOINT` require
+`startup: ready` before any native check. Plugin status and the ready marker are
+held until then. A failed probe stops the app-server and holds the same runtime
+failure; an app-server or plugin failure seen earlier waits for the probe
+result, so a probe failure still wins. Termination stops the probe and exits
+without waiting. Without that port the probe runs first, as before.
 
 Embedded OpenClaw consumes the selected provider's native API key and runs one bounded native
 primary-model probe in the actual gateway startup, with tools and fallback
-disabled. Its 16-token output limit meets the provider's minimum request size.
+disabled. With a runtime status port, `startOpenClawAuthenticationProbe` runs it
+alongside plugin installation and the gateway process under the same startup
+gate. Its 16-token output limit meets the provider's minimum request size.
 Initial and replacement deployments use this same startup path. For replacement,
 activation first updates the shared gateway's `Recreate` Deployment, which can
 stop the serving gateway before the new process validates credentials. Invalid
@@ -232,6 +246,8 @@ history cannot restore historical Secret values.
 [keep this for the user to add notes. do not change between edits]
 
 ## Changelog
+
+- 2026-09-29 09:45: Run the startup model probes alongside app-server and gateway start behind a private startup readiness gate in the accompanying change. (authoring-run/074a5e05-eb1c-4279-b6c7-174c3d89ba7b - d040b86d)
 
 - 2026-09-28 18:45: Document bounded Codex model-probe recovery and sanitized attempt evidence in the accompanying change. (authoring-run/3b7cc615-9e7b-416a-aec7-fe13c38cace1 - a14435c81e0d4020dd24568babddf95aba533da7)
 

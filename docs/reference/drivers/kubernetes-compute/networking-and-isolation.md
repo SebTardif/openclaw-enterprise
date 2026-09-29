@@ -32,6 +32,15 @@ An omitted list adds no API-proxy ingress rule and leaves status unavailable
 where the cluster blocks that traffic. This setting does not expose the native
 gateway or grant workloads Kubernetes API access.
 
+A runtime process can listen before it is ready: the gateway and Codex
+app-server start while the startup model probe runs, and readiness waits for the
+wrapper's private startup state. Nothing reaches them before readiness except
+through readiness-gated paths. Services do not publish unready addresses, and
+Envoy routes only to ready endpoints. API-server proxy address blocks reach only
+the status port. Native ports admit only the approved gateway clients or Envoy
+peer and, for a Harness, its own Agent's gateway, which dials the Service. The
+app-server also requires its capability token.
+
 When private Agent routing is enabled, Compute derives the only allowed peer
 from `gatewayRouting`: the Envoy namespace and the Gateway's exact owning name
 and namespace labels. Omit `network.gatewayClients`; startup rejects explicit

@@ -2988,71 +2988,433 @@ test("Codex runtime gates startup and readiness on a successful native authentic
       probeStatus: 1,
     },
   ];
+  // "concurrent" is the Kubernetes path: a runtime status port lets readiness
+  // see the probe, so app-server starts at once and the probe runs alongside it.
+  // "serial" has no runtime status port (Docker): the probe gates app-server.
+  for (const mode of ["concurrent", "serial"]) {
+    for (const scenario of scenarios) {
+      await t.test(`${mode}: ${scenario.name}`, () =>
+        runCodexAuthenticationScenario(scenario, mode),
+      );
+    }
+  }
+});
+
+async function runCodexAuthenticationScenario(scenario, mode) {
+  const concurrent = mode === "concurrent";
+  const directory = mkdtempSync(join(tmpdir(), "openclaw-plugin-ready-"));
+  const marker = join(directory, "ready");
+  writeFileSync(marker, "stale\n", { mode: 0o600 });
+  try {
+    const diagnostics = [];
+    const idleTimers = [];
+    const timers = [];
+    const probeTimerDelays = [];
+    const appServerSignals = [];
+    const revisionId = "revision-runtime-auth-gate";
+    let statusHandler;
+    let appServerStarts = 0;
+    let appServerExit;
+    let nativeCalls = 0;
+    let loginCalls = 0;
+    let probeCalls = 0;
+    let clock = 0;
+    let pendingProbe;
+    let awaitingProbeTimer;
+    const flush = () => new Promise((resolve) => setImmediate(resolve));
+    const probeOutcome = (timeout) => {
+      probeCalls++;
+      assert.ok(timeout > 0 && timeout <= 30000);
+      if (scenario.expectedTimeouts) {
+        assert.equal(timeout, scenario.expectedTimeouts[probeCalls - 1]);
+      }
+      if (probeCalls <= (scenario.probeTimeouts ?? 0)) {
+        return { timedOut: true };
+      }
+      if (scenario.probeSignal) {
+        return { status: null, signal: scenario.probeSignal };
+      }
+      return {
+        status: scenario.probeStatus ?? 0,
+        timedOut: scenario.probeError === "ETIMEDOUT",
+        ...(scenario.probeError && scenario.probeError !== "ETIMEDOUT"
+          ? { error: { code: scenario.probeError } }
+          : {}),
+        stdout:
+          scenario.probeOutput ?? scenario.events.map((event) => JSON.stringify(event)).join("\n"),
+      };
+    };
+    const sandbox = {
+      URL,
+      setTimeout(callback, delay) {
+        const timer = { callback, delay, cleared: false, unref() {} };
+        if (awaitingProbeTimer !== undefined) {
+          awaitingProbeTimer.timer = timer;
+          probeTimerDelays.push(delay);
+          awaitingProbeTimer = undefined;
+        } else {
+          timers.push(timer);
+        }
+        return timer;
+      },
+      clearTimeout(timer) {
+        if (timer) {
+          timer.cleared = true;
+        }
+      },
+      console: {
+        error(message) {
+          diagnostics.push(message);
+        },
+      },
+      setInterval(callback, delay) {
+        idleTimers.push({ callback, delay });
+      },
+      process: {
+        env: {
+          CODEX_HOME: join(directory, "codex"),
+          CODEX_LOGIN_MODE: scenario.pat ? "codex_pat" : "api_key",
+          ...(scenario.pat
+            ? { CODEX_ACCESS_TOKEN: "at-fixture-token" }
+            : { OPENAI_API_KEY: "fixture-api-key" }),
+          OPENCLAW_HARNESS_MODEL: "codex/gpt-4.1",
+          OPENCLAW_AGENT_REVISION_ID: revisionId,
+          ...(concurrent
+            ? {
+                OPENCLAW_RUNTIME_STATUS_CONTAINER: "agent",
+                OPENCLAW_RUNTIME_STATUS_PORT: "18791",
+                OPENCLAW_POD_UID: "pod-runtime-auth-gate",
+              }
+            : {}),
+          OPENCLAW_PLUGIN_READY_MARKER: marker,
+          APP_SERVER_TOKEN: "fixture-transport-token",
+          APP_SERVER_PORT: "4500",
+        },
+        on() {},
+        exit() {
+          assert.fail("startup must either remain unready or start the app server");
+        },
+      },
+      require(specifier) {
+        if (specifier === "node:perf_hooks") {
+          return { performance: { now: () => clock } };
+        }
+        if (specifier === "node:fs") {
+          return {
+            mkdirSync() {},
+            mkdtempSync: () => mkdtempSync(join(directory, "probe-")),
+            rmSync,
+            readFileSync() {
+              throw new Error("no plugin runtime payload is configured");
+            },
+            writeFileSync,
+          };
+        }
+        if (specifier === "node:http") {
+          return {
+            createServer(handler) {
+              statusHandler = handler;
+              return { listen() {} };
+            },
+          };
+        }
+        if (specifier === "node:child_process") {
+          return {
+            spawnSync(command, args, options) {
+              nativeCalls++;
+              const isLogin = args.includes("login");
+              if (isLogin) {
+                loginCalls++;
+              }
+              if (isLogin && scenario.pat) {
+                assert.equal(command, "codex");
+                assert.deepEqual(Array.from(args), [
+                  "-c",
+                  "cli_auth_credentials_store=file",
+                  "login",
+                  "--with-access-token",
+                ]);
+                assert.equal(options.input, "at-fixture-token");
+              }
+              // Substitute only native process output; execute the production
+              // login/probe parser and readiness control flow unmodified.
+              if (isLogin) {
+                if (scenario.loginError) {
+                  return { status: null, error: { code: scenario.loginError } };
+                }
+                if (loginCalls <= (scenario.loginTimeouts ?? 0)) {
+                  return { status: null, signal: "SIGKILL", error: { code: "ETIMEDOUT" } };
+                }
+                return {
+                  status: scenario.loginStatus ?? 0,
+                  ...(scenario.loginStderr ? { stderr: scenario.loginStderr } : {}),
+                };
+              }
+              assert.equal(concurrent, false, "the concurrent probe must not block startup");
+              assert.equal(appServerStarts, 0, "the serial probe precedes app-server");
+              assert.equal(sandbox.process.env.CODEX_ACCESS_TOKEN, undefined);
+              assert.equal(sandbox.process.env.OPENAI_API_KEY, undefined);
+              const outcome = probeOutcome(options.timeout);
+              if (outcome.timedOut) {
+                if (outcome.stdout === undefined) {
+                  clock += options.timeout;
+                }
+                return {
+                  status: outcome.stdout === undefined ? null : outcome.status,
+                  signal: "SIGKILL",
+                  error: { code: "ETIMEDOUT" },
+                  stdout: outcome.stdout,
+                };
+              }
+              return outcome;
+            },
+            spawn(command, args) {
+              assert.equal(command, "codex");
+              if (args.includes("app-server")) {
+                appServerStarts++;
+                const listeners = {};
+                return {
+                  on(event, listener) {
+                    listeners[event] = listener;
+                    if (event === "exit") {
+                      appServerExit = listener;
+                    }
+                  },
+                  kill(signal) {
+                    appServerSignals.push(signal);
+                    // The stopped app-server exits: the wrapper must keep holding.
+                    if (signal === "SIGTERM") {
+                      queueMicrotask(() => listeners.exit?.(null, "SIGTERM"));
+                    }
+                    return true;
+                  },
+                };
+              }
+              assert.equal(concurrent, true, "the serial probe runs synchronously");
+              assert.ok(args.includes("exec"));
+              assert.equal(appServerStarts, 1, "app-server starts before the probe finishes");
+              assert.equal(sandbox.process.env.CODEX_ACCESS_TOKEN, undefined);
+              assert.equal(sandbox.process.env.OPENAI_API_KEY, undefined);
+              nativeCalls++;
+              const listeners = {};
+              const stdoutListeners = [];
+              const child = {
+                pid: 4242,
+                stdout: {
+                  on: (event, listener) => event === "data" && stdoutListeners.push(listener),
+                },
+                stderr: { on() {} },
+                on(event, listener) {
+                  listeners[event] = listener;
+                },
+                kill(signal) {
+                  queueMicrotask(() => listeners.close?.(null, signal));
+                  return true;
+                },
+              };
+              pendingProbe = { child, stdoutListeners, listeners };
+              awaitingProbeTimer = pendingProbe;
+              return child;
+            },
+          };
+        }
+        return nodeRequire(specifier);
+      },
+    };
+    vm.runInNewContext(AGENT_RUNTIME_ENTRYPOINT, sandbox);
+    const loginFailed =
+      scenario.loginFailed || scenario.loginStatus === 1 || scenario.loginTimeouts === 3;
+    if (concurrent && !loginFailed) {
+      // The app-server listens while the probe runs; readiness sees "pending".
+      assert.equal(appServerStarts, 1);
+      assert.equal(readRuntimeStatusFromHandler(statusHandler).startup, "pending");
+      assert.equal(existsSync(marker), false);
+    }
+    // Drive the native probe: answer each attempt, or expire its timeout, and
+    // run the retry backoff with the scenario's clock advance.
+    for (let steps = 0; steps < 20; steps++) {
+      await flush();
+      if (pendingProbe !== undefined) {
+        const probe = pendingProbe;
+        pendingProbe = undefined;
+        const outcome = probeOutcome(probe.timer.delay);
+        if (outcome.stdout !== undefined) {
+          for (const listener of probe.stdoutListeners) {
+            listener(Buffer.from(outcome.stdout));
+          }
+        }
+        if (outcome.timedOut) {
+          if (outcome.stdout === undefined) {
+            clock += probe.timer.delay;
+          }
+          probe.timer.callback();
+        } else {
+          probe.listeners.close(outcome.status, outcome.signal ?? null);
+        }
+        continue;
+      }
+      const retry = timers.find((timer) => !timer.cleared && !timer.fired && timer.delay === 1000);
+      if (retry !== undefined) {
+        assert.equal(appServerStarts, concurrent ? 1 : 0);
+        assert.equal(existsSync(marker), false);
+        if (concurrent) {
+          const status = readRuntimeStatusFromHandler(statusHandler);
+          assert.equal(status.startup, "pending");
+          assert.equal(status.runtimeFailure, undefined);
+        }
+        retry.fired = true;
+        clock += scenario.retryDelayMs ?? 1000;
+        retry.callback();
+        continue;
+      }
+      break;
+    }
+    const retries = timers.filter((timer) => timer.delay === 1000);
+    assert.equal(retries.length, scenario.probeTimeouts ? 1 : 0, "at most one retry");
+    assert.equal(
+      loginCalls,
+      scenario.loginAttempts ?? Math.min((scenario.loginTimeouts ?? 0) + 1, 3),
+    );
+    assert.equal(
+      nativeCalls,
+      loginCalls + (loginFailed ? 0 : scenario.probeTimeouts && !scenario.expiredBudget ? 2 : 1),
+    );
+    if (concurrent && scenario.expectedTimeouts) {
+      assert.deepEqual(probeTimerDelays, scenario.expectedTimeouts);
+    }
+    const probeDiagnostics = diagnostics
+      .filter((message) => message.startsWith("{"))
+      .map(JSON.parse);
+    assert.equal(probeDiagnostics.length, probeCalls);
+    for (const [index, diagnostic] of probeDiagnostics.entries()) {
+      assert.equal(diagnostic.event, "codex.model_probe");
+      assert.equal(diagnostic.attempt, index + 1);
+      assert.ok(diagnostic.elapsedMs >= 0);
+    }
+    if (scenario.probeTimeouts) {
+      assert.equal(probeDiagnostics[0].code, "MODEL_PROBE_TIMEOUT");
+    }
+    const failureMessages = diagnostics.filter((message) => !message.startsWith("{"));
+    assert.equal(statusHandler !== undefined, concurrent);
+    const runtimeStatus = concurrent ? readRuntimeStatusFromHandler(statusHandler) : undefined;
+    if (concurrent) {
+      assert.equal(runtimeStatus.revisionId, revisionId);
+      assert.equal(runtimeStatus.container, "agent");
+      assert.equal(runtimeStatus.podUid, "pod-runtime-auth-gate");
+    }
+    if (scenario.ready) {
+      assert.equal(appServerStarts, 1);
+      assert.deepEqual(appServerSignals, []);
+      assert.deepEqual(failureMessages, []);
+      assert.equal(probeDiagnostics.at(-1).code, "READY");
+      assert.equal(idleTimers.length, 0);
+      assert.equal(readFileSync(marker, "utf8"), "ready\n");
+      if (concurrent) {
+        assert.equal(runtimeStatus.startup, "ready");
+        assert.equal(runtimeStatus.runtimeFailure, undefined);
+      }
+    } else {
+      // A concurrent failure stops the app-server it had started, and its exit
+      // does not end the wrapper: the failure evidence stays readable.
+      assert.equal(appServerStarts, concurrent && !loginFailed ? 1 : 0);
+      assert.deepEqual(appServerSignals, concurrent && !loginFailed ? ["SIGTERM"] : []);
+      assert.equal(appServerExit === undefined, !(concurrent && !loginFailed));
+      assert.deepEqual(failureMessages, ["Harness model authentication probe failed."]);
+      assert.equal(idleTimers.length, 1);
+      assert.equal(typeof idleTimers[0].callback, "function");
+      assert.ok(idleTimers[0].delay > 0);
+      assert.equal(existsSync(marker), false);
+      if (concurrent) {
+        assert.equal(runtimeStatus.startup, "failed");
+        assert.equal(runtimeStatus.runtimeFailure.component, "agent");
+        assert.equal(runtimeStatus.runtimeFailure.check, loginFailed ? "login" : "model-probe");
+        assert.equal(
+          runtimeStatus.runtimeFailure.code,
+          scenario.failureCode ?? (loginFailed ? "LOGIN_FAILED" : "MODEL_PROBE_FAILED"),
+        );
+        assert.match(runtimeStatus.runtimeFailure.checkedAt, /^\d{4}-\d{2}-\d{2}T/);
+      }
+    }
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+}
+
+// Concurrent startup must fail exactly as the serial probe did: a probe failure
+// outranks app-server and plugin failures that surface while it still runs.
+test("Codex concurrent startup keeps the probe outcome ahead of other startup failures", async (t) => {
+  const completedTurn = [
+    { type: "turn.started" },
+    { type: "item.completed", item: { type: "agent_message", text: "READY" } },
+    { type: "turn.completed" },
+  ]
+    .map((event) => JSON.stringify(event))
+    .join("\n");
+  const rejectedTurn = JSON.stringify({
+    type: "turn.failed",
+    error: { message: "unexpected status 401 Unauthorized: Incorrect API key provided" },
+  });
+  const scenarios = [
+    { name: "plugin failure, then rejected probe", plugins: "fail", probe: "rejected" },
+    { name: "plugin failure, then accepted probe", plugins: "fail", probe: "accepted" },
+    { name: "early app-server exit, then rejected probe", appServerExit: 1, probe: "rejected" },
+    { name: "early app-server exit, then accepted probe", appServerExit: 1, probe: "accepted" },
+    { name: "termination while the probe runs", terminate: true },
+  ];
   for (const scenario of scenarios) {
-    await t.test(scenario.name, () => {
-      const directory = mkdtempSync(join(tmpdir(), "openclaw-plugin-ready-"));
-      const marker = join(directory, "ready");
-      writeFileSync(marker, "stale\n", { mode: 0o600 });
+    await t.test(scenario.name, async () => {
+      const directory = mkdtempSync(join(tmpdir(), "oce-concurrent-startup-"));
       try {
-        const diagnostics = [];
-        const idleTimers = [];
-        const revisionId = "revision-runtime-auth-gate";
+        const exits = [];
+        const errors = [];
+        const signals = new Map();
+        const appServerSignals = [];
+        const appServerListeners = [];
+        const probeSignals = [];
+        let held = false;
         let statusHandler;
-        let appServerStarts = 0;
-        let nativeCalls = 0;
-        let loginCalls = 0;
-        let probeCalls = 0;
-        let clock = 0;
-        const retryTimers = [];
+        let probe;
         const sandbox = {
           URL,
+          console: { error: (message) => errors.push(message) },
           setTimeout(callback, delay) {
-            retryTimers.push({ callback, delay });
+            return { callback, delay, unref() {} };
           },
-          console: {
-            error(message) {
-              diagnostics.push(message);
-            },
-          },
-          setInterval(callback, delay) {
-            idleTimers.push({ callback, delay });
+          clearTimeout() {},
+          setInterval() {
+            held = true;
           },
           process: {
             env: {
               CODEX_HOME: join(directory, "codex"),
-              CODEX_LOGIN_MODE: scenario.pat ? "codex_pat" : "api_key",
-              ...(scenario.pat
-                ? { CODEX_ACCESS_TOKEN: "at-fixture-token" }
-                : { OPENAI_API_KEY: "fixture-api-key" }),
-              OPENCLAW_HARNESS_MODEL: "codex/gpt-4.1",
-              OPENCLAW_AGENT_REVISION_ID: revisionId,
+              CODEX_LOGIN_MODE: "api_key",
+              OPENAI_API_KEY: "fixture-api-key",
+              OPENCLAW_HARNESS_MODEL: "codex/gpt-5",
+              OPENCLAW_AGENT_REVISION_ID: "revision-concurrent-startup",
               OPENCLAW_RUNTIME_STATUS_CONTAINER: "agent",
               OPENCLAW_RUNTIME_STATUS_PORT: "18791",
-              OPENCLAW_POD_UID: "pod-runtime-auth-gate",
-              OPENCLAW_PLUGIN_READY_MARKER: marker,
+              OPENCLAW_POD_UID: "pod-concurrent-startup",
               APP_SERVER_TOKEN: "fixture-transport-token",
               APP_SERVER_PORT: "4500",
+              ...(scenario.plugins === "fail"
+                ? {
+                    OPENCLAW_PLUGIN_RUNTIME_JSON: JSON.stringify({
+                      manifest: { kind: "codex", selections: {} },
+                      codexConfigurationToml: "",
+                    }),
+                    // Expire the install budget at once: installation fails.
+                    OPENCLAW_PLUGIN_RUNTIME_INSTALL_DEADLINE_MS: "0",
+                  }
+                : {}),
             },
-            on() {},
-            exit() {
-              assert.fail("startup must either remain unready or start the app server");
+            on(signal, callback) {
+              signals.set(signal, callback);
+            },
+            exit(code) {
+              exits.push(code);
             },
           },
           require(specifier) {
-            if (specifier === "node:perf_hooks") {
-              return { performance: { now: () => clock } };
-            }
-            if (specifier === "node:fs") {
-              return {
-                mkdirSync() {},
-                mkdtempSync: () => mkdtempSync(join(directory, "probe-")),
-                rmSync,
-                readFileSync() {
-                  throw new Error("no plugin runtime payload is configured");
-                },
-                writeFileSync,
-              };
-            }
             if (specifier === "node:http") {
               return {
                 createServer(handler) {
@@ -3061,136 +3423,119 @@ test("Codex runtime gates startup and readiness on a successful native authentic
                 },
               };
             }
+            if (specifier === "node:fs") {
+              return {
+                mkdirSync() {},
+                mkdtempSync: () => mkdtempSync(join(directory, "probe-")),
+                rmSync,
+                readFileSync() {
+                  throw new Error("unexpected file read");
+                },
+                writeFileSync() {},
+              };
+            }
             if (specifier === "node:child_process") {
               return {
-                spawnSync(command, args, options) {
-                  nativeCalls++;
-                  const isLogin = args.includes("login");
-                  if (isLogin) {
-                    loginCalls++;
-                  }
-                  if (isLogin && scenario.pat) {
-                    assert.equal(command, "codex");
-                    assert.deepEqual(Array.from(args), [
-                      "-c",
-                      "cli_auth_credentials_store=file",
-                      "login",
-                      "--with-access-token",
-                    ]);
-                    assert.equal(options.input, "at-fixture-token");
-                  }
-                  if (!isLogin) {
-                    assert.equal(sandbox.process.env.CODEX_ACCESS_TOKEN, undefined);
-                    assert.equal(sandbox.process.env.OPENAI_API_KEY, undefined);
-                    assert.equal(sandbox.process.env.CODEX_CHATGPT_WORKSPACE_ID, undefined);
-                  }
-                  // Substitute only native process output; execute the production
-                  // login/probe parser and readiness control flow unmodified.
-                  if (isLogin) {
-                    if (scenario.loginError) {
-                      return { status: null, error: { code: scenario.loginError } };
-                    }
-                    if (loginCalls <= (scenario.loginTimeouts ?? 0)) {
-                      return { status: null, signal: "SIGKILL", error: { code: "ETIMEDOUT" } };
-                    }
-                    return {
-                      status: scenario.loginStatus ?? 0,
-                      ...(scenario.loginStderr ? { stderr: scenario.loginStderr } : {}),
-                    };
-                  }
-                  probeCalls++;
-                  assert.ok(options.timeout > 0 && options.timeout <= 30000);
-                  if (scenario.expectedTimeouts) {
-                    assert.equal(options.timeout, scenario.expectedTimeouts[probeCalls - 1]);
-                  }
-                  if (probeCalls <= (scenario.probeTimeouts ?? 0)) {
-                    clock += options.timeout;
-                    return { status: null, signal: "SIGKILL", error: { code: "ETIMEDOUT" } };
-                  }
-                  if (scenario.probeSignal) {
-                    return { status: null, signal: scenario.probeSignal };
-                  }
-                  return {
-                    status: scenario.probeStatus ?? 0,
-                    ...(scenario.probeError ? { error: { code: scenario.probeError } } : {}),
-                    stdout:
-                      scenario.probeOutput ??
-                      scenario.events.map((event) => JSON.stringify(event)).join("\n"),
-                  };
+                spawnSync() {
+                  return { status: 0 };
                 },
                 spawn(_command, args) {
-                  assert.ok(args.includes("app-server"));
-                  appServerStarts++;
-                  return { on() {}, kill() {} };
+                  if (args.includes("app-server")) {
+                    return {
+                      on(event, listener) {
+                        if (event === "exit") {
+                          appServerListeners.push(listener);
+                        }
+                      },
+                      kill(signal) {
+                        appServerSignals.push(signal);
+                        return true;
+                      },
+                    };
+                  }
+                  const listeners = {};
+                  const stdout = [];
+                  probe = {
+                    pid: 11,
+                    stdout: { on: (_event, listener) => stdout.push(listener) },
+                    stderr: { on() {} },
+                    on(event, listener) {
+                      listeners[event] = listener;
+                    },
+                    kill(signal) {
+                      probeSignals.push(signal);
+                      queueMicrotask(() => listeners.close?.(null, signal));
+                      return true;
+                    },
+                    respond(output, status) {
+                      for (const listener of stdout) {
+                        listener(Buffer.from(output));
+                      }
+                      listeners.close(status, null);
+                    },
+                  };
+                  return probe;
                 },
               };
             }
             return nodeRequire(specifier);
           },
         };
+        const flush = () => new Promise((resolve) => setImmediate(resolve));
+        const exitAppServer = (code, signal) => {
+          for (const listener of appServerListeners) {
+            listener(code, signal);
+          }
+        };
         vm.runInNewContext(AGENT_RUNTIME_ENTRYPOINT, sandbox);
-        if (scenario.probeTimeouts) {
-          assert.equal(appServerStarts, 0);
-          assert.equal(existsSync(marker), false);
-          assert.equal(readRuntimeStatusFromHandler(statusHandler).runtimeFailure, undefined);
-          assert.equal(retryTimers.length, 1);
-          assert.equal(retryTimers[0].delay, 1000);
-          clock += scenario.retryDelayMs ?? 1000;
-          retryTimers[0].callback();
-          assert.equal(retryTimers.length, 1, "exhaustion must not schedule another retry");
-        } else {
-          assert.equal(retryTimers.length, 0);
+        await flush();
+        assert.ok(probe, "the probe runs after app-server started");
+        assert.equal(readRuntimeStatusFromHandler(statusHandler).startup, "pending");
+        if (scenario.appServerExit !== undefined) {
+          exitAppServer(scenario.appServerExit, null);
+          await flush();
+          assert.deepEqual(exits, [], "an early exit waits for the pending probe");
         }
-        const loginFailed =
-          scenario.loginFailed || scenario.loginStatus === 1 || scenario.loginTimeouts === 3;
-        assert.equal(
-          loginCalls,
-          scenario.loginAttempts ?? Math.min((scenario.loginTimeouts ?? 0) + 1, 3),
-        );
-        assert.equal(
-          nativeCalls,
-          loginCalls +
-            (loginFailed ? 0 : scenario.probeTimeouts && !scenario.expiredBudget ? 2 : 1),
-        );
-        const probeDiagnostics = diagnostics
-          .filter((message) => message.startsWith("{"))
-          .map(JSON.parse);
-        assert.equal(probeDiagnostics.length, probeCalls);
-        for (const [index, diagnostic] of probeDiagnostics.entries()) {
-          assert.equal(diagnostic.event, "codex.model_probe");
-          assert.equal(diagnostic.attempt, index + 1);
-          assert.ok(diagnostic.elapsedMs >= 0);
-        }
-        if (scenario.probeTimeouts) {
-          assert.equal(probeDiagnostics[0].code, "MODEL_PROBE_TIMEOUT");
-        }
-        const failureMessages = diagnostics.filter((message) => !message.startsWith("{"));
-        assert.ok(statusHandler);
-        const runtimeStatus = readRuntimeStatusFromHandler(statusHandler);
-        assert.equal(runtimeStatus.revisionId, revisionId);
-        assert.equal(runtimeStatus.container, "agent");
-        assert.equal(runtimeStatus.podUid, "pod-runtime-auth-gate");
-        if (scenario.ready) {
-          assert.equal(appServerStarts, 1);
-          assert.deepEqual(failureMessages, []);
-          assert.equal(probeDiagnostics.at(-1).code, "READY");
-          assert.equal(idleTimers.length, 0);
-          assert.equal(readFileSync(marker, "utf8"), "ready\n");
-          assert.equal(runtimeStatus.runtimeFailure, undefined);
-        } else {
-          assert.equal(appServerStarts, 0);
-          assert.deepEqual(failureMessages, ["Harness model authentication probe failed."]);
-          assert.equal(idleTimers.length, 1);
-          assert.equal(typeof idleTimers[0].callback, "function");
-          assert.ok(idleTimers[0].delay > 0);
-          assert.equal(existsSync(marker), false);
-          assert.equal(runtimeStatus.runtimeFailure.component, "agent");
-          assert.equal(runtimeStatus.runtimeFailure.check, loginFailed ? "login" : "model-probe");
+        if (scenario.terminate) {
+          signals.get("SIGTERM")();
+          assert.deepEqual(probeSignals, ["SIGKILL"], "termination stops the probe");
+          assert.deepEqual(appServerSignals, ["SIGTERM"]);
+          exitAppServer(null, "SIGTERM");
+          await flush();
+          assert.deepEqual(exits, [0], "termination does not wait for the probe");
           assert.equal(
-            runtimeStatus.runtimeFailure.code,
-            scenario.failureCode ?? (loginFailed ? "LOGIN_FAILED" : "MODEL_PROBE_FAILED"),
+            errors.filter((message) => message.startsWith("{")).length,
+            0,
+            "a probe stopped by termination reports nothing",
           );
-          assert.match(runtimeStatus.runtimeFailure.checkedAt, /^\d{4}-\d{2}-\d{2}T/);
+          assert.equal(held, false);
+          return;
+        }
+        assert.deepEqual(exits, [], "a plugin failure waits for the pending probe");
+        probe.respond(
+          scenario.probe === "accepted" ? completedTurn : rejectedTurn,
+          scenario.probe === "accepted" ? 0 : 1,
+        );
+        await flush();
+        await flush();
+        const status = readRuntimeStatusFromHandler(statusHandler);
+        if (scenario.probe === "rejected") {
+          assert.equal(status.startup, "failed");
+          assert.equal(status.runtimeFailure.check, "model-probe");
+          assert.equal(status.runtimeFailure.code, "AUTHENTICATION_FAILED");
+          assert.equal(held, true);
+          assert.deepEqual(exits, []);
+          assert.ok(!errors.some((message) => /plugin runtime initialization/.test(message)));
+        } else {
+          // The probe passed: the other failure ends the wrapper as before.
+          assert.deepEqual(exits, [1]);
+          assert.equal(held, false);
+          assert.notEqual(status.startup, "ready");
+          assert.equal(status.runtimeFailure, undefined);
+          if (scenario.plugins === "fail") {
+            assert.deepEqual(appServerSignals, ["SIGTERM"]);
+            assert.ok(errors.some((message) => /plugin runtime initialization/.test(message)));
+          }
         }
       } finally {
         rmSync(directory, { recursive: true, force: true });
