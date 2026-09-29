@@ -1,0 +1,55 @@
+---
+config:
+  theme: base
+  sequence:
+    mirrorActors: true
+    useMaxWidth: false
+    wrap: true
+    actorMargin: 35
+    messageMargin: 32
+---
+sequenceDiagram
+  actor User as Operator
+  box Controller process
+    participant C as Worker / Compute / Sandbox
+  end
+  participant O as OpenShell gateway / Driver
+  participant K as Kubernetes / kubelet
+  box Separate supervisor Pod
+    participant S as Supervisor
+  end
+  box Agent workload Pod
+    participant A as Boundary / Codex child
+  end
+  participant G as Native OCE Gateway Pod
+  Note over User,G: 1. Proposed ordinary deployment, not installed qualification
+  User->>C: Authenticated deployment with selected workspace and resources
+  C->>C: Derive exact revision requirements and retain original authority
+  C->>O: Provision scoped requirements through accepted mapping
+  O->>K: Read exact resource identities
+  K-->>O: Scoped resource metadata
+  O->>O: Admit scope and record UIDs
+  alt Unsupported, foreign or replaced reference
+    O-->>C: Candidate unavailable
+    C-->>User: No activation
+  else Approved projection contract
+    Note over O,A: 2. Proposed projection and child delivery
+    O->>S: Start separate supervisor under its own identity
+    O->>K: Render workload Secret refs, ServiceAccount, token and PVC mounts
+    K->>A: Resolve only approved workload capabilities
+    A->>A: Admitted names handoff into child environment
+    C->>C: Observe readiness for exact revision
+    Note over C,G: 3. Route A evaluated first, endpoints and policy need proof
+    C->>G: Existing private route and matching app capability
+    G->>A: Current authenticated app-server request
+    A-->>G: Observable result
+    G-->>User: Useful result with separate mediation qualification
+  end
+  Note over User,G: 4. Consequential loss and owner recovery
+  G->>A: Request may arrive before connection loss
+  Note over A,G: Lost reply leaves effect unknown
+  G-->>C: Preserve unknown under original request/effect owner
+  C->>C: No replay or compensation from transport uncertainty
+  Note over C,A: Correlations and PVC may survive, but cannot settle remote effects
+  C->>G: Stop/replacement withdraws old authority and transport
+  Note over C,G: Current authority, exact revision and observed closure required
