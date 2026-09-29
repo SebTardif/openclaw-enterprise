@@ -751,7 +751,16 @@ export const scenarios = {
     group: "Pages/Settings",
     name: "Account",
     path: "/console/settings",
-    description: "Signed-in name and email. There are no editable settings in this release.",
+    description:
+      "Signed-in account and browser appearance. Select Light, Dark, or System and navigate to Agents; the selection persists.",
+  },
+  settingsDark: {
+    group: "Pages/Settings",
+    name: "Dark appearance",
+    path: "/console/settings",
+    actions: [{ selector: "#console-appearance", value: "dark" }],
+    description:
+      "Dark appearance through the real Settings control. Switch to Light or System, navigate, and reload to check persistence. Browser preference is shared across previews.",
   },
   notFound: {
     group: "Pages/Navigation",

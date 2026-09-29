@@ -692,7 +692,24 @@ async function loadPage({ fromNavigation = false, reuseView = fromNavigation } =
             element("dt", {}, "Email"),
             element("dd", {}, session.user.email),
           ),
-          element("p", {}, "No configurable settings in this release."),
+          element("h2", {}, "Appearance"),
+          element("label", { for: "console-appearance" }, "Color theme"),
+          element(
+            "select",
+            { id: "console-appearance", "aria-describedby": "appearance-status" },
+            ...["system", "light", "dark"].map((value) =>
+              element(
+                "option",
+                { value, selected: value === document.documentElement.dataset.appearance },
+                value.charAt(0).toUpperCase() + value.slice(1),
+              ),
+            ),
+          ),
+          element(
+            "p",
+            { id: "appearance-status", role: "status", className: "muted" },
+            "Choose a browser appearance. System follows your device appearance.",
+          ),
           button("Back", () => navigate(navigation.previousCollection)),
         ),
       );

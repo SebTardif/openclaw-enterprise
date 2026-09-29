@@ -43,7 +43,7 @@ tab is hidden. Namespace rows are read-only.
 | Namespaces    | Installation-wide collection filtered by exact Namespace `read`.                                                     |
 | Observability | External [`observability.url`](configuration.md#installation-startup-configuration) link; Installation `administer`. |
 
-The console uses a light appearance and OCC-served fonts.
+The console uses OCC-served fonts and follows the device color scheme by default.
 
 Returning pages retain content during access checks; controls await authorization.
 Unchanged pages and Agent tabs keep their loaded controls and expanded panels.
@@ -58,7 +58,12 @@ The page-header **Namespace** selector switches scope on desktop and mobile,
 listing readable Namespaces and the current selection. The
 Installation-wide Namespaces page omits the header selector. The bottom
 **OpenClaw Enterprise** menu contains **Settings** and **Logout**. Settings shows
-the signed-in account and no configurable settings.
+the signed-in account and a **Color theme** selector: **System**, **Light**, or
+**Dark**. The browser remembers the selection across navigation, reloads, and
+sign-out; other tabs on the same origin follow changes. **System** also follows
+live device appearance changes. This preference is browser-local, not an account
+setting. If browser storage is blocked, changes apply only to the current tab
+until reload, and Settings reports that they could not be saved.
 
 The selected Namespace stays in `?namespace=<id>` across pages, reload, and Back.
 An unreadable explicit ID shows **Namespace unavailable** and requires another

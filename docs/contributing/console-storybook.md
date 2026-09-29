@@ -310,6 +310,13 @@ and Secrets remain and require separate management. See
 Serving health, completed routing cutover, real shutdown, channel delivery, and
 model responses require runtime verification outside Storybook. The console displays persisted deployment status without a live serving-health indicator.
 
+## Appearance
+
+Use **Pages/Settings → Dark appearance** and the
+[appearance walkthrough](../../scripts/console-storybook/appearance-workflow.md)
+to check theme selection, persistence, cross-tab updates, and existing page states.
+The preference is shared across previews on the same origin.
+
 ## Maintain coverage
 
 `scripts/console-storybook/` installs from its own manifest and lockfile under the

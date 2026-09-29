@@ -1085,3 +1085,92 @@ async function expectNoText(page, pattern) {
     /Timeout/,
   );
 }
+
+test("console appearance follows the system, persists overrides, and synchronizes tabs", async (t) => {
+  const fixture = await createConsoleAppFixture(t);
+  await fixture.bootstrap();
+  const { page } = await newPage(t, fixture);
+  await page.emulateMedia({ colorScheme: "dark" });
+  await login(page, fixture, "/console/settings");
+  const appearance = page.getByLabel("Color theme", { exact: true });
+  await appearance.waitFor();
+  assert.equal(await appearance.inputValue(), "system");
+  const scheme = (target, expected) =>
+    target.waitForFunction(
+      (value) => getComputedStyle(document.documentElement).colorScheme === value,
+      expected,
+    );
+  await scheme(page, "dark");
+  await page.emulateMedia({ colorScheme: "light" });
+  await scheme(page, "light");
+  await appearance.selectOption("dark");
+  await scheme(page, "dark");
+
+  // A saved override must apply before the main console module can render.
+  let releaseModule;
+  const moduleGate = new Promise((resolve) => {
+    releaseModule = resolve;
+  });
+  await page.route("**/console/console.mjs", async (route) => {
+    await moduleGate;
+    await route.continue();
+  });
+  try {
+    await page.reload({ waitUntil: "commit" });
+    await scheme(page, "dark");
+  } finally {
+    releaseModule();
+    await page.unroute("**/console/console.mjs");
+  }
+  await appearance.waitFor();
+  assert.equal(await appearance.inputValue(), "dark");
+
+  const other = await page.context().newPage();
+  await other.emulateMedia({ colorScheme: "light" });
+  await other.goto(`${fixture.origin}/console/settings`);
+  await other.getByLabel("Color theme", { exact: true }).selectOption("light");
+  await scheme(page, "light");
+  assert.equal(await appearance.inputValue(), "light");
+  await appearance.selectOption("system");
+  await page.emulateMedia({ colorScheme: "dark" });
+  await scheme(page, "dark");
+  await scheme(other, "light");
+
+  // Navigation and sign-out retain a browser preference, not account data.
+  await page.getByRole("link", { name: "Agents", exact: true }).click();
+  await scheme(page, "dark");
+  await openShellMenu(page);
+  await page.getByRole("menuitem", { name: "Logout" }).click();
+  await page.getByLabel("Username").waitFor();
+  await scheme(page, "dark");
+});
+
+test("console appearance remains usable when browser storage is blocked", async (t) => {
+  const fixture = await createConsoleAppFixture(t);
+  await fixture.bootstrap();
+  const { page } = await newPage(t, fixture);
+  // Browser policy can deny storage access; do not replace theme or rendering behavior.
+  await page.addInitScript(() => {
+    Object.defineProperty(window, "localStorage", {
+      get() {
+        throw new DOMException("Storage blocked", "SecurityError");
+      },
+    });
+  });
+  await page.emulateMedia({ colorScheme: "dark" });
+  await login(page, fixture, "/console/settings");
+  await page.getByLabel("Color theme", { exact: true }).selectOption("light");
+  await page
+    .getByText("Appearance changed for this tab. Browser storage is unavailable.")
+    .waitFor();
+  assert.equal(
+    await page.evaluate(() => getComputedStyle(document.documentElement).colorScheme),
+    "light",
+  );
+  await page.reload();
+  await page.getByLabel("Color theme", { exact: true }).waitFor();
+  assert.equal(
+    await page.evaluate(() => getComputedStyle(document.documentElement).colorScheme),
+    "dark",
+  );
+});

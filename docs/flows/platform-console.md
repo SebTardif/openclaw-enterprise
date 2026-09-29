@@ -1,7 +1,7 @@
 ---
 created: 2026-09-01
-updated: 2026-09-28
-last_updated_session: authoring-run/462d5207-c3a1-4203-af4a-8db2551ccb9a
+updated: 2026-09-29
+last_updated_session: authoring-run/7626d901-402f-4e1c-91c1-deb2ce170292
 ---
 
 # Platform console request flow
@@ -113,6 +113,14 @@ exact Agent read, resolves its active revision, then calls its Compute Driver.
 The [Compute contract](../reference/drivers/compute.md) owns workload inspection
 and Enterprise/OpenClaw provenance. Navigation preserves `debug=true`; removing it
 stops reads. Missing provenance stays explicit.
+
+`apps/controller/src/console/index.html` loads `appearance.mjs` before the
+stylesheets. It resolves the browser-local preference, falling back to the device
+scheme, and sets the root theme before the application renders. Settings changes
+update the theme immediately and attempt to persist it; blocked storage leaves a
+tab-only selection and reports the limitation. System and storage events update
+the theme without remounting private views or making API requests. `console.css`
+owns the shared light and dark tokens, including controls and status colors.
 
 ### 2. Resolve the session before private reads
 
@@ -323,6 +331,8 @@ refresh and inspection.
 [keep this for the user to add notes. do not change between edits]
 
 ## Changelog
+
+- 2026-09-29 15:17: Add browser-local appearance initialization and Settings selection. (authoring-run/7626d901-402f-4e1c-91c1-deb2ce170292 - e3755ea8)
 
 - 2026-09-28 01:39: Move the sharing trace to its child flow. (authoring-run/462d5207-c3a1-4203-af4a-8db2551ccb9a - 4f32ebbca5d699296a142dfbd34c8ec46844fce7)
 
