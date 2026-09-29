@@ -33,8 +33,8 @@ owns the complete bundled-Driver Installation example, including immutable
 images, workload isolation, and projected ServiceAccount credentials. The
 [Driver package installation guide](drivers/selection.md#select-the-installed-driver)
 owns the installed IAM, Compute, and Configuration selection contract. The
-[Provider reference](providers.md) defines the optional `provider` array and its
-required related Driver membership. Provider configuration never enters native
+[Backend reference](backends.md) defines the optional `backend` array and its
+required related Driver membership. Backend configuration never enters native
 Agent Configuration documents. The optional `presets.includeDefaults` boolean
 adds bundled Agent Presets to Namespaces; it defaults to `false`. See
 [Preset initialization](presets.md#installation-defaults) for permissions,
@@ -48,6 +48,21 @@ unsupported settings, and unavailable Drivers stop startup before requests run.
 Each selected Driver validates its own closed configuration schema; unknown
 fields fail startup. OCC routes authorization through the selected IAM Driver,
 whose reviewed implementation is trusted to enforce its policy.
+
+The optional `observability` block sets one external console destination:
+
+```yaml
+observability:
+  url: https://grafana.example.com/d/occ-observability
+```
+
+`url` must be an absolute HTTP or HTTPS URL without embedded credentials or a
+fragment. Unknown fields fail startup. The API exposes the URL only after an
+Installation `administer` check; the console hides the link when unset or
+unauthorized. The destination handles its own authentication. This setting does
+not select an OpenTelemetry exporter or embed a dashboard. Compose development
+can use this block alone with its default Drivers; mount the same file into API
+and worker containers.
 
 ## Create, read, update, and delete
 
