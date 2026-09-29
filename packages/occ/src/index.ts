@@ -209,7 +209,18 @@ export {
   type ServiceAccountRepository,
   type TransactionalAuditWriter,
 } from "./state/platform-state.ts";
-export { createPostgresPool } from "./state/postgres-pool.ts";
+export { createPostgresPool, createPostgresPasswordBudgetPool } from "./state/postgres-pool.ts";
+export type {
+  PasswordAttemptBudget,
+  PasswordAttemptReservation,
+} from "./ports/password-attempt-budget.ts";
+export {
+  createPostgresStateWithPasswordBudget,
+  matchesPostgresPasswordBudgetPair,
+  type PasswordBudgetBinding,
+  type PasswordBudgetExpectedBinding,
+  type PostgresPasswordBudgetPair,
+} from "./state/postgres-password-attempt-budget.ts";
 export type {
   RepositoryRevisionOwner,
   RepositoryBrokerReceipt,

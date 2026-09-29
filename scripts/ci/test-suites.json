@@ -5,6 +5,7 @@
     "postgres": "./test-suites/postgres.json",
     "postgres-application": "./test-suites/postgres-application.json",
     "postgres-azure-workload-identity": "./test-suites/postgres-azure-workload-identity.json",
+    "password-budget-manual": "./test-suites/password-budget-manual.json",
     "images-packaging": "./test-suites/images-packaging.json",
     "k3d-fixture-configuration": "./test-suites/k3d-fixture-configuration.json",
     "k3d-fixture-state": "./test-suites/k3d-fixture-state.json",

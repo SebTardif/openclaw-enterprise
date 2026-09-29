@@ -811,6 +811,7 @@
               "flows/configuration-driver",
               "flows/configuration-driver/persistence-and-revisions",
               "flows/local-password-authentication",
+              "flows/password-attempt-budget",
               "flows/namespace-iam-policy",
               "flows/native-service-account-credential-delivery",
               "flows/secret-storage-and-delivery",

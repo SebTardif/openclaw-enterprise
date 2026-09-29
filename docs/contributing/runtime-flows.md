@@ -29,6 +29,7 @@ from each trace; for commands to run locally, see [Testing](../testing/README.md
 - [Namespace IAM policy](../flows/namespace-iam-policy.md): authorized Role and AccessBinding changes and audit commit
 
 - [Local password authentication](../flows/local-password-authentication.md) and [service API keys](../flows/service-api-keys.md)
+- [Password-attempt budget](../flows/password-attempt-budget.md): State reservation and shutdown component; authentication composition and SQL qualification remain pending
 - [Secret storage and delivery](../flows/secret-storage-and-delivery.md)
 - [Credential source lifecycle](../flows/credential-source-lifecycle.md): gateway registration, Agent binding, admission, and retried deletion
 - [Harness authentication binding](../flows/native-service-account-credential-delivery.md) and [ServiceAccount Driver credential delivery](../flows/service-account-driver-credential-delivery.md)
