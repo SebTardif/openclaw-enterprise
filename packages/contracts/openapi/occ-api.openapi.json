@@ -1367,6 +1367,42 @@
             },
             "description": "Unauthorized"
           },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "description": "Password attempt limit reached. Retry-After gives the delay in seconds.",
+                  "properties": {
+                    "error": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "code": { "type": "string" },
+                        "message": { "type": "string" }
+                      },
+                      "required": ["code", "message"],
+                      "type": "object"
+                    },
+                    "meta": {
+                      "additionalProperties": false,
+                      "properties": { "requestId": { "type": "string" } },
+                      "required": ["requestId"],
+                      "type": "object"
+                    }
+                  },
+                  "required": ["error", "meta"],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Password attempt limit reached. Retry-After gives the delay in seconds.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds to wait before retrying password sign-in.",
+                "schema": { "pattern": "^[1-9][0-9]*$", "type": "string" }
+              }
+            }
+          },
           "503": {
             "content": {
               "application/json": {

@@ -3227,12 +3227,26 @@ export function createFastifyApp(options: ControllerAppOptions): FastifyInstance
               password: accountBody.properties.password,
             },
           },
-          response: responses({
-            type: "object",
-            additionalProperties: false,
-            required: ["authenticated"],
-            properties: { authenticated: { type: "boolean", const: true } },
-          }),
+          response: {
+            ...responses({
+              type: "object",
+              additionalProperties: false,
+              required: ["authenticated"],
+              properties: { authenticated: { type: "boolean", const: true } },
+            }),
+            429: {
+              description:
+                "Password attempt limit reached. Retry-After gives the delay in seconds.",
+              ...error,
+              headers: {
+                "Retry-After": {
+                  type: "string",
+                  pattern: "^[1-9][0-9]*$",
+                  description: "Seconds to wait before retrying password sign-in.",
+                },
+              },
+            },
+          },
         },
       },
       async (request, reply) => options.auth.signInEmail(request, reply),

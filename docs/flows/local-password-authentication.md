@@ -1,7 +1,7 @@
 ---
 created: 2026-08-24
-updated: 2026-09-26
-last_updated_session: authoring-run/6d7cf57f-03f3-4ea7-8694-38edd9f3c9c2
+updated: 2026-09-29
+last_updated_session: authoring-run/69626fc0-4d8c-4cf6-bcb6-a06c7ed70e42
 ---
 
 # Bootstrap and Local Password Authentication Flow
@@ -44,7 +44,12 @@ graph TD
   B --> G
   Bootstrap -->|Any error| H["Exit unsuccessfully; preserve tracked artifacts for manual repair"]
   subgraph Request["Human controller request"]
-    G --> J["Sign in and receive session cookie"]
+    G --> P["Check login origin and request"]
+    P --> Q{"Password budget configured?"}
+    Q -->|No| J["Sign in and receive session cookie"]
+    Q -->|Yes| R["Await State reservation"]
+    R -->|Allowed| J
+    R -->|Limited, unavailable or unknown| S["429 or 503; no password work or cookie"]
     J --> N{"Unsafe session request?"}
     N -->|Yes| O["Check console origin and Fetch Metadata"]
     N -->|No| K["Resolve current IAM identity and exact authority"]
@@ -157,7 +162,37 @@ and records the mutation without creating a session or replacing the IAM Driver.
 IAM or audit failure rolls back the provisioning; accounts never receive
 implicit permissions.
 
+### 4. Optional State-owned password admission
+
+`apps/controller/src/auth/index.ts:createPostgresControllerAuth` can receive an
+explicit budget configuration from trusted server composition. It accepts only
+the State-created pair matching the selected State, the exact Better Auth pool,
+Installation, policy epoch and the prepared key's confirmation. Copies, wrappers
+and a directly injected admission are rejected before database work.
+
+`apps/controller/src/auth/password-admission.ts:preparePasswordBudgetKey` retains
+a copy of the server-supplied key behind an opaque handle. After the origin and
+request schema checks, sign-in lowercases the accepted email exactly as Better
+Auth does, without trimming it. The caller submits a purpose-separated HMAC of
+that identifier and Installation; plaintext email and password never reach the
+budget port. It awaits one acknowledged reservation before account lookup or
+password verification. A limited result returns generic 429 with Retry-After;
+unavailable, unknown or malformed results return generic 503, without a new
+session cookie or automatic retry. Other authentication routes do not reserve.
+
+This is inactive constructor preparation. Normal controller startup does not
+select a budget or provision its key. SQL registration, deployment policy and
+key custody, actual database qualification and architecture approval remain
+required before activation. A reservation is independent of session issuance;
+it does not prove human currentness through the session transaction's COMMIT.
+The [State budget flow](password-attempt-budget.md) owns reservation settlement.
+
 ## Debugging and Verification
+
+- `node --test tests/conformance/password-admission.test.mjs tests/integration/controller-password-budget.test.mjs`
+  verifies the keyed caller, real Fastify/Better Auth responses, and genuine
+  State pool/pair recognition with no database connection. It does not qualify
+  reservation SQL, deployment key custody or multi-controller operation.
 
 - `node --test tests/integration/native-admin-access.test.mjs` covers trusted and
   untrusted origins on session mutations and sign-out, plus service-key admission.
@@ -202,6 +237,8 @@ implicit permissions.
 [keep this for the user to add notes. do not change between edits]
 
 ## Changelog
+
+- 2026-09-29 01:55: Receive optional State-owned password admission into the current Better Auth caller; activation remains deferred. (authoring-run/69626fc0-4d8c-4cf6-bcb6-a06c7ed70e42 - a14435c81e0d4020dd24568babddf95aba533da7)
 
 - 2026-09-26 21:09: Trace origin checks for cookie-authenticated mutations and sign-out. (authoring-run/6d7cf57f-03f3-4ea7-8694-38edd9f3c9c2 - 849b2b24111fe237b12da5be1d4b411d3146cefb)
 

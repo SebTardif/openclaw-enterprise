@@ -410,6 +410,27 @@
         "repository source obeys its dependency policy with exact current exceptions",
         "repository policy allows a public root and rejects a new HTTP Driver import"
       ]
+    },
+    {
+      "path": "tests/conformance/password-admission.test.mjs",
+      "expectedTests": [
+        "password admission binds keyed identity to the Installation and key epoch",
+        "password admission fails closed without retrying a denied or uncertain reservation",
+        "password admission rejects noncanonical policy epochs before loading a key",
+        "password admission rejects copied or substituted owner handles",
+        "password admission preserves normalized supplementary and expanding identifiers"
+      ]
+    },
+    {
+      "path": "tests/integration/controller-password-budget.test.mjs",
+      "expectedTests": [
+        "password budget separates real accounts behind one proxy and preserves non-password routes",
+        "password budget preserves Better Auth aliases and awaits acknowledgement before password work",
+        "PostgreSQL password admission refuses a directly injected admission before database work",
+        "PostgreSQL password admission refuses an unrecognized State pair before database work",
+        "password admission preserves the current route Unicode bounds and verifier email validation",
+        "PostgreSQL password admission binds the real State pair to the exact auth pool"
+      ]
     }
   ]
 }

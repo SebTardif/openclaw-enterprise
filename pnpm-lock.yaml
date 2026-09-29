@@ -116,6 +116,9 @@ importers:
       undici:
         specifier: 8.10.1
         version: 8.10.1
+      zod:
+        specifier: 4.5.4
+        version: 4.5.4
 
   packages/audit:
     dependencies:

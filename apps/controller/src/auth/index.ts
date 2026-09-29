@@ -11,7 +11,21 @@ import type { ApiKey } from "@better-auth/api-key/types";
 import { parse as parseDomain } from "tldts";
 import type { ServicePrincipal } from "@openclaw-enterprise/contracts";
 import { createAuthPrincipalSeed, type AuthPrincipalSeed } from "@openclaw-enterprise/iam";
-import type { PostgresPool } from "@openclaw-enterprise/occ";
+import {
+  matchesPostgresPasswordBudgetPair,
+  type PostgresPool,
+  type PostgresPlatformState,
+  type PostgresPasswordBudgetPair,
+} from "@openclaw-enterprise/occ";
+import { z } from "zod";
+import {
+  PasswordAdmissionFailure,
+  requirePasswordAdmission,
+  bindPasswordBudgetKey,
+  passwordBudgetKeyBinding,
+  type PasswordAdmission,
+  type PreparedPasswordBudgetKey,
+} from "./password-admission.ts";
 import type {
   AdmissionHeaders,
   AdmissionRequest,
@@ -47,13 +61,19 @@ export interface ControllerAuthOptions {
   readonly memoryDatabase?: MemoryDB;
   readonly secureCookies?: boolean;
   readonly sharedCookieDomain?: string;
+  readonly passwordAdmission?: PasswordAdmission;
 }
 
 export interface PostgresControllerAuthOptions extends Omit<
   ControllerAuthOptions,
-  "database" | "memoryDatabase"
+  "database" | "memoryDatabase" | "passwordAdmission"
 > {
   readonly pool: PostgresPool;
+  readonly passwordBudget?: {
+    readonly state: PostgresPlatformState;
+    readonly pair: PostgresPasswordBudgetPair;
+    readonly key: PreparedPasswordBudgetKey;
+  };
 }
 
 export interface AuthenticatedAccount {
@@ -220,6 +240,9 @@ function setAuthHeaders(
 }
 
 function authFailure(error: unknown): { readonly status: number; readonly code: string } {
+  if (error instanceof PasswordAdmissionFailure) {
+    return { status: error.status, code: error.code };
+  }
   if (error instanceof AdmissionFailure) {
     return { status: error.status, code: error.code };
   }
@@ -376,6 +399,9 @@ async function sendAuthEndpoint(
     });
   } catch (error) {
     const failure = authFailure(error);
+    if (error instanceof PasswordAdmissionFailure && error.retryAfterSeconds !== undefined) {
+      reply.header("retry-after", String(error.retryAfterSeconds));
+    }
     reply.status(failure.status).send({
       error: { code: failure.code, message: failureMessage },
       meta: { requestId: request.id },
@@ -697,10 +723,24 @@ export function createControllerAuth(options: ControllerAuthOptions): Controller
     await sendAuthEndpoint(
       request,
       reply,
-      () => {
+      async () => {
         // Better Auth server API calls skip origin middleware without a Request context.
         requireTrustedBrowserOrigin(request, expectedBrowserOrigin);
         const body = ensureEmailPassword(authBody(request));
+        if (options.passwordAdmission !== undefined) {
+          // Match the route's code-point bounds and Better Auth's email schema
+          // before charging an attempt. Lowercasing follows its verifier.
+          if (
+            [...body.email].length < 3 ||
+            [...body.email].length > 320 ||
+            [...body.password].length < 12 ||
+            [...body.password].length > 128 ||
+            !z.email().safeParse(body.email).success
+          ) {
+            throw APIError.fromStatus("BAD_REQUEST", { message: "Invalid sign-in request." });
+          }
+          await requirePasswordAdmission(options.passwordAdmission, body.email.toLowerCase());
+        }
         return api.signInEmail({
           body: { ...body, rememberMe: true },
           headers: authHeaders(request.headers),
@@ -837,9 +877,34 @@ export function createControllerAuth(options: ControllerAuthOptions): Controller
 export async function createPostgresControllerAuth(
   options: PostgresControllerAuthOptions,
 ): Promise<ControllerAuth> {
-  const { pool, ...controllerOptions } = options;
+  if ("passwordAdmission" in options) {
+    throw new Error("PostgreSQL password admission requires the selected State and budget pair.");
+  }
+  const { pool, passwordBudget, ...controllerOptions } = options;
+  let passwordAdmission: PasswordAdmission | undefined;
+  if (passwordBudget !== undefined) {
+    const { state, pair, key } = passwordBudget;
+    const binding = passwordBudgetKeyBinding(key);
+    if (
+      binding.installationId !== options.installationId ||
+      !matchesPostgresPasswordBudgetPair(
+        pair,
+        state,
+        {
+          installationId: options.installationId,
+          epoch: binding.policyEpoch,
+          keyConfirmation: binding.keyConfirmation,
+        },
+        pool,
+      )
+    ) {
+      throw new Error("Password admission requires the selected State and budget pair.");
+    }
+    passwordAdmission = bindPasswordBudgetKey(key, pair.passwordBudget);
+  }
   return createControllerAuth({
     ...controllerOptions,
+    ...(passwordAdmission === undefined ? {} : { passwordAdmission }),
     database: await createOccAuthDatabase(pool),
   });
 }

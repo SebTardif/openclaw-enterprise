@@ -268,6 +268,7 @@ Sign in with email and password
 | --- | --- |
 | `200` | OK |
 | `401` | Unauthorized |
+| `429` | Password attempt limit reached. Retry-After gives the delay in seconds. |
 | `503` | Service Unavailable |
 
 **`200` response body:** `application/json`
