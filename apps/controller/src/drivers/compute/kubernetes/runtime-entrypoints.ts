@@ -57,10 +57,12 @@ function derivePluginAppServerTokenFromBase(baseToken, revisionId, startupId) {
 }
 `;
 
-// The runtime status document reports startup: pending | ready | failed. Both
-// readiness entrypoints require "ready" before any native check, so a process
-// that listens while its model probe runs never becomes ready early, and a
-// failed startup stays unready with its runtimeFailure evidence.
+// The runtime status document reports startup: pending | ready | failed. The
+// Harness readiness entrypoint requires "ready" before any native check, so an
+// app-server that listens while its model probe runs never becomes ready early,
+// and a failed startup stays unready with its runtimeFailure evidence. The
+// embedded Gateway still probes before it starts: its probe is a second node
+// process that would compete with Gateway boot for the same CPU limit.
 export const PLUGIN_RUNTIME_HELPERS = String.raw`
 const pluginRuntimeTranslator = (${PLUGIN_RUNTIME_TRANSLATOR_SOURCE})();
 const {
@@ -1713,10 +1715,6 @@ async function installCodexPlugins(runtime, failures = []) {
 }
 `;
 
-// startBoundedProbe runs a probe without blocking the wrapper, so the native
-// process can start alongside it. Its result has spawnSync's shape and bounds:
-// the timeout and the stdout maxBuffer kill the probe with killSignal and report
-// ETIMEDOUT or ENOBUFS. Probe stderr was never read, so it is discarded.
 const AUTH_PROBE_FAILURE_HELPER = String.raw`
 function holdFailedAuthentication(check = "model-probe", code = "UNAVAILABLE") {
   publishRuntimeFailure(check, code);
@@ -1724,85 +1722,35 @@ function holdFailedAuthentication(check = "model-probe", code = "UNAVAILABLE") {
   // Hold unready until an explicit restart; readiness polls never submit model calls.
   setInterval(() => {}, 3600000);
 }
-
-function startBoundedProbe(command, args, options) {
-  const { spawn: spawnProbe } = require("node:child_process");
-  const { Buffer: ProbeBuffer } = require("node:buffer");
-  const chunks = [];
-  let size = 0;
-  let error;
-  let child;
-  let timer;
-  let finish;
-  const result = new Promise((resolve) => {
-    finish = (status, signal) => {
-      clearTimeout(timer);
-      resolve({ status, signal, stdout: ProbeBuffer.concat(chunks).toString("utf8"), ...(error && { error }) });
-    };
-  });
-  const stop = (code) => {
-    error ??= { code };
-    child?.kill(options.killSignal);
-  };
-  try {
-    child = spawnProbe(command, args, { cwd: options.cwd, env: options.env, stdio: ["ignore", "pipe", "ignore"] });
-  } catch (spawnError) {
-    error = spawnError;
-    finish(null, null);
-    return { result, stop() {} };
-  }
-  timer = setTimeout(() => stop("ETIMEDOUT"), options.timeout);
-  child.stdout.on("data", (chunk) => {
-    size += chunk.length;
-    if (size > options.maxBuffer) stop("ENOBUFS");
-    else if (error === undefined) chunks.push(chunk);
-  });
-  child.on("error", (spawnError) => {
-    error ??= spawnError;
-    if (child.pid === undefined) finish(null, null);
-  });
-  child.on("close", finish);
-  return { result, stop: () => stop("TERMINATED") };
-}
 `;
 
 // The native probe disables tools and fallback and performs a bounded model turn.
 // Its JSON status, not its process exit status alone, establishes provider acceptance.
-// startOpenClawAuthenticationProbe runs the same probe alongside Gateway startup;
-// its outcome resolves to a failure code, or undefined once the provider accepted.
-// Sharing the Gateway's CPU limit can slow the probe's node boot past its process
-// cap, so a MODEL_PROBE_TIMEOUT is retried once after one second, with Codex's
-// policy: 30-second attempts within one 61-second budget. Other failures, and
-// termination, end it at once. The serial path (no runtime status port) competes
-// with nothing and still probes once.
 const OPENCLAW_AUTH_PROBE_HELPERS = String.raw`
 ${AUTH_PROBE_FAILURE_HELPER}
-function openClawProbeTemporaryPrefix() {
-  return (process.env.TMPDIR || "/tmp").replace(/\/+$/, "") + "/openclaw-auth-probe-";
-}
-
-function openClawProbeInvocation(fs, directory) {
-  const model = process.env.OPENCLAW_HARNESS_MODEL;
-  const provider = process.env.OPENCLAW_HARNESS_PROVIDER;
-  const credentialEnvironment = process.env.OPENCLAW_HARNESS_CREDENTIAL_ENV;
-  if (typeof provider !== "string" || typeof credentialEnvironment !== "string" ||
-    typeof model !== "string" || !model.startsWith(provider + "/") ||
-    !process.env[credentialEnvironment]?.trim()) return { code: "UNAVAILABLE" };
-  const configuration = JSON.parse(process.env.OPENCLAW_HARNESS_PROBE_CONFIG);
-  if (configuration.agents?.defaults?.model !== model) return { code: "UNAVAILABLE" };
-  configuration.agents.defaults.workspace = directory + "/workspace";
-  fs.mkdirSync(directory + "/workspace", { mode: 0o700 });
-  const configPath = directory + "/openclaw.json";
-  fs.writeFileSync(configPath, JSON.stringify(configuration), { mode: 0o600 });
-  return {
-    provider,
-    model,
-    args: [
+function probeOpenClawAuthenticationFailureCode() {
+  const fs = require("node:fs");
+  const { spawnSync } = require("node:child_process");
+  const temporary = (process.env.TMPDIR || "/tmp").replace(/\/+$/, "");
+  const directory = fs.mkdtempSync(temporary + "/openclaw-auth-probe-");
+  try {
+    const model = process.env.OPENCLAW_HARNESS_MODEL;
+    const provider = process.env.OPENCLAW_HARNESS_PROVIDER;
+    const credentialEnvironment = process.env.OPENCLAW_HARNESS_CREDENTIAL_ENV;
+    if (typeof provider !== "string" || typeof credentialEnvironment !== "string" ||
+      typeof model !== "string" || !model.startsWith(provider + "/") ||
+      !process.env[credentialEnvironment]?.trim()) return "UNAVAILABLE";
+    const configuration = JSON.parse(process.env.OPENCLAW_HARNESS_PROBE_CONFIG);
+    if (configuration.agents?.defaults?.model !== model) return "UNAVAILABLE";
+    configuration.agents.defaults.workspace = directory + "/workspace";
+    fs.mkdirSync(directory + "/workspace", { mode: 0o700 });
+    const configPath = directory + "/openclaw.json";
+    fs.writeFileSync(configPath, JSON.stringify(configuration), { mode: 0o600 });
+    const result = spawnSync("node", [
       "/app/openclaw.mjs", "models", "status", "--json", "--probe",
       "--probe-provider", provider, "--probe-concurrency", "1",
       "--probe-timeout", "15000", "--probe-max-tokens", "16",
-    ],
-    options: {
+    ], {
       cwd: directory,
       env: {
         PATH: process.env.PATH,
@@ -1817,89 +1765,22 @@ function openClawProbeInvocation(fs, directory) {
       },
       encoding: "utf8", stdio: ["ignore", "pipe", "pipe"],
       timeout: 30000, killSignal: "SIGKILL", maxBuffer: 262144,
-    },
-  };
-}
-
-function openClawProbeFailureCode(invocation, result) {
-  if (result.error?.code === "ETIMEDOUT") return "MODEL_PROBE_TIMEOUT";
-  if (result.status !== 0 || result.error) return "MODEL_PROBE_FAILED";
-  const results = JSON.parse(result.stdout).auth?.probes?.results;
-  if (!Array.isArray(results) || results.length !== 1 ||
-    results[0].provider !== invocation.provider || results[0].model !== invocation.model ||
-    results[0].source !== "env") return "MODEL_PROBE_FAILED";
-  if (results[0].status === "ok") return undefined;
-  // OpenClaw buckets provider 401/403 and invalid-key responses as "auth".
-  // Only that deterministic rejection fails the deployment before its deadline.
-  return results[0].status === "auth" ? "AUTHENTICATION_FAILED" : "MODEL_PROBE_FAILED";
-}
-
-function probeOpenClawAuthenticationFailureCode() {
-  const fs = require("node:fs");
-  const { spawnSync } = require("node:child_process");
-  const directory = fs.mkdtempSync(openClawProbeTemporaryPrefix());
-  try {
-    const invocation = openClawProbeInvocation(fs, directory);
-    if (invocation.code !== undefined) return invocation.code;
-    return openClawProbeFailureCode(
-      invocation,
-      spawnSync("node", invocation.args, invocation.options),
-    );
+    });
+    if (result.error?.code === "ETIMEDOUT") return "MODEL_PROBE_TIMEOUT";
+    if (result.status !== 0 || result.error) return "MODEL_PROBE_FAILED";
+    const results = JSON.parse(result.stdout).auth?.probes?.results;
+    if (!Array.isArray(results) || results.length !== 1 ||
+      results[0].provider !== provider || results[0].model !== model ||
+      results[0].source !== "env") return "MODEL_PROBE_FAILED";
+    if (results[0].status === "ok") return undefined;
+    // OpenClaw buckets provider 401/403 and invalid-key responses as "auth".
+    // Only that deterministic rejection fails the deployment before its deadline.
+    return results[0].status === "auth" ? "AUTHENTICATION_FAILED" : "MODEL_PROBE_FAILED";
   } catch {
     return "MODEL_PROBE_FAILED";
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });
   }
-}
-
-function startOpenClawAuthenticationProbe() {
-  const fs = require("node:fs");
-  const { performance: probeClock } = require("node:perf_hooks");
-  const deadline = probeClock.now() + 61000;
-  let probe;
-  let stopped = false;
-  let wake;
-  const attempt = async (timeout) => {
-    let directory;
-    try {
-      directory = fs.mkdtempSync(openClawProbeTemporaryPrefix());
-      const invocation = openClawProbeInvocation(fs, directory);
-      if (invocation.code !== undefined) return invocation.code;
-      probe = startBoundedProbe("node", invocation.args, { ...invocation.options, timeout });
-      return openClawProbeFailureCode(invocation, await probe.result);
-    } catch {
-      return "MODEL_PROBE_FAILED";
-    } finally {
-      probe = undefined;
-      if (directory !== undefined) fs.rmSync(directory, { recursive: true, force: true });
-    }
-  };
-  const outcome = (async () => {
-    const startedAt = probeClock.now();
-    const first = await attempt(30000);
-    if (first !== "MODEL_PROBE_TIMEOUT" || stopped || probeClock.now() + 1000 >= deadline) return first;
-    console.error(JSON.stringify({
-      event: "openclaw.model_probe",
-      attempt: 1,
-      elapsedMs: Math.round(probeClock.now() - startedAt),
-      code: first,
-    }));
-    await new Promise((resume) => {
-      wake = resume;
-      setTimeout(resume, 1000);
-    });
-    const timeout = Math.min(30000, Math.floor(deadline - probeClock.now()));
-    if (stopped || timeout <= 0) return first;
-    return attempt(timeout);
-  })();
-  return {
-    outcome,
-    stop() {
-      stopped = true;
-      probe?.stop();
-      wake?.();
-    },
-  };
 }
 `;
 
@@ -1948,13 +1829,6 @@ function publishAgentPluginSkillPath() {
 
 `;
 
-// With a runtime status port, the embedded model probe starts first and runs
-// alongside plugin installation, configuration and the gateway process; startup
-// becomes ready only when the probe passed and the gateway was spawned. A failed
-// probe stops the gateway and holds the same runtime failure: the gateway's
-// exit then does not end the wrapper, and termination exits at once. A gateway
-// exit or startup error seen first waits for the probe, so its failure still
-// wins, as when it ran first. Without the port the probe runs before startup.
 export const GATEWAY_RUNTIME_ENTRYPOINT = String.raw`
 const { mkdirSync, rmSync } = require("node:fs");
 const { join } = require("node:path");
@@ -1969,22 +1843,11 @@ ${OPENCLAW_AUTH_PROBE_HELPERS}
 ${startupPhaseHelper("gateway")}
 startPluginRuntimeStatusServer();
 
-let terminationRequested = false;
-function forwardTermination(child, onTermination = () => {}) {
+function forwardTermination(child) {
   let terminating = false;
-  let exited = false;
-  child.on("exit", () => {
-    exited = true;
-  });
   const forward = (signal) => {
     if (terminating) return;
     terminating = true;
-    terminationRequested = true;
-    onTermination();
-    if (exited) {
-      process.exit(0);
-      return;
-    }
     child.kill(signal);
     setTimeout(() => child.kill("SIGKILL"), ${GATEWAY_STOP_TIMEOUT_MS}).unref();
   };
@@ -2166,53 +2029,17 @@ function withWorkspaceNodeFailure(code, run) {
   }
 }
 
-const modelProbeConfigured = process.env.OPENCLAW_HARNESS_PROBE_CONFIG !== undefined;
-const concurrentModelProbe =
-  modelProbeConfigured && runtimeStatusPort() !== undefined
-    ? startOpenClawAuthenticationProbe()
-    : undefined;
 const openClawAuthenticationFailureCode =
-  modelProbeConfigured && concurrentModelProbe === undefined
-    ? probeOpenClawAuthenticationFailureCode()
-    : undefined;
-if (modelProbeConfigured && concurrentModelProbe === undefined) {
-  // The serial probe is the first startup step, so wrapper start marks its beginning.
+  process.env.OPENCLAW_HARNESS_PROBE_CONFIG === undefined
+    ? undefined
+    : probeOpenClawAuthenticationFailureCode();
+if (process.env.OPENCLAW_HARNESS_PROBE_CONFIG !== undefined) {
+  // The probe is the first startup step, so wrapper start marks its beginning.
   logStartupPhase("model-probe", startupPhaseOrigin, openClawAuthenticationFailureCode === undefined ? "ok" : "failed");
 }
 if (openClawAuthenticationFailureCode !== undefined) {
   holdFailedAuthentication("model-probe", openClawAuthenticationFailureCode);
 } else {
-let startupHeld = false;
-let modelProbePassed = concurrentModelProbe === undefined;
-let nativeStarting = false;
-let pendingPluginStatus;
-let child;
-// Plugin status "ready" and startup "ready" both wait for the model probe.
-function publishStartupWhenComplete() {
-  if (startupHeld || !modelProbePassed) return;
-  if (pendingPluginStatus !== undefined) {
-    publishPluginRuntimeStatus(pendingPluginStatus);
-    pendingPluginStatus = undefined;
-  }
-  if (nativeStarting) publishRuntimeReady();
-}
-concurrentModelProbe?.outcome.then((code) => {
-  if (terminationRequested) return;
-  // The concurrent probe also starts at wrapper start.
-  logStartupPhase("model-probe", startupPhaseOrigin, code === undefined ? "ok" : "failed");
-  if (code === undefined) {
-    modelProbePassed = true;
-    publishStartupWhenComplete();
-    return;
-  }
-  startupHeld = true;
-  if (child !== undefined) {
-    child.kill("SIGTERM");
-    setTimeout(() => child.kill("SIGKILL"), ${GATEWAY_STOP_TIMEOUT_MS})?.unref?.();
-  }
-  holdFailedAuthentication("model-probe", code);
-});
-(async () => {
 mkdirSync("/home/node/.openclaw", { recursive: true });
 mkdirSync("/home/node/workspace", { recursive: true });
 if (process.env.OPENCLAW_WORKSPACE_DIR !== undefined) {
@@ -2223,6 +2050,7 @@ if (process.env.OPENCLAW_WORKSPACE_DIR !== undefined) {
 }
 delete process.env.OPENCLAW_LOG_LEVEL;
 const pluginRuntime = readGatewayPluginRuntime();
+(async () => {
 configureNativeWorkerProfile();
 const peerStatus =
   pluginRuntime?.manifest?.kind === "codex" && hasEnabledPluginSelections(pluginRuntime)
@@ -2243,8 +2071,7 @@ if (pluginRuntime !== undefined) {
 if (peerStatus !== undefined) {
   pluginResult.successfulPluginIds = peerStatus.successfulPluginIds;
 }
-pendingPluginStatus = { phase: "ready", ...pluginResult };
-publishStartupWhenComplete();
+publishPluginRuntimeStatus({ phase: "ready", ...pluginResult });
 // A native worker profile, or a Gateway whose controller cannot read its runtime
 // status, receives its node in the environment; the others read the binding file.
 const environmentWorkspaceNodeId = process.env.OPENCLAW_WORKSPACE_NODE_ID;
@@ -2270,12 +2097,10 @@ if (
   }
   writeOpenClawConfig(config);
 }
-if (startupHeld) return;
-nativeStarting = true;
-publishStartupWhenComplete();
+publishRuntimeReady();
 // Everything before this line delays the native Gateway process.
 logStartupPhase("native-spawn", startupPhaseOrigin);
-child = spawn(
+const child = spawn(
   "node",
   ["/app/openclaw.mjs", "gateway", "--port", process.env.OPENCLAW_GATEWAY_PORT],
   { stdio: "inherit" },
@@ -2283,7 +2108,7 @@ child = spawn(
 // Apply budgets start when OpenClaw does, not at wrapper start: login, the model
 // probe and plugin install must not count against them.
 const childSpawnedAt = Date.now();
-forwardTermination(child, () => concurrentModelProbe?.stop());
+forwardTermination(child);
 if (workspaceNodeBindingPath !== undefined) {
   // The wrapper writing the config is not the ack: OpenClaw must report the
   // file-transfer plugin active in a plugin registry loaded after the write.
@@ -2301,8 +2126,6 @@ if (workspaceNodeBindingPath !== undefined) {
     console.error(JSON.stringify({ event: "runtime.workspace_node", container: "gateway", outcome: "failed", code }));
   };
   const pollWorkspaceNode = async () => {
-    // A held startup has stopped OpenClaw; there is nothing to apply the node to.
-    if (startupHeld) return;
     const deviceId = readWorkspaceNodeBinding();
     if (deviceId === undefined || deviceId === runtimeWorkspaceNodeId) return;
     if (written !== undefined && written.deviceId !== deviceId) {
@@ -2373,7 +2196,6 @@ if (pluginRuntime?.manifest?.kind === "codex" && hasEnabledPluginSelections(plug
     stoppingForChangedPeerStatus = true;
     // The container exits and restarts: a Gateway start the controller cannot see.
     logStartupPhase("peer-status-changed", startupPhaseOrigin);
-    pendingPluginStatus = undefined;
     publishPluginRuntimeStatus({ phase: "starting", ...pluginResult });
     child.kill("SIGTERM");
     setTimeout(() => process.exit(1), ${GATEWAY_STOP_TIMEOUT_MS}).unref();
@@ -2399,26 +2221,56 @@ if (pluginRuntime?.manifest?.kind === "codex" && hasEnabledPluginSelections(plug
     }
   }, 2_000).unref();
 }
-child.on("exit", (code, signal) => {
-  if (startupHeld) {
-    // A holding wrapper outlives the stopped Gateway, unless it is terminating.
-    if (terminationRequested) process.exit(0);
-    return;
-  }
-  const exit = () => process.exit(code ?? (signal === "SIGTERM" ? 0 : 1));
-  if (modelProbePassed || terminationRequested) {
-    exit();
-    return;
-  }
-  concurrentModelProbe.outcome.then((failure) => {
-    if (failure === undefined) exit();
+child.on("exit", (code, signal) => process.exit(code ?? (signal === "SIGTERM" ? 0 : 1)));
+})().catch((error) => {
+  if (!holdPluginApproverConfigurationFailure(error)) throw error;
+});
+}
+`;
+
+// startBoundedProbe runs a probe without blocking the wrapper, so the native
+// process can start alongside it. Its result has spawnSync's shape and bounds:
+// the timeout and the stdout maxBuffer kill the probe with killSignal and report
+// ETIMEDOUT or ENOBUFS. Probe stderr was never read, so it is discarded.
+const BOUNDED_PROBE_HELPER = String.raw`
+function startBoundedProbe(command, args, options) {
+  const { spawn: spawnProbe } = require("node:child_process");
+  const { Buffer: ProbeBuffer } = require("node:buffer");
+  const chunks = [];
+  let size = 0;
+  let error;
+  let child;
+  let timer;
+  let finish;
+  const result = new Promise((resolve) => {
+    finish = (status, signal) => {
+      clearTimeout(timer);
+      resolve({ status, signal, stdout: ProbeBuffer.concat(chunks).toString("utf8"), ...(error && { error }) });
+    };
   });
-});
-})().catch(async (error) => {
-  if (holdPluginApproverConfigurationFailure(error)) return;
-  if (concurrentModelProbe !== undefined && (await concurrentModelProbe.outcome) !== undefined) return;
-  throw error;
-});
+  const stop = (code) => {
+    error ??= { code };
+    child?.kill(options.killSignal);
+  };
+  try {
+    child = spawnProbe(command, args, { cwd: options.cwd, env: options.env, stdio: ["ignore", "pipe", "ignore"] });
+  } catch (spawnError) {
+    error = spawnError;
+    finish(null, null);
+    return { result, stop() {} };
+  }
+  timer = setTimeout(() => stop("ETIMEDOUT"), options.timeout);
+  child.stdout.on("data", (chunk) => {
+    size += chunk.length;
+    if (size > options.maxBuffer) stop("ENOBUFS");
+    else if (error === undefined) chunks.push(chunk);
+  });
+  child.on("error", (spawnError) => {
+    error ??= spawnError;
+    if (child.pid === undefined) finish(null, null);
+  });
+  child.on("close", finish);
+  return { result, stop: () => stop("TERMINATED") };
 }
 `;
 
@@ -2431,12 +2283,13 @@ child.on("exit", (code, signal) => {
 // waiting for it. Without the port (Docker), the probe gates app-server as before.
 export const AGENT_RUNTIME_ENTRYPOINT = String.raw`
 const { createHash } = require("node:crypto");
-const { mkdirSync, mkdtempSync, rmSync } = require("node:fs");
+const { copyFileSync, mkdirSync, mkdtempSync, rmSync } = require("node:fs");
 const { spawn, spawnSync } = require("node:child_process");
 const { performance } = require("node:perf_hooks");
 
 ${PLUGIN_RUNTIME_HELPERS}
 ${AUTH_PROBE_FAILURE_HELPER}
+${BOUNDED_PROBE_HELPER}
 ${startupPhaseHelper("agent")}
 startPluginRuntimeStatusServer();
 const loginMode = process.env.CODEX_LOGIN_MODE;
@@ -2644,6 +2497,13 @@ async function probeCodexAuthenticationConcurrently(timeout) {
     directory = mkdtempSync("/tmp/codex-auth-probe-");
     const invocation = codexProbeInvocation(directory, timeout);
     if (invocation === undefined) return codexProbeReport(result, "UNAVAILABLE");
+    // App-server starts beside this probe, and two Codex processes cannot
+    // initialize one Codex home's state database at once. The probe gets its
+    // own home holding only a copy of the stored login.
+    const probeHome = directory + "/codex-home";
+    mkdirSync(probeHome, { mode: 0o700 });
+    copyFileSync(process.env.CODEX_HOME + "/auth.json", probeHome + "/auth.json");
+    invocation.options.env.CODEX_HOME = probeHome;
     activeCodexProbe = startBoundedProbe("codex", invocation.args, invocation.options);
     result = await activeCodexProbe.result;
     return codexProbeReport(result, codexProbeFailureCode(result));
@@ -3213,7 +3073,6 @@ function checkPluginRuntime(next) {
 export const GATEWAY_READINESS_ENTRYPOINT = String.raw`
 const timeout = setTimeout(() => process.exit(1), 2_000);
 const http = require("node:http");
-${RUNTIME_STARTUP_READINESS_HELPER}
 function nativeReady() {
   const request = http.get(
     "http://127.0.0.1:" + process.env.OPENCLAW_GATEWAY_PORT + "/readyz",
@@ -3225,7 +3084,31 @@ function nativeReady() {
   );
   request.on("error", () => process.exit(1));
 }
-checkRuntimeStartup(() => checkPluginRuntime(nativeReady));
+if (process.env.OPENCLAW_PLUGIN_STATUS_PORT === undefined) {
+  nativeReady();
+} else {
+  const request = http.get(
+    "http://127.0.0.1:" + process.env.OPENCLAW_PLUGIN_STATUS_PORT + "/openclaw/plugin-runtime/status",
+    (response) => {
+      let body = "";
+      response.setEncoding("utf8");
+      response.on("data", (chunk) => {
+        body += chunk;
+        if (body.length > 65536) process.exit(1);
+      });
+      response.on("end", () => {
+        try {
+          const status = JSON.parse(body);
+          if (response.statusCode !== 200 || status.phase !== "ready") process.exit(1);
+          nativeReady();
+        } catch {
+          process.exit(1);
+        }
+      });
+    },
+  );
+  request.on("error", () => process.exit(1));
+}
 `;
 
 export const AGENT_READINESS_ENTRYPOINT = String.raw`

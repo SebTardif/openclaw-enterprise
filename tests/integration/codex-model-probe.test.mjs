@@ -22,8 +22,13 @@ const args = process.argv.slice(2);
 const scenario = fs.readFileSync("/fixture/scenario", "utf8");
 fs.appendFileSync("/home/node/calls", JSON.stringify(args) + "\n");
 if (args.includes("login")) {
+  fs.mkdirSync(process.env.CODEX_HOME, { recursive: true });
+  fs.writeFileSync(process.env.CODEX_HOME + "/auth.json", "{}", { mode: 0o600 });
   process.stdin.resume();
 } else if (args.includes("exec")) {
+  // The probe runs beside app-server with its own copy of the stored login.
+  assert.notEqual(process.env.CODEX_HOME, "/home/node/codex");
+  assert.ok(fs.existsSync(process.env.CODEX_HOME + "/auth.json"));
   assert.equal(process.env.OPENAI_API_KEY, undefined);
   assert.equal(process.env.CODEX_ACCESS_TOKEN, undefined);
   assert.equal(args[args.indexOf("--sandbox") + 1], "read-only");

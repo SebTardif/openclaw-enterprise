@@ -32,8 +32,8 @@ An omitted list adds no API-proxy ingress rule and leaves status unavailable
 where the cluster blocks that traffic. This setting does not expose the native
 gateway or grant workloads Kubernetes API access.
 
-Gateways and app-servers may listen before their startup probe passes; only
-the readiness-gated and peer-restricted paths below reach them.
+A Codex app-server may listen before its startup probe passes; only the
+readiness-gated and peer-restricted paths below reach it.
 
 When private Agent routing is enabled, Compute derives the only allowed peer
 from `gatewayRouting`: the Envoy namespace and the Gateway's exact owning name

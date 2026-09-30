@@ -133,8 +133,8 @@ Kubernetes rejects `runtime`; its managed validation remains unchanged.
 Codex rejects missing or conflicting runtime inputs before starting its app
 server. After login, a bounded native model turn must succeed before the server
 becomes ready; local credential storage alone does not prove provider acceptance.
-On Kubernetes, the app-server and embedded gateway start during the probe, and
-readiness waits for it; see the
+On Kubernetes, the app-server starts during the probe, and readiness waits for
+it; see the
 [startup gate](../flows/native-service-account-credential-delivery.md).
 Login state stays in its
 bounded ephemeral home. Gateway transport and workload identity credentials
@@ -163,8 +163,7 @@ one 61-second budget, including the delay. Authentication rejection, malformed
 output, tool events, and external signals without timeout evidence do not retry.
 Termination during the delay exits without starting another probe. Exhausted or
 nonretryable failure holds the process unready until restart; readiness polling
-never starts another model call. Embedded OpenClaw on Kubernetes retries a
-process timeout once the same way; elsewhere it probes once.
+never starts another model call. Embedded OpenClaw continues to probe once.
 
 Codex emits a structured `codex.model_probe` log for each attempt with its number,
 elapsed milliseconds, exit code, recognized termination signal, and final code

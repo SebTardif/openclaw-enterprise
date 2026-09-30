@@ -11,8 +11,10 @@ import { promisify } from "node:util";
 import { imageSmokeTimeoutMultiplier } from "../helpers/image-smoke-timeout.mjs";
 import { GATEWAY_RUNTIME_ENTRYPOINT as DOCKER_GATEWAY_RUNTIME_ENTRYPOINT } from "../../apps/controller/src/drivers/compute/docker/index.ts";
 import {
+  AGENT_READINESS_ENTRYPOINT,
   AGENT_WITH_NODE_ENTRYPOINT,
   AGENT_RUNTIME_ENTRYPOINT,
+  GATEWAY_READINESS_ENTRYPOINT,
   GATEWAY_RUNTIME_ENTRYPOINT as KUBERNETES_GATEWAY_RUNTIME_ENTRYPOINT,
   GATEWAY_STOP_TIMEOUT_MS,
   NATIVE_WORKER_ENTRYPOINT,
@@ -2353,5 +2355,638 @@ process.stdout.write("shared-codex-0.158.0-ready\n");
       script,
     ]);
     assert.match(stdout, /shared-codex-0.158.0-ready/);
+  },
+);
+
+// Startup model probes run beside native startup on Kubernetes. These tests run
+// the real Codex Harness and embedded Gateway wrappers, the image's own Codex
+// and OpenClaw probes and processes, and the real readiness programs. Only the
+// model provider is substituted: a sidecar in the runtime image owns the network
+// namespace, answers the Responses API as api.openai.com (mapped to loopback,
+// trusted through a private CA), and observes the wrapper from outside.
+// The wrapper runs under the production example's Gateway and Agent limits.
+const startupProbeCpuLimit = "0.5";
+const startupProbeMemoryLimit = "2g";
+const startupProbeModel = runtimeImageModel;
+const startupProbeApiKey = "sk-openclaw-runtime-probe-synthetic";
+
+async function createStartupProbeMaterial(t, readinessProgram) {
+  const directory = await mkdtemp(join(tmpdir(), "oce-runtime-startup-probe-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const file = (name) => join(directory, name);
+  // Codex rejects a self-signed end-entity certificate, so sign a leaf.
+  await execute("openssl", [
+    "req",
+    "-x509",
+    "-newkey",
+    "rsa:2048",
+    "-nodes",
+    "-days",
+    "2",
+    "-subj",
+    "/CN=oce-runtime-startup-probe-ca",
+    "-addext",
+    "basicConstraints=critical,CA:TRUE",
+    "-addext",
+    "keyUsage=critical,keyCertSign",
+    "-keyout",
+    file("ca-key.pem"),
+    "-out",
+    file("ca.pem"),
+  ]);
+  await execute("openssl", [
+    "req",
+    "-newkey",
+    "rsa:2048",
+    "-nodes",
+    "-subj",
+    "/CN=api.openai.com",
+    "-keyout",
+    file("key.pem"),
+    "-out",
+    file("leaf.csr"),
+  ]);
+  await writeFile(
+    file("leaf.ext"),
+    [
+      "subjectAltName=DNS:api.openai.com",
+      "basicConstraints=critical,CA:FALSE",
+      "extendedKeyUsage=serverAuth",
+      "keyUsage=critical,digitalSignature,keyEncipherment",
+      "",
+    ].join("\n"),
+  );
+  await execute("openssl", [
+    "x509",
+    "-req",
+    "-in",
+    file("leaf.csr"),
+    "-CA",
+    file("ca.pem"),
+    "-CAkey",
+    file("ca-key.pem"),
+    "-CAcreateserial",
+    "-days",
+    "2",
+    "-extfile",
+    file("leaf.ext"),
+    "-out",
+    file("cert.pem"),
+  ]);
+  await rm(file("ca-key.pem"));
+  // Only the provider host resolves, to the sidecar; every other name fails at once.
+  await writeFile(file("hosts"), "127.0.0.1 localhost\n127.0.0.1 api.openai.com\n");
+  await writeFile(file("resolv.conf"), "nameserver 127.0.0.1\noptions timeout:1 attempts:1\n");
+  await writeFile(
+    file("endpoint.mjs"),
+    await readFile(new URL("../fixtures/runtime-model-probe-endpoint.mjs", import.meta.url)),
+  );
+  await writeFile(file("readiness.cjs"), readinessProgram);
+  await chmod(directory, 0o755);
+  for (const name of ["ca.pem", "cert.pem", "key.pem", "hosts", "resolv.conf", "endpoint.mjs"]) {
+    await chmod(file(name), 0o644);
+  }
+  await chmod(file("readiness.cjs"), 0o644);
+  return directory;
+}
+
+// Docker reports RFC 3339; Podman reports "YYYY-MM-DD hh:mm:ss.nnnnnnnnn +0000 UTC".
+function containerStartedAt(value) {
+  const trimmed = value.trim();
+  const match = /^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2}:\d{2})(?:\.(\d+))?/.exec(trimmed);
+  assert.ok(match, `unrecognized container start time ${trimmed}`);
+  assert.match(trimmed, /Z$|\+0000 UTC$/, "container start time must be UTC");
+  return Date.parse(`${match[1]}T${match[2]}.${(match[3] ?? "0").padEnd(3, "0").slice(0, 3)}Z`);
+}
+
+function startupProbeWrapper(kind, concurrent) {
+  const status = [
+    "OPENCLAW_PLUGIN_STATUS_PORT=18791",
+    `OPENCLAW_PLUGIN_STATUS_CONTAINER=${kind === "codex" ? "agent" : "gateway"}`,
+    "OPENCLAW_AGENT_REVISION_ID=revision-startup-probe",
+    "OPENCLAW_POD_UID=pod-startup-probe",
+    ...(concurrent
+      ? [
+          "OPENCLAW_RUNTIME_STATUS_PORT=18791",
+          `OPENCLAW_RUNTIME_STATUS_CONTAINER=${kind === "codex" ? "agent" : "gateway"}`,
+        ]
+      : []),
+  ];
+  if (kind === "codex") {
+    return {
+      entrypoint: AGENT_RUNTIME_ENTRYPOINT,
+      readiness: AGENT_READINESS_ENTRYPOINT,
+      nativePort: 4500,
+      nativeProcess: /(^|\/)codex\0.*\0app-server\0/,
+      environment: [
+        "HOME=/home/node",
+        "CODEX_HOME=/home/node/.codex",
+        "CODEX_LOGIN_MODE=api_key",
+        `OPENAI_API_KEY=${startupProbeApiKey}`,
+        `OPENCLAW_HARNESS_MODEL=codex/${startupProbeModel}`,
+        "APP_SERVER_TOKEN=openclaw-runtime-probe-app-server-token",
+        "APP_SERVER_PORT=4500",
+        "SSL_CERT_FILE=/fixture/ca.pem",
+        ...status,
+      ],
+    };
+  }
+  const configuration = createAdmittedRuntimeImageConfiguration("openclaw");
+  const model = configuration.agents.defaults.model;
+  const provider = model.split("/", 1)[0];
+  // The controller's probe configuration: the selected model and its provider
+  // transport. Only allowPrivateNetwork is added, because the stand-in
+  // provider listens on loopback.
+  const probeConfiguration = {
+    agents: {
+      defaults: {
+        model,
+        models: {
+          [model]: {
+            ...configuration.agents.defaults.models?.[model],
+            agentRuntime: { id: "openclaw" },
+          },
+        },
+      },
+    },
+    models: {
+      providers: {
+        [provider]: {
+          ...configuration.models.providers[provider],
+          request: { allowPrivateNetwork: true },
+        },
+      },
+    },
+  };
+  return {
+    entrypoint: KUBERNETES_GATEWAY_RUNTIME_ENTRYPOINT,
+    readiness: GATEWAY_READINESS_ENTRYPOINT,
+    nativePort: 8080,
+    nativeProcess: /^openclaw-gateway/,
+    configuration,
+    environment: [
+      "HOME=/home/node",
+      "OPENCLAW_CONFIG_PATH=/etc/openclaw/openclaw.json",
+      "OPENCLAW_GATEWAY_PORT=8080",
+      "OPENCLAW_GATEWAY_PASSWORD=openclaw-runtime-probe-password",
+      "OPENCLAW_STATE_DIR=/home/node/.openclaw",
+      `OPENCLAW_HARNESS_MODEL=${model}`,
+      `OPENCLAW_HARNESS_PROVIDER=${provider}`,
+      "OPENCLAW_HARNESS_CREDENTIAL_ENV=OPENAI_API_KEY",
+      `OPENCLAW_HARNESS_PROBE_CONFIG=${JSON.stringify(probeConfiguration)}`,
+      `OPENAI_API_KEY=${startupProbeApiKey}`,
+      "NODE_EXTRA_CA_CERTS=/fixture/ca.pem",
+      ...status,
+    ],
+  };
+}
+
+async function containerProcesses(containerName) {
+  const { stdout } = await runDocker([
+    "exec",
+    containerName,
+    "node",
+    "-e",
+    String.raw`
+const fs = require("node:fs");
+const found = [];
+for (const pid of fs.readdirSync("/proc")) {
+  if (!/^\d+$/.test(pid) || Number(pid) === process.pid) continue;
+  try { found.push(fs.readFileSync("/proc/" + pid + "/cmdline", "utf8")); } catch {}
+}
+process.stdout.write(JSON.stringify(found));
+`,
+  ]);
+  return JSON.parse(stdout);
+}
+
+// Runs one wrapper start against the stand-in provider. `mode` is the
+// provider's behaviour: "answer" after `delayMs`, "reject" with HTTP 401, or
+// "hang". `until` returns true once the scenario has what it needs to check.
+async function runStartupProbeScenario(t, { kind, mode, delayMs = 0, concurrent, until, act }) {
+  const wrapper = startupProbeWrapper(kind, concurrent);
+  const material = await createStartupProbeMaterial(t, wrapper.readiness);
+  if (wrapper.configuration !== undefined) {
+    await writeFile(join(material, "openclaw.json"), JSON.stringify(wrapper.configuration));
+    await chmod(join(material, "openclaw.json"), 0o644);
+  }
+  const suffix = randomBytes(6).toString("hex");
+  const sidecar = `oce-runtime-probe-endpoint-${suffix}`;
+  const containerName = `oce-runtime-probe-${kind}-${suffix}`;
+  t.after(async () => {
+    await runDocker(["rm", "-f", containerName]).catch(() => {});
+    await runDocker(["rm", "-f", sidecar]).catch(() => {});
+  });
+  const readinessEnvironment = Object.fromEntries(
+    wrapper.environment.map((entry) => [
+      entry.slice(0, entry.indexOf("=")),
+      entry.slice(entry.indexOf("=") + 1),
+    ]),
+  );
+  await runDocker([
+    "run",
+    "--name",
+    sidecar,
+    "--detach",
+    "--network",
+    "none",
+    "--sysctl",
+    "net.ipv4.ip_unprivileged_port_start=0",
+    "--user",
+    "1000:1000",
+    "--read-only",
+    "--cap-drop",
+    "ALL",
+    "--security-opt",
+    "no-new-privileges",
+    "--tmpfs",
+    "/tmp:size=64m,uid=1000,gid=1000,mode=1777",
+    "--volume",
+    `${material}:/fixture:ro`,
+    "-e",
+    `PROBE_ENDPOINT_MODE=${mode}`,
+    "-e",
+    `PROBE_ENDPOINT_DELAY_MS=${delayMs}`,
+    "-e",
+    `PROBE_OBSERVE_NATIVE_PORT=${wrapper.nativePort}`,
+    "-e",
+    "PROBE_OBSERVE_STATUS_PORT=18791",
+    "-e",
+    `PROBE_OBSERVE_READINESS_ENV=${JSON.stringify(readinessEnvironment)}`,
+    "--entrypoint",
+    "node",
+    image,
+    "/fixture/endpoint.mjs",
+  ]);
+  await waitForDockerLog(sidecar, /"event":"listening"/);
+  await runDocker([
+    "run",
+    "--name",
+    containerName,
+    "--detach",
+    "--network",
+    `container:${sidecar}`,
+    "--cpus",
+    startupProbeCpuLimit,
+    "--memory",
+    startupProbeMemoryLimit,
+    "--user",
+    "1000:1000",
+    "--read-only",
+    "--cap-drop",
+    "ALL",
+    "--security-opt",
+    "no-new-privileges",
+    "--tmpfs",
+    "/home/node:size=1024m,uid=1000,gid=1000,mode=700",
+    "--tmpfs",
+    "/tmp:size=64m,uid=1000,gid=1000,mode=1777",
+    "--volume",
+    `${material}:/fixture:ro`,
+    "--volume",
+    `${join(material, "hosts")}:/etc/hosts:ro`,
+    "--volume",
+    `${join(material, "resolv.conf")}:/etc/resolv.conf:ro`,
+    ...(wrapper.configuration === undefined
+      ? []
+      : ["--volume", `${join(material, "openclaw.json")}:/etc/openclaw/openclaw.json:ro`]),
+    ...wrapper.environment.flatMap((value) => ["-e", value]),
+    "--entrypoint",
+    "node",
+    image,
+    "-e",
+    wrapper.entrypoint,
+  ]);
+  const startedAt = containerStartedAt(
+    (await runDocker(["inspect", containerName, "--format", "{{.State.StartedAt}}"])).stdout,
+  );
+  const collect = async () => {
+    const [endpoint, native, state] = await Promise.all([
+      runDocker(["logs", sidecar]),
+      runDocker(["logs", containerName]),
+      runDocker([
+        "inspect",
+        containerName,
+        "--format",
+        "{{.State.Running}} {{.State.ExitCode}} {{.State.FinishedAt}}",
+      ]),
+    ]);
+    const [running, exitCode, ...finished] = state.stdout.trim().split(/\s+/);
+    const events = jsonLogEntries(endpoint.stdout).map((event) => ({
+      ...event,
+      ms: event.at - startedAt,
+    }));
+    const output = `${native.stdout}\n${native.stderr}`;
+    return {
+      events,
+      output,
+      phases: jsonLogEntries(output).filter(({ event }) => event === "runtime.startup_phase"),
+      running: running === "true",
+      exitCode: Number(exitCode),
+      finishedAt: running === "true" ? undefined : containerStartedAt(finished.join(" ")),
+    };
+  };
+  const deadline = Date.now() + 300_000 * imageSmokeTimeoutMultiplier;
+  const scenario = {
+    containerName,
+    startedAt,
+    wrapper,
+    collect,
+    first: (events, predicate) => events.find(predicate),
+  };
+  for (;;) {
+    const snapshot = await collect();
+    if (await until(snapshot, scenario)) {
+      if (act !== undefined) {
+        await act(scenario, snapshot);
+      }
+      return { ...scenario, snapshot: await collect() };
+    }
+    if (!snapshot.running && act === undefined) {
+      assert.fail(`The ${kind} wrapper exited early (${snapshot.exitCode}).\n${snapshot.output}`);
+    }
+    if (Date.now() > deadline) {
+      assert.fail(
+        `The ${kind} startup probe scenario did not settle.\n${snapshot.output}\n` +
+          JSON.stringify(snapshot.events),
+      );
+    }
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+}
+
+const observedValue = (key, value) => (event) =>
+  event.event === "observe" && event.key === key && event.value === value;
+const isModelTurn = (event) => event.event === "request" && event.turn === true;
+const isTurnAnswer = (event) => event.event === "turn-answered";
+
+function phaseAt(phases, phase) {
+  return phases.find((entry) => entry.phase === phase);
+}
+
+// Every observation of `key` made before `at` (epoch milliseconds).
+function observationsBefore(events, key, at) {
+  return events.filter((event) => event.event === "observe" && event.key === key && event.at < at);
+}
+
+function describeStartupProbeRun(label, run) {
+  const { events, phases } = run.snapshot;
+  const at = (predicate) => run.first(events, predicate)?.ms;
+  return (
+    `${label}: ` +
+    JSON.stringify({
+      nativeSpawnMs: phaseAt(phases, "native-spawn")?.sinceStartMs,
+      modelProbeMs: phaseAt(phases, "model-probe")?.sinceStartMs,
+      modelTurnMs: at(isModelTurn),
+      turnAnsweredMs: at(isTurnAnswer),
+      nativeListeningMs: at(observedValue("native", true)),
+      runtimeFailureMs: at(
+        (event) =>
+          event.event === "observe" && event.key === "runtimeFailure" && event.value !== null,
+      ),
+      readyMs: at(observedValue("ready", true)),
+    })
+  );
+}
+
+// Attach the run's observations and wrapper output to a failed assertion.
+async function withStartupProbeEvidence(run, check) {
+  try {
+    await check();
+  } catch (error) {
+    throw new Error(
+      `${error.message}\nendpoint events:\n` +
+        run.snapshot.events.map((event) => JSON.stringify(event)).join("\n") +
+        `\nwrapper output:\n${run.snapshot.output}`,
+      { cause: error },
+    );
+  }
+}
+
+async function assertConcurrentStartupProbe(t, kind) {
+  // A model turn slower than native startup work, but far inside the probe's
+  // 30-second attempt cap, so neither path retries.
+  const delayMs = 8_000;
+  const readyScenario = (concurrent) =>
+    runStartupProbeScenario(t, {
+      kind,
+      mode: "answer",
+      delayMs,
+      concurrent,
+      until: ({ events }) => events.some(observedValue("ready", true)),
+    });
+
+  const serial = await readyScenario(false);
+  await withStartupProbeEvidence(serial, async () => {
+    const { events, phases } = serial.snapshot;
+    const answered = serial.first(events, isTurnAnswer);
+    assert.ok(answered, "the stand-in provider answered the probe");
+    assert.equal(phaseAt(phases, "model-probe")?.outcome, "ok");
+    // Without the runtime status port the probe gates native startup.
+    assert.ok(
+      phaseAt(phases, "model-probe").sinceStartMs <= phaseAt(phases, "native-spawn").sinceStartMs,
+    );
+    assert.ok(phaseAt(phases, "native-spawn").sinceStartMs >= answered.ms);
+    t.diagnostic(describeStartupProbeRun(`${kind} serial, ${delayMs} ms model turn`, serial));
+  });
+
+  const concurrent = await readyScenario(true);
+  await withStartupProbeEvidence(concurrent, async () => {
+    const { events, phases } = concurrent.snapshot;
+    const turn = concurrent.first(events, isModelTurn);
+    const answered = concurrent.first(events, isTurnAnswer);
+    assert.ok(turn && answered, "the stand-in provider answered the probe");
+    assert.equal(phaseAt(phases, "model-probe")?.outcome, "ok");
+    // The native process started before the provider even saw the model turn.
+    assert.ok(phaseAt(phases, "native-spawn").sinceStartMs < turn.ms);
+    assert.ok(
+      phaseAt(phases, "native-spawn").sinceStartMs < phaseAt(phases, "model-probe").sinceStartMs,
+    );
+    // Until the probe passed, startup was pending, plugin status starting and
+    // the real readiness program refused, even once the native process listened.
+    assert.ok(
+      observationsBefore(events, "startup", answered.at).some(({ value }) => value === "pending"),
+    );
+    assert.deepEqual(
+      [
+        ...new Set(observationsBefore(events, "startup", answered.at).map(({ value }) => value)),
+      ].filter((value) => value !== null && value !== "pending"),
+      [],
+    );
+    assert.deepEqual(
+      [
+        ...new Set(observationsBefore(events, "plugin", answered.at).map(({ value }) => value)),
+      ].filter((value) => value !== null && value !== "starting"),
+      [],
+    );
+    assert.equal(
+      observationsBefore(events, "ready", answered.at).some(({ value }) => value === true),
+      false,
+    );
+    const ready = concurrent.first(events, observedValue("ready", true));
+    assert.ok(ready.at >= answered.at);
+    assert.ok(events.some(observedValue("startup", "ready")));
+    assert.ok(events.some(observedValue("plugin", "ready")));
+    t.diagnostic(
+      describeStartupProbeRun(`${kind} concurrent, ${delayMs} ms model turn`, concurrent),
+    );
+    const serialReady = serial.first(serial.snapshot.events, observedValue("ready", true)).ms;
+    t.diagnostic(
+      `${kind} readiness: serial ${serialReady} ms, concurrent ${ready.ms} ms, ` +
+        `saved ${serialReady - ready.ms} ms at --cpus ${startupProbeCpuLimit}`,
+    );
+  });
+
+  // A rejected credential still reports AUTHENTICATION_FAILED for #583's
+  // prompt deployment failure; the native process is stopped and the wrapper
+  // holds that evidence until it is terminated.
+  const rejected = await runStartupProbeScenario(t, {
+    kind,
+    mode: "reject",
+    concurrent: true,
+    until: ({ events }) => events.some(observedValue("runtimeFailure", "AUTHENTICATION_FAILED")),
+  });
+  await withStartupProbeEvidence(rejected, async () => {
+    const { events, phases, output } = rejected.snapshot;
+    assert.ok(events.some(observedValue("startup", "failed")));
+    assert.equal(events.some(observedValue("ready", true)), false);
+    assert.equal(events.some(observedValue("plugin", "ready")), false);
+    assert.equal(phaseAt(phases, "model-probe")?.outcome, "failed");
+    assert.match(output, /Harness model authentication probe failed\./);
+    assert.doesNotMatch(output, new RegExp(startupProbeApiKey));
+    const failure = rejected.first(
+      events,
+      observedValue("runtimeFailure", "AUTHENTICATION_FAILED"),
+    );
+    // Far inside the 900-second convergence deadline #583 cuts short.
+    assert.ok(failure.ms < 120_000 * imageSmokeTimeoutMultiplier, `failure after ${failure.ms} ms`);
+    let processes;
+    const stoppedBy = Date.now() + 30_000 * imageSmokeTimeoutMultiplier;
+    do {
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      processes = await containerProcesses(rejected.containerName);
+    } while (
+      processes.some((line) => rejected.wrapper.nativeProcess.test(line)) &&
+      Date.now() < stoppedBy
+    );
+    assert.equal(
+      processes.some((line) => rejected.wrapper.nativeProcess.test(line)),
+      false,
+      "the failed probe stops the native process",
+    );
+    const held = await rejected.collect();
+    assert.equal(held.running, true, "the wrapper holds the failure evidence");
+    t.diagnostic(describeStartupProbeRun(`${kind} rejected credential`, rejected));
+    const terminatedAt = Date.now();
+    await runDocker(["kill", "--signal", "TERM", rejected.containerName]);
+    await runDocker(["wait", rejected.containerName], {
+      timeout: 30_000 * imageSmokeTimeoutMultiplier,
+    });
+    const ended = await rejected.collect();
+    assert.equal(ended.exitCode, 0);
+    t.diagnostic(`${kind} holding wrapper exited ${Date.now() - terminatedAt} ms after SIGTERM`);
+  });
+
+  // SIGTERM while the provider still holds the model turn: the probe stops,
+  // no further attempt starts, and the wrapper exits cleanly.
+  let signalledAt;
+  const terminated = await runStartupProbeScenario(t, {
+    kind,
+    mode: "hang",
+    concurrent: true,
+    until: ({ events, phases }) =>
+      events.some(isModelTurn) && phaseAt(phases, "native-spawn") !== undefined,
+    act: async ({ containerName }) => {
+      signalledAt = Date.now();
+      await runDocker(["kill", "--signal", "TERM", containerName]);
+      await runDocker(["wait", containerName], { timeout: 60_000 * imageSmokeTimeoutMultiplier });
+    },
+  });
+  await withStartupProbeEvidence(terminated, async () => {
+    const { events, phases, exitCode, finishedAt } = terminated.snapshot;
+    assert.equal(exitCode, 0);
+    assert.equal(
+      phaseAt(phases, "model-probe"),
+      undefined,
+      "a terminated probe reports no outcome",
+    );
+    assert.equal(events.filter(isModelTurn).length, 1, "termination starts no further attempt");
+    assert.ok(
+      events.some((event) => event.event === "turn-closed"),
+      "the probe's request was abandoned",
+    );
+    assert.equal(events.some(observedValue("ready", true)), false);
+    t.diagnostic(`${kind} exited ${finishedAt - signalledAt} ms after SIGTERM mid-probe`);
+  });
+}
+
+test(
+  "runtime image Codex Harness starts app-server while its model probe runs",
+  { ...imageTestOptions, timeout: 1_800_000 },
+  async (t) => {
+    await assertConcurrentStartupProbe(t, "codex");
+  },
+);
+
+// The embedded Gateway's probe is a second node process. Beside Gateway boot
+// under the 500m CPU limit, both boots share one quota and the probe overran its
+// 30-second attempt cap twice, so the embedded Gateway still probes first. This
+// pins that order under the limit, and #583's prompt failure evidence.
+test(
+  "runtime image embedded Gateway probes its model before it starts OpenClaw",
+  { ...imageTestOptions, timeout: 1_800_000 },
+  async (t) => {
+    const delayMs = 8_000;
+    const answered = await runStartupProbeScenario(t, {
+      kind: "gateway",
+      mode: "answer",
+      delayMs,
+      concurrent: true,
+      until: ({ events }) => events.some(observedValue("ready", true)),
+    });
+    await withStartupProbeEvidence(answered, async () => {
+      const { events, phases } = answered.snapshot;
+      const answer = answered.first(events, isTurnAnswer);
+      assert.ok(answer, "the stand-in provider answered the probe");
+      assert.equal(phaseAt(phases, "model-probe")?.outcome, "ok");
+      assert.ok(phaseAt(phases, "native-spawn").sinceStartMs >= answer.ms);
+      assert.equal(
+        observationsBefore(events, "native", answer.at).some(({ value }) => value === true),
+        false,
+      );
+      assert.equal(
+        observationsBefore(events, "ready", answer.at).some(({ value }) => value === true),
+        false,
+      );
+      assert.ok(events.some(observedValue("startup", "ready")));
+      assert.ok(events.some(observedValue("plugin", "ready")));
+      t.diagnostic(describeStartupProbeRun(`gateway, ${delayMs} ms model turn`, answered));
+    });
+
+    const rejected = await runStartupProbeScenario(t, {
+      kind: "gateway",
+      mode: "reject",
+      concurrent: true,
+      until: ({ events }) => events.some(observedValue("runtimeFailure", "AUTHENTICATION_FAILED")),
+    });
+    await withStartupProbeEvidence(rejected, async () => {
+      const { events, phases, output } = rejected.snapshot;
+      assert.ok(events.some(observedValue("startup", "failed")));
+      assert.equal(events.some(observedValue("ready", true)), false);
+      assert.equal(phaseAt(phases, "model-probe")?.outcome, "failed");
+      assert.equal(phaseAt(phases, "native-spawn"), undefined, "a failed probe starts no Gateway");
+      assert.match(output, /Harness model authentication probe failed\./);
+      assert.doesNotMatch(output, new RegExp(startupProbeApiKey));
+      const failure = rejected.first(
+        events,
+        observedValue("runtimeFailure", "AUTHENTICATION_FAILED"),
+      );
+      assert.ok(
+        failure.ms < 120_000 * imageSmokeTimeoutMultiplier,
+        `failure after ${failure.ms} ms`,
+      );
+      assert.equal((await rejected.collect()).running, true, "the wrapper holds the evidence");
+      t.diagnostic(describeStartupProbeRun("gateway rejected credential", rejected));
+    });
   },
 );

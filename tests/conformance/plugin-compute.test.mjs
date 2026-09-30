@@ -3021,6 +3021,7 @@ async function runCodexAuthenticationScenario(scenario, mode) {
     const revisionId = "revision-runtime-auth-gate";
     let statusHandler;
     let appServerStarts = 0;
+    const loginCopies = [];
     let appServerExit;
     let nativeCalls = 0;
     let loginCalls = 0;
@@ -3108,6 +3109,10 @@ async function runCodexAuthenticationScenario(scenario, mode) {
         }
         if (specifier === "node:fs") {
           return {
+            // The concurrent probe copies only the stored login into its own home.
+            copyFileSync(source, target) {
+              loginCopies.push([source, target]);
+            },
             mkdirSync() {},
             mkdtempSync: () => mkdtempSync(join(directory, "probe-")),
             rmSync,
@@ -3175,7 +3180,7 @@ async function runCodexAuthenticationScenario(scenario, mode) {
               }
               return outcome;
             },
-            spawn(command, args) {
+            spawn(command, args, options) {
               assert.equal(command, "codex");
               if (args.includes("app-server")) {
                 appServerStarts++;
@@ -3200,6 +3205,13 @@ async function runCodexAuthenticationScenario(scenario, mode) {
               assert.equal(concurrent, true, "the serial probe runs synchronously");
               assert.ok(args.includes("exec"));
               assert.equal(appServerStarts, 1, "app-server starts before the probe finishes");
+              // App-server owns the shared Codex home; the probe never opens it.
+              const sharedHome = sandbox.process.env.CODEX_HOME;
+              assert.notEqual(options.env.CODEX_HOME, sharedHome);
+              assert.deepEqual(loginCopies.at(-1), [
+                `${sharedHome}/auth.json`,
+                `${options.env.CODEX_HOME}/auth.json`,
+              ]);
               assert.equal(sandbox.process.env.CODEX_ACCESS_TOKEN, undefined);
               assert.equal(sandbox.process.env.OPENAI_API_KEY, undefined);
               nativeCalls++;
@@ -3470,6 +3482,7 @@ test("Codex concurrent startup keeps the probe outcome ahead of other startup fa
             }
             if (specifier === "node:fs") {
               return {
+                copyFileSync() {},
                 mkdirSync() {},
                 mkdtempSync: () => mkdtempSync(join(directory, "probe-")),
                 rmSync,
