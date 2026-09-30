@@ -48,6 +48,9 @@ from [AGENTS.md](../AGENTS.md#running-integration-tests) instead.
 
 ## Active specifications
 
+[Console mutation settlement](proposed-console-mutation-settlement.md) — Proposed;
+settlement of uncertain plugin and access changes and reviewed-draft deployment.
+
 [Agent access](36-agent-access.md) — Proposed; existing-person sharing for trusted
 full native administration, followed by atomic enrollment and granular permissions.
 
