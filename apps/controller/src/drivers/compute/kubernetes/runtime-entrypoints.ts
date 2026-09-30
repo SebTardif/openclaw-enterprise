@@ -2127,6 +2127,7 @@ let child;
 let childRunning = false;
 let childExited;
 let respawning = false;
+let waitingForPeerDuringOutage = false;
 let stoppingContainer = false;
 let gatewayGeneration = 0;
 
@@ -2147,7 +2148,7 @@ function startGatewayProcess() {
         process.exit(1);
         return;
       }
-      if (gatewayTerminating || (!respawning && spawned === child)) {
+      if (gatewayTerminating || ((!respawning || waitingForPeerDuringOutage) && spawned === child)) {
         process.exit(code ?? (signal === "SIGTERM" ? 0 : 1));
       }
     });
@@ -2332,7 +2333,9 @@ if (followsPeerStatus) {
       if (current === undefined) {
         // Unreadable status need not mean a new Harness: the same Harness
         // process coming back leaves this Gateway's credential valid.
+        waitingForPeerDuringOutage = true;
         const returned = await waitForPeerPluginRuntimeStatus();
+        waitingForPeerDuringOutage = false;
         if (!peerChanged(returned) && childRunning) {
           publishPluginRuntimeStatus({ phase: "ready", ...pluginResult });
           logStartupPhase("peer-status-restored", respawnStartedAt);
@@ -2368,6 +2371,7 @@ if (followsPeerStatus) {
       logStartupPhase("gateway-respawn", respawnStartedAt, "failed");
       stopContainer();
     } finally {
+      waitingForPeerDuringOutage = false;
       respawning = false;
     }
   };
