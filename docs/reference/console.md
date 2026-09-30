@@ -37,37 +37,39 @@ The sidebar opens **Agents** or **Namespaces**; **Refresh** repeats the read.
 Set up models during Agent creation; the [experimental Backends](backends.md)
 tab is hidden. Namespace rows are read-only.
 
-| Page       | Scope and permission                                                     |
-| ---------- | ------------------------------------------------------------------------ |
-| Agents     | Selected Namespace; Namespace `read`, then exact Agent `read` filtering. |
-| Namespaces | Installation-wide collection filtered by exact Namespace `read`.         |
+| Page          | Scope and permission                                                                                                 |
+| ------------- | -------------------------------------------------------------------------------------------------------------------- |
+| Agents        | Selected Namespace; Namespace `read`, then exact Agent `read` filtering.                                             |
+| Namespaces    | Installation-wide collection filtered by exact Namespace `read`.                                                     |
+| Observability | External [`observability.url`](configuration.md#installation-startup-configuration) link; Installation `administer`. |
 
-The console uses a light appearance and OCC-served fonts; no external font
-service is required.
+The console uses a light appearance and OCC-served fonts.
 
-Returning pages retain content during access checks; controls await authorization.
-Unchanged pages and Agent tabs keep their loaded controls and expanded panels.
-Agent detail keeps its mounted editor and open Slack search during refocus access checks.
-Changed data rebuilds the view. Refresh explicitly reloads; first visits still load.
-Document-local views
-are scoped to account, session, route, and Namespace; sign-out, session changes,
-and exit clear them. Failed reads show recovery. Installation-wide Backend
-denial clears all previews.
+When available, a retained view stays mounted and inert during eligible full-page
+return validation. Matching data reactivates it; changed data rebuilds it.
+Agent-detail refocus revalidates access without rebuilding, preserving
+mounted editors, form input, open Slack searches, and the enabled header selector.
+Refresh rebuilds. Retained views preserve controls and panels. Scoped to account, session, route, and
+Namespace, they clear on sign-out, session changes, exit, or Backend denial;
+failed reads show recovery.
 
-Use the **Namespace** selector in the page header to switch scope on desktop or
-mobile. It lists readable Namespaces and shows the current selection. The
-Installation-wide Namespaces page omits the selector. The bottom
-**OpenClaw Enterprise** menu contains **Settings** and **Logout**. Settings shows
-the signed-in account and no configurable settings.
+Use the header's **Namespace** selector to switch readable scopes on desktop or
+mobile. Namespaces omits it. **OpenClaw Enterprise** at the bottom offers
+**Settings**, which shows the signed-in account without configurable settings,
+and **Logout**.
 
-The selected Namespace stays in `?namespace=<id>` across pages, reload, and Back.
-An unreadable explicit ID shows **Namespace unavailable** and requires another
-selection. With no readable Namespaces, Agents explains that provisioning or
-access is needed; global pages remain available.
+Selection persists in `?namespace=<id>` across navigation, reload, and Back.
+An unreadable ID shows **Namespace unavailable**. On Namespaces, **Choose a valid
+namespace** updates the URL and removes the warning without leaving the page.
+Page load, Refresh, and admission-starting navigation disable the Namespace
+selector through session and Namespace checks, hiding choices; retained-view
+validation can extend this.
+Without readable alternatives, Agents and Namespaces show provisioning/access
+guidance; global pages remain available.
 
-Switching Namespace from Agent detail or creation returns to the Agents list in
-the new scope. Other global pages stay open. The API makes all authorization decisions; the selector does
-not broaden access.
+Switching Namespace from Agent detail or creation returns to Agents in the new
+scope; global pages stay open. The API authorizes access; the selector cannot
+broaden it.
 
 ## Inspect build and runtime images
 
@@ -117,7 +119,7 @@ requires exact Agent `read`/`update` and a catalog-capable Driver. The curated
 catalog needs no Secret. Hosted browsing reads bound `codex_pat` server-side and
 requires caller and Agent ServicePrincipal Secret `operate`.
 **Save plugin selections** updates the Agent; deployment snapshots them.
-Admitted versions are read-only. **Operator-managed credentials** saves
+**Operator-managed credentials** saves
 `{ "method": "runtime" }` for SSH embedded OpenClaw; OCC does not validate host
 credentials or generate metadata for that binding. API permissions and topology
 checks still apply. **Current version** displays `activeRevisionId`, which
@@ -125,12 +127,13 @@ can differ from the viewed snapshot without proving live serving.
 **Deployment activity** shows the latest visible version's persisted result;
 the viewed version shows its own recorded outcome.
 
-**Current observations** runs only when **Run diagnostics for this version** is
-selected. The bodyless POST checks the exact viewed version and returns an
-observation time and bounded checks marked `succeeded`, `failed`, or `unknown`.
-Agent `read` and `operate` plus exact AgentRevision `read` are required.
-An unavailable request shows an error. Results do not change deployment history,
-repeat the startup model probe, or prove message delivery.
+**Current observations** runs on **Run diagnostics for this version**: a
+bodyless POST checking the exact viewed version. Kubernetes checks cover only
+Slack (`NOT_CONFIGURED`: no Slack channel), never model credentials; recorded
+failures stay shown. Checks are timestamped `succeeded`, `failed`, or `unknown`.
+Agent `read`/`operate` and exact AgentRevision `read` are required. Unavailable
+requests show an error. Results do not change deployment history, repeat the
+startup model probe, or prove message delivery.
 
 **Save authentication source** stores the binding and confirms exact
 `secret:operate` access for the Agent principal on an API-key or Service Accounts
@@ -239,8 +242,8 @@ as deleting; select **Refresh deletion status** to check progress. When the API
 confirms that the Agent is gone, the console returns to the Agents list in the
 same Namespace. An access-denied response stays on the detail page and tells you
 that deletion requires permission. If the console cannot confirm the outcome,
-the request may have succeeded; refresh to read the Agent's current state before
-retrying. The console does not automatically send another delete request.
+the request may have succeeded; refresh before retrying. The console never
+resends a delete request automatically.
 
 ## Failures and logout
 
@@ -298,9 +301,10 @@ result. For unavailable gateways, follow the
 
 When [Agent native admin UI access](agent-native-admin.md) is enabled, the
 Agent detail tabs, including Configuration and Workspace files, include a
-**Native admin UI** panel for callers with exact Agent `administer` permission.
-The panel is hidden when the Installation disables the feature or when the
-caller lacks that grant. An Agent that is stopped reports that it must be started,
+**Native admin UI** panel for callers with exact Agent `administer` permission;
+otherwise, or when the Installation disables the feature, it is hidden.
+Installation administrators can [share an Agent](console/agent-sharing.md)
+with an existing person. An Agent that is stopped reports that it must be started,
 including before its first deployment or after stopping clears its active
 revision. If a desired-running Agent has no active revision yet, the panel asks
 you to check the Agent's deployment and refresh access. It also reports when

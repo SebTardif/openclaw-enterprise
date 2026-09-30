@@ -6,10 +6,8 @@ retaining its protected Helm values, Installation YAML, and Kubernetes context.
 On EKS, complete the [strict-mode prerequisites](eks.md#enable-console-workspace-files).
 
 This procedure assumes OCC API and worker Pods run in the same Kubernetes
-cluster as the private Envoy Service. The local Compose + k3d helper does not
-configure this topology. Use [Kubernetes setup](../kubernetes-setup.md) for
-workspace access; enabling a Helm value alone does not connect a Compose API
-to the private Service.
+cluster as the private Envoy Service. For OCC in Compose, use the separate [local hybrid routing procedure](local-compose-kubernetes.md).
+Enabling a Helm value alone does not connect a Compose API to the private Service.
 
 Production examples enable routing; the chart defaults to
 `gatewayRouting.enabled: false`. Install routing controllers, create the
@@ -120,6 +118,10 @@ Helm does not rewrite the Installation Secret. The
 defines the naming rule. It does not require an existing Agent gateway.
 If you override `gatewayRouting.envoyHttpsTargetPort` (default `10443`),
 set the same value in Helm and the Installation Compute configuration.
+If the external load balancer exposes HTTPS on a port other than `443`, set
+`gatewayRouting.endpointPort` in the Installation Compute configuration and
+forward that port to the Gateway HTTPS listener. Helm does not create this
+external port mapping.
 
 To use an existing issuer instead of creating a CA, set
 `gatewayRouting.issuerRef.name`, with `kind` (default `ClusterIssuer`) and

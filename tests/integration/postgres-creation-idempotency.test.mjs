@@ -224,7 +224,7 @@ test(
 );
 
 test(
-  "a lost PostgreSQL creation COMMIT reply returns UNKNOWN_OUTCOME and recovers the committed resource",
+  "a lost PostgreSQL creation COMMIT reply reports an unknown outcome and recovers the committed resource",
   requiresPostgres,
   async (t) => {
     const fixture = await setup(t);
@@ -245,7 +245,8 @@ test(
     const lost = await uncertain.request("POST", path, body);
     assert.equal(proxy.observedCommit, true);
     assert.equal(lost.status, 503, JSON.stringify(lost.body));
-    assert.equal(lost.body.error.code, "UNKNOWN_OUTCOME");
+    assert.equal(lost.body.error.code, "DEPENDENCY_UNAVAILABLE");
+    assert.match(lost.body.error.message, /outcome is unknown/i);
     const recovered = await healthy.request("POST", path, body);
     assert.equal(recovered.status, 201, JSON.stringify(recovered.body));
     const stored = await fixture.pool.query(

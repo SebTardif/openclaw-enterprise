@@ -244,7 +244,63 @@
       "idx": 34,
       "version": "7",
       "when": 1787000000034,
-      "tag": "0034_creation_requests",
+      "tag": "0034_repository_broker_receipts",
+      "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "7",
+      "when": 1787000000035,
+      "tag": "0035_agent_deletion_repository_session_evidence",
+      "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1787000000036,
+      "tag": "0036_deployment_progress",
+      "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1787000000037,
+      "tag": "0037_human_authentication",
+      "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1787000000038,
+      "tag": "0038_agent_deletion_takeover",
+      "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "7",
+      "when": 1787000000039,
+      "tag": "0039_namespace_deletion_takeover",
+      "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1787000000040,
+      "tag": "0040_repository_access",
+      "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1787000000041,
+      "tag": "0041_restriction_read_logs",
+      "breakpoints": true
+    },
+    {
+      "idx": 42,
+      "version": "7",
+      "when": 1787000000042,
+      "tag": "0042_creation_requests",
       "breakpoints": true
     }
   ]

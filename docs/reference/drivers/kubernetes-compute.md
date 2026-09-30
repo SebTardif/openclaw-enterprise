@@ -22,9 +22,11 @@ explicitly adopted existing namespace retains its operator-selected name;
 OpenShell selection rejects it if it exceeds that Workspace limit.
 
 The optional [OpenShell Sandbox Driver](openshell-sandbox.md) is designed to
-own the dedicated Codex Harness Pod while Compute keeps the other resources.
-Stock OpenShell cannot provide required credential and workload-identity
-projections; Agent deployment with OpenShell is unsupported.
+own dedicated Codex and native OpenClaw Harness Pods while Compute keeps the
+other resources. Dedicated native OpenClaw is rejected unless the selected
+SandboxDriver provisions the Harness and declares networking, filesystem, and
+process containment. Stock OpenShell cannot provide required credential and
+workload-identity projections; Agent deployment with OpenShell remains unsupported.
 
 For detailed operator contracts, see:
 
@@ -36,8 +38,7 @@ For detailed operator contracts, see:
 - Kubernetes 1.35 or later. On an older API server, API and worker startup each
   emit `compute.preflight-warning`; its message includes the observed and
   minimum versions. Startup continues, but versions below 1.35 are outside the
-  supported and CI-verified boundary even though this advisory does not block
-  startup.
+  supported and CI-verified boundary.
 - A Kubernetes cluster dedicated to one OpenClaw Enterprise Installation.
 - Enforced Kubernetes NetworkPolicies, verified Kubernetes API TLS, and
   restricted Pod security.
@@ -130,15 +131,15 @@ drivers:
       resources:
         gateway:
           requests: { cpu: 100m, memory: 128Mi }
-          limits: { cpu: 500m, memory: 256Mi }
+          limits: { cpu: "4", memory: 256Mi }
         agent:
           requests: { cpu: 100m, memory: 128Mi }
-          limits: { cpu: 500m, memory: 256Mi }
+          limits: { cpu: "4", memory: 256Mi }
         namespace:
           quota: { pods: "10" }
           containerDefaults:
             requests: { cpu: 100m, memory: 128Mi }
-            limits: { cpu: 500m, memory: 256Mi }
+            limits: { cpu: "4", memory: 256Mi }
       network:
         dns:
           namespace: kube-system
@@ -155,16 +156,23 @@ drivers:
         expirationSeconds: 900
       runtime:
         gatewayStorageClassName: sqlite-block
+        nativeOpenClawSessionCapacity: 8
         nodeSelector: { oce-role: agents }
         gatewayNodeSelector: { oce-role: control-plane }
         transportSecretPrefix: openclaw-agent-transport
         # Optional; first install this reviewed profile on every eligible node.
-        codexSeccompProfile: profiles/codex-0.156.0.json
+        codexSeccompProfile: profiles/codex-0.158.0.json
 ```
 
 This example shows only the Compute Driver portion of the Installation
 configuration. See the [complete production Installation example](../../guides/deploy/production-installation.md#configure-the-installation)
 for the other required Drivers and settings.
+
+`runtime.nativeOpenClawSessionCapacity` accepts an integer from `1` through
+`1024` and defaults to `8`. It bounds retained native OpenClaw session workers
+in one AgentRevision Sandbox. Stopping a hosted session releases its slot; saved
+history does not consume capacity. OpenClaw does not yet retire idle paired-node
+workers, so size the limit against the Agent workload's CPU and memory limits.
 
 ### Authentication
 
@@ -185,7 +193,8 @@ selects Harness and embedded Pods; dedicated real Gateways require
 `runtime.gatewayNodeSelector`, including their private-state initializer. Use
 disjoint trusted and tenant node pools in production. Quotas and defaults apply
 separately to each physical namespace. Production requires
-`images.requireImmutableDigest: true` and SHA-256 image digests.
+`images.requireImmutableDigest: true` and SHA-256 image digests. Quote
+whole-core quantities, such as `cpu: "4"`.
 
 See [network configuration](kubernetes-compute/networking-and-isolation.md#networking)
 for DNS, gateway clients, proxy trust, and egress requirements.
@@ -210,6 +219,17 @@ The Agent's Harness configuration determines its execution topology:
   Service DNS and the paired node for workspace operations. Codex accepts an
   Agent-scoped model API key or a managed ChatGPT service-account credential,
   and permits `openai/` or `codex/` models.
+- **Dedicated native OpenClaw:** The Gateway and paired OpenClaw Harness run in
+  separate Pods with separate ServiceAccounts. Compute issues a node-only setup
+  credential through the Gateway and stores the resulting device identity on the
+  Harness workspace claim. The node host supervises the remote worker, which owns
+  the agent loop, model inference, and coding tools. Only the Harness receives the
+  model API key. Compute makes its generated `dedicated-native` worker-inference
+  profile mandatory, so sessions use the enrolled Harness without a Cloud Worker
+  selection. A missing or disconnected Harness fails the turn without Gateway
+  inference fallback. Explicit `openai/` models require complete API,
+  token-limit, input, reasoning, and cost metadata at the approved
+  `https://api.openai.com/v1` endpoint.
 
 Dedicated replacement opts into the [exclusive preparation contract](compute.md#production-revision-stages):
 the worker stops predecessors before starting the new Harness. This permits RWO
@@ -217,9 +237,11 @@ workspace storage and introduces deployment downtime; restore a previous
 configuration through a new revision instead of restarting its old snapshot.
 
 Enabled external channels require dedicated execution. Unsupported Harness and
-execution-mode combinations fail deployment. OpenShell is designed for
-dedicated Codex only, but stock OpenShell currently blocks that deployment;
-embedded OpenClaw is rejected as well.
+execution-mode combinations fail deployment. Dedicated native OpenClaw requires
+a full-facet provisioning SandboxDriver; the bundled implementation is
+OpenShell. Stock OpenShell currently blocks production deployment because it
+cannot preserve the required workload projections. Embedded OpenClaw is never
+delegated to OpenShell.
 
 Stopping an Agent first deletes its exact gateway route and gateway runtime,
 then removes the dedicated Harness Deployment or delegates provider-owned
@@ -231,7 +253,7 @@ and converges when the runtime objects are already absent.
 
 ### Plugin startup status
 
-Compute-owned embedded OpenClaw and dedicated Codex runtimes publish a private
+Compute-owned embedded or dedicated OpenClaw and dedicated Codex runtimes publish a private
 current-startup result after attempting requested plugins and verifying effective
 configuration. The result identifies the revision and runtime instance, with
 successful selection IDs and safe `PLUGIN_INSTALL_FAILED` or
@@ -251,10 +273,11 @@ configuration before serving and refreshes that configuration after a changed
 restart result. Failed-only Codex app bindings are disabled; successful selections
 retain their admitted policy, including shared app bindings they require.
 
-The Codex app-server credential is derived from the Agent's transport Secret,
+The Codex app-server credential derives from the Agent's transport Secret,
 revision, and startup identity. A gateway configured for the previous startup
 cannot authenticate to a restarted Agent. Its supervisor obtains the new status,
-applies the matching exclusions, and starts the gateway with the new credential.
+applies the matching exclusions, and respawns the gateway process with the new
+credential.
 This closes the interval before the supervisor's next status poll.
 
 The worker records warnings with successful deployment completion under its live
@@ -294,12 +317,17 @@ for additional execution details.
   ownership, exclusive tenant use, and no foreign NetworkPolicies.
 - **Gateway or Harness remains pending:** Check image digests, image pull
   permissions, CPU and memory limits, namespace quotas, required Secrets, and
-  workload readiness. Dedicated Codex Harness containers clear the plugin
-  readiness marker at process start so a marker left in the Pod's temporary
-  volume by a previous container attempt cannot make a restarted runtime ready.
+  workload readiness, including the
+  [network profile](kubernetes-compute/networking-and-isolation.md#explicit-network-profiles)
+  label. Dedicated Codex Harness
+  containers clear the plugin readiness marker at process start so a marker left
+  by a previous container attempt cannot make a restarted runtime ready.
   Access-token login retries only native process timeouts, up to three 30-second
-  attempts. Credential refusals and model probes are not retried; exhausted
-  startup remains unready until an explicit restart.
+  attempts. The dedicated Codex model probe separately retries a confirmed timeout
+  once within a 61-second budget; refusals are not retried. Exhausted startup
+  remains unready until an explicit restart. See the
+  [authentication probe contract](../harness-execution.md#harness-authentication)
+  for retry limits and sanitized attempt logs.
   Native plugin startup, authentication, transport, and installation failures
   remain generic workload startup failures unless the Compute-owned runtime
   reports a verified current-startup warning for an admitted selected plugin.

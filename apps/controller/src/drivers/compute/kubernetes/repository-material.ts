@@ -80,6 +80,18 @@ export interface ResolvedRepositoryMaterialSpec {
   readonly bindings: readonly ResolvedRepositoryMaterialBinding[];
 }
 
+export function repositoryMaterialCurrent(spec: {
+  readonly bindings: readonly Pick<RepositoryMaterialBinding, "deadlineWallMs">[];
+}): boolean {
+  const now = Date.now();
+  return (
+    spec.bindings.length > 0 &&
+    spec.bindings.every(
+      ({ deadlineWallMs }) => Number.isSafeInteger(deadlineWallMs) && deadlineWallMs > now,
+    )
+  );
+}
+
 function invalid(): never {
   throw new Error("Repository credential material is invalid.");
 }
@@ -381,10 +393,13 @@ export function repositoryMaterialDeployment(spec: ResolvedRepositoryMaterialSpe
           secret: {
             name: binding.secretName,
             optional: false,
-            items: Object.keys(binding.files).map((file) => ({
-              key: REPOSITORY_MATERIAL_KEYS[file as keyof typeof REPOSITORY_MATERIAL_KEYS],
-              path: `${binding.directory.slice(binding.directory.lastIndexOf("/") + 1)}/${file}`,
-            })),
+            // Secret data is an unordered map; projection items are part of the Pod template.
+            items: Object.keys(binding.files)
+              .sort()
+              .map((file) => ({
+                key: REPOSITORY_MATERIAL_KEYS[file as keyof typeof REPOSITORY_MATERIAL_KEYS],
+                path: `${binding.directory.slice(binding.directory.lastIndexOf("/") + 1)}/${file}`,
+              })),
           },
         })),
       },

@@ -21,6 +21,7 @@ export async function commitAckProxy(databaseUrl) {
   }
   let armed = false;
   let requiredStatement;
+  let skipCommits = 0;
   let observed = false;
   const sockets = new Set();
   const server = net.createServer((client) => {
@@ -77,8 +78,12 @@ export async function commitAckProxy(databaseUrl) {
           armed &&
           (requiredStatement === undefined || matchedStatement)
         ) {
-          dropping = true;
-          armed = false;
+          if (skipCommits > 0) {
+            skipCommits -= 1;
+          } else {
+            dropping = true;
+            armed = false;
+          }
         }
         startup = false;
         upstream.write(frame);
@@ -116,9 +121,14 @@ export async function commitAckProxy(databaseUrl) {
   return {
     url: proxyUrl.toString(),
     arm(options = {}) {
+      const skip = options.skipCommits ?? 0;
+      if (!Number.isSafeInteger(skip) || skip < 0) {
+        throw new Error("Skipped COMMIT count must be a nonnegative integer.");
+      }
       if (armed || observed) {
         throw new Error("The single-use fault is already armed or consumed.");
       }
+      skipCommits = skip;
       armed = true;
       requiredStatement = options.afterStatement;
     },
