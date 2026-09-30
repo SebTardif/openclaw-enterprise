@@ -17,6 +17,7 @@ import { createConsoleAppFixture, backendFixtures } from "../helpers/console-app
 import { authenticatedHeaders } from "../helpers/auth-session.mjs";
 import {
   apiRequests,
+  consoleStorage,
   detailUrl,
   login,
   slackSelectionValue,
@@ -1064,14 +1065,33 @@ test("Dedicated OpenClaw Presets keep their OpenClaw harness", async (t) => {
     },
   });
   assert.equal(preset.status, 201, JSON.stringify(preset.body));
+  const unavailable =
+    /Dedicated OpenClaw is unavailable: this installation's OpenClaw runtime lacks native worker support/;
+  {
+    // Without native worker support, the Preset opens as it was saved but cannot be created.
+    const { page } = await newPage(t, fixture);
+    await routeInstallationWithoutProvisioning(page, fixture);
+    await login(page, fixture, `/console/agents/new?namespace=${namespace.id}`);
+    await page.getByLabel("Preset template").selectOption(preset.data.id);
+    await page.getByRole("button", { name: "Use Preset" }).click();
+    await page.getByRole("alert").filter({ hasText: unavailable }).waitFor();
+    assert.equal(await page.getByLabel("Execution mode").inputValue(), "dedicated");
+    assert.equal(
+      await page.getByRole("button", { name: "Create Agent", exact: true }).isDisabled(),
+      true,
+    );
+  }
   const { page } = await newPage(t, fixture);
-  await routeInstallationWithoutProvisioning(page, fixture);
+  await routeInstallationWithoutProvisioning(page, fixture, {
+    nativeWorkers: { support: "custom-image" },
+  });
   await login(page, fixture, `/console/agents/new?namespace=${namespace.id}`);
   await page.getByLabel("Preset template").selectOption(preset.data.id);
   await page.getByRole("button", { name: "Use Preset" }).click();
   // The Preset's own agentRuntime, not its execution mode, selects the harness.
   assert.equal(await page.getByLabel("Harness", { exact: true }).inputValue(), "openclaw");
   assert.equal(await page.getByLabel("Execution mode").inputValue(), "dedicated");
+  assert.equal(await page.getByText(unavailable).isHidden(), true);
   await openAdvancedSettings(page);
   const configuration = page.getByLabel("Configuration JSON", { exact: true });
   assert.deepEqual(JSON.parse(await configuration.inputValue()), values);
@@ -1740,10 +1760,7 @@ test("method-only codex_pat Preset requires credential entry in the create form"
 
   await selectSecret(page, "Service account token Secret", modelSecret);
   assert.equal(await credential.inputValue(), secretOptionLabel(modelSecret));
-  assert.deepEqual(
-    await page.evaluate(() => ({ local: { ...localStorage }, session: { ...sessionStorage } })),
-    { local: {}, session: {} },
-  );
+  assert.deepEqual(await consoleStorage(page), { local: {}, session: {} });
   await page.getByLabel("Authentication method", { exact: true }).selectOption("api_key");
   assert.equal(await page.getByLabel("API key Secret", { exact: true }).inputValue(), "");
   await page.getByLabel("Authentication method", { exact: true }).selectOption("codex_pat");
@@ -2092,10 +2109,7 @@ test("unsaved Preset drafts retain unfinished edits across navigation until expl
   });
   assert.equal(await credentialSecret.inputValue(), "");
   assert.equal(await credentialSecret.evaluate((select) => select.validity.valueMissing), true);
-  assert.deepEqual(
-    await page.evaluate(() => ({ local: { ...localStorage }, session: { ...sessionStorage } })),
-    { local: {}, session: {} },
-  );
+  assert.deepEqual(await consoleStorage(page), { local: {}, session: {} });
   assert.equal(new URL(page.url()).search, `?namespace=${namespace.id}`);
   assert.deepEqual(nonAuthWriteRequests(requests), []);
 

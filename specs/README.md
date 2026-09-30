@@ -15,7 +15,8 @@ This directory records individual proposals, implementation plans, milestones,
 and delivery decisions. The documents describe work at a point in time. Their
 existing filenames and historical content remain intact in [`.archive/`](.archive/).
 A title containing “Feature Spec” does not make the document the current feature
-specification.
+specification. Historical records keep their original terminology; current
+documentation uses OCE for OpenClaw Enterprise and OCC for OpenClaw Control Plane.
 
 For supported behavior at this repository version, use the
 [living feature reference](../docs/reference/README.md). The
@@ -54,6 +55,8 @@ from [AGENTS.md](../AGENTS.md#running-integration-tests) instead.
 [OpenShell Kubernetes identity and transport](openshell-kubernetes-identity-and-transport.md) — Proposed;
 workload projection, identity, and private transport for dedicated Codex on Kubernetes.
 
+[Repository selection and inherited access](37-repository-picker-and-access.md) — Proposed;
+adaptive repository discovery, selected cards, and explicit per-repository overrides.
 [Repository credential recovery](39-repository-credential-recovery.md) — Implementing;
 explore cleanup evidence across broker loss without retaining provider tokens.
 

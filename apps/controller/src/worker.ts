@@ -41,6 +41,7 @@ import {
   PostgresPlatformState,
   PostgresWorkQueue,
   OpenClawController,
+  SandboxRevisionUnsupportedError,
   WorkClaimLostError,
   isRepositoryCleanupWork,
   repositoryCleanupRevisionId,
@@ -48,6 +49,7 @@ import {
   provisioningEffectReceipt as provisioningEffectReceiptForRecord,
   provisioningPendingEffect,
   type ClaimedWork,
+  type NativeWorkerSupport,
   type ProvisioningEffectReceipt,
   type PlatformUnitOfWork,
   type PostgresPool,
@@ -394,6 +396,7 @@ export class ControllerWorker {
   private readonly iam: IAMDriver;
   private readonly secretDriverId: string | undefined;
   private readonly configuredServiceAccountDriverId: string | undefined;
+  private readonly nativeWorkerSupport: NativeWorkerSupport | undefined;
   private readonly secretDriver: SecretDriver | undefined;
   private provisioningController: OpenClawController | undefined;
   private readonly sandbox: SandboxDriver | undefined;
@@ -449,6 +452,7 @@ export class ControllerWorker {
     );
     const drivers = options.drivers;
     this.configuredServiceAccountDriverId = drivers?.installation.drivers.service_account?.id;
+    this.nativeWorkerSupport = drivers?.installation.runtime?.nativeWorkerSupport;
     if (this.mode === "production" && drivers === undefined) {
       throw new Error("Production controller workers require Installation startup configuration.");
     }
@@ -584,6 +588,9 @@ export class ControllerWorker {
       ...(this.configuredServiceAccountDriverId === undefined
         ? {}
         : { configuredServiceAccountDriverId: this.configuredServiceAccountDriverId }),
+      ...(this.nativeWorkerSupport === undefined
+        ? {}
+        : { nativeWorkerSupport: this.nativeWorkerSupport }),
     });
     for (const driver of [
       this.configuration,
@@ -2171,7 +2178,8 @@ export class ControllerWorker {
         throw error;
       }
       result =
-        error instanceof RepositoryCredentialAuthorityError
+        error instanceof RepositoryCredentialAuthorityError ||
+        error instanceof SandboxRevisionUnsupportedError
           ? { outcome: "permanent", code: error.code }
           : { outcome: "retry", code: "DEPENDENCY_UNAVAILABLE" };
     }
@@ -2662,19 +2670,24 @@ export class ControllerWorker {
       result.outcome === "pending" &&
       Date.now() - claim.createdAt.getTime() >= this.convergenceTimeoutMs;
     // Runtime entrypoints publish AUTHENTICATION_FAILED only for provider 401/403
-    // or invalid-key rejections and then hold unready until restart, so waiting
-    // for the deadline cannot change the result. Other failures may recover.
+    // or invalid-key rejections, and MODEL_PROBE_CPU_STARVED only when the model
+    // probe ran out of a CPU budget sized for the container's CPU limit while it
+    // waited for CPU. Both hold unready until restart, and a restart gets the same
+    // credential and CPU, so waiting for the deadline cannot change the result.
+    // Other failures may recover.
     let resolved: RevisionDispatchResult =
       runtimeFailure?.code === "AUTHENTICATION_FAILED"
         ? { outcome: "permanent", code: "RUNTIME_AUTHENTICATION_FAILED" }
-        : expired
-          ? {
-              ...result,
-              outcome: "permanent",
-              code: "CONVERGENCE_DEADLINE_EXCEEDED",
-              data: convergenceDeadlineResultData(this.convergenceTimeoutMs, runtimeFailure),
-            }
-          : result;
+        : runtimeFailure?.code === "MODEL_PROBE_CPU_STARVED"
+          ? { outcome: "permanent", code: "RUNTIME_CPU_STARVED" }
+          : expired
+            ? {
+                ...result,
+                outcome: "permanent",
+                code: "CONVERGENCE_DEADLINE_EXCEEDED",
+                data: convergenceDeadlineResultData(this.convergenceTimeoutMs, runtimeFailure),
+              }
+            : result;
     if (resolved.outcome === "success" && resolved.revision?.repositoryCredentials !== undefined) {
       try {
         await this.assertRepositoryAuthority(claim, resolved.revision);

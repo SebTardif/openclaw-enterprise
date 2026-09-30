@@ -7,7 +7,10 @@ import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { prepareFile } from "../../scripts/ci/prepare.mjs";
 import { createOccMetrics } from "../../apps/controller/src/metrics/index.ts";
-import { PostgresMetricsSnapshot } from "../../packages/occ/src/index.ts";
+import {
+  PostgresMetricsSnapshot,
+  SandboxRevisionUnsupportedError,
+} from "../../packages/occ/src/index.ts";
 import { encodeRepositoryCredentialSessionFiles } from "../../apps/controller/src/drivers/repo/github/credentials/client/config.ts";
 import {
   authorizedPrincipal,
@@ -415,8 +418,8 @@ function repositoryBoundary({ count = 1, deadlineWallMs = Date.now() + 120_000 }
     implementation: "repository-worker-boundary",
     capability: "repo",
     maintenanceIntervalMs: 3_600_000,
-    listOptions() {
-      return [];
+    async listOptions() {
+      return { options: [], descriptionsPending: false };
     },
     resolve() {
       return { bindings, sessionDurationSeconds: 60 };
@@ -5712,6 +5715,108 @@ test(
     assert.deepEqual(status.error, {
       code: "RUNTIME_AUTHENTICATION_FAILED",
       message: "Deployment runtime credentials were rejected.",
+    });
+  },
+);
+
+test(
+  "a CPU-starved startup model probe fails deployment before the convergence deadline",
+  requiresPostgres,
+  async (context) => {
+    const fixture = await setup(context);
+    const owner = await fixture.agent("cpu-starved-runtime");
+    const candidate = await fixture.revision(owner, 1);
+    let observations = 0;
+
+    // Under the default 900-second deadline a plain probe timeout stays pending;
+    // a probe that ran out of CPU at the container's limit ends the deployment.
+    await fixture.start({
+      ...fixture.compute,
+      async prepareRevision(revision) {
+        observations += 1;
+        return {
+          ...(await fixture.compute.prepareRevision(revision)),
+          ready: false,
+          runtimeFailure: {
+            component: "gateway",
+            check: "model-probe",
+            checkedAt: "2026-09-30T08:00:00.000Z",
+            code: observations === 1 ? "MODEL_PROBE_TIMEOUT" : "MODEL_PROBE_CPU_STARVED",
+          },
+        };
+      },
+    });
+
+    const failed = await fixture.work(candidate, "failed_permanent");
+    assert.equal(observations, 2);
+    assert.equal(failed.attempt_count, 1);
+    const result = await fixture.observerPool.query(
+      "SELECT reason_code, result_data FROM occ.controller_work WHERE idempotency_key = $1",
+      [candidate.idempotencyKey],
+    );
+    assert.deepEqual(result.rows, [{ reason_code: "RUNTIME_CPU_STARVED", result_data: null }]);
+    const active = await fixture.observerPool.query(
+      "SELECT active_revision_id FROM occ.agents WHERE namespace_id = $1 AND id = $2",
+      [fixture.namespace.id, owner.id],
+    );
+    assert.equal(active.rows[0].active_revision_id, null);
+    const status = await fixture.controller.getDeploymentStatus(
+      fixture.actor.id,
+      fixture.namespace.id,
+      owner.id,
+      candidate.id,
+    );
+    assert.equal(status.status, "failed");
+    assert.deepEqual(status.error, {
+      code: "RUNTIME_CPU_STARVED",
+      message: "Deployment runtime did not get enough CPU to start.",
+    });
+  },
+);
+
+test(
+  "a Sandbox Driver that cannot run the revision fails deployment without retrying",
+  requiresPostgres,
+  async (context) => {
+    const fixture = await setup(context);
+    const owner = await fixture.agent("sandbox-unsupported");
+    const candidate = await fixture.revision(owner, 1);
+    let observations = 0;
+
+    // The OpenShell SandboxDriver cannot project secretKeyRef environment. The
+    // same revision fails the same way on every attempt, so it is terminal.
+    await fixture.start({
+      ...fixture.compute,
+      async prepareRevision() {
+        observations += 1;
+        throw new SandboxRevisionUnsupportedError(
+          "SANDBOX_SECRET_ENVIRONMENT_UNSUPPORTED",
+          "OpenShell v0.1.0 cannot receive secretKeyRef environment APP_SERVER_TOKEN.",
+        );
+      },
+    });
+
+    const failed = await fixture.work(candidate, "failed_permanent");
+    assert.equal(observations, 1);
+    assert.equal(failed.attempt_count, 1);
+    const result = await fixture.observerPool.query(
+      "SELECT reason_code, result_data FROM occ.controller_work WHERE idempotency_key = $1",
+      [candidate.idempotencyKey],
+    );
+    assert.deepEqual(result.rows, [
+      { reason_code: "SANDBOX_SECRET_ENVIRONMENT_UNSUPPORTED", result_data: null },
+    ]);
+    const status = await fixture.controller.getDeploymentStatus(
+      fixture.actor.id,
+      fixture.namespace.id,
+      owner.id,
+      candidate.id,
+    );
+    assert.equal(status.status, "failed");
+    assert.deepEqual(status.error, {
+      code: "SANDBOX_SECRET_ENVIRONMENT_UNSUPPORTED",
+      message:
+        "The Sandbox Driver cannot deliver Secret-backed environment variables to the Harness.",
     });
   },
 );
