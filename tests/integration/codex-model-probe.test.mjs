@@ -35,6 +35,12 @@ if (args.includes("login")) {
   assert.equal(args[args.indexOf("-a") + 1], "never");
   assert.ok(args.includes("--ignore-user-config") && args.includes("--ignore-rules"));
   assert.ok(args.includes("--ephemeral"));
+  // app-server starts before the probe. Let it record its call before a fast
+  // outcome stops it, so every scenario can see that it started.
+  const pause = new Int32Array(new SharedArrayBuffer(4));
+  for (let waited = 0; waited < 10000 && !fs.readFileSync("/home/node/calls", "utf8").includes('"app-server"'); waited += 50) {
+    Atomics.wait(pause, 0, 0, 50);
+  }
   const prior = fs.readFileSync("/home/node/calls", "utf8").trim().split("\n")
     .map(JSON.parse).filter((call) => call.includes("exec")).length;
   process.stderr.write("probe-output-must-remain-private\n");
@@ -166,6 +172,7 @@ async function startLauncher(t, scenario, stopAfterTimeout = false) {
           console.log(JSON.stringify({ status: await response.json(), ready: fs.existsSync('/home/node/ready'),
             calls: fs.readFileSync('/home/node/calls', 'utf8').trim().split('\\n').map(JSON.parse),
             probeDirectories: fs.readdirSync('/tmp').filter(name => name.startsWith('codex-auth-probe-')) }));
+          process.exit(0);
         });
       `,
         ],
@@ -214,7 +221,7 @@ test(
           const launcher = await startLauncher(t, scenario.input);
           // The runtime status port lets readiness see the probe, so app-server
           // starts at once and the probe runs alongside it.
-          await waitFor(() => launcher.output().includes("APP_SERVER_STARTED"), launcher.errors);
+          // The fake probe waits until app-server has recorded its start.
           await waitFor(
             () =>
               launcher.errors().includes('"code":"READY"') ||
