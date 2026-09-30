@@ -2484,8 +2484,12 @@ process.stdout.write("shared-codex-0.158.0-ready\n");
 // model provider is substituted: a sidecar in the runtime image owns the network
 // namespace, answers the Responses API as api.openai.com (mapped to loopback,
 // trusted through a private CA), and observes the wrapper from outside.
-// The wrapper runs under the production example's Gateway and Agent limits.
+// The Codex wrapper runs under the production example's 500m CPU limit. The
+// embedded Gateway gets one CPU: at 500m its probe's node boot alone can take
+// most of the 30-second attempt cap on slower hosts (it timed out on a CI
+// runner, and locally at 300m), which this test is not about.
 const startupProbeCpuLimit = "0.5";
+const gatewayStartupProbeCpuLimit = "1";
 const startupProbeMemoryLimit = "2g";
 const startupProbeModel = runtimeImageModel;
 const startupProbeApiKey = "sk-openclaw-runtime-probe-synthetic";
@@ -2747,7 +2751,7 @@ async function runStartupProbeScenario(t, { kind, mode, delayMs = 0, concurrent,
     "--network",
     `container:${sidecar}`,
     "--cpus",
-    startupProbeCpuLimit,
+    kind === "gateway" ? gatewayStartupProbeCpuLimit : startupProbeCpuLimit,
     "--memory",
     startupProbeMemoryLimit,
     "--user",
@@ -2838,6 +2842,29 @@ async function runStartupProbeScenario(t, { kind, mode, delayMs = 0, concurrent,
 const observedValue = (key, value) => (event) =>
   event.event === "observe" && event.key === key && event.value === value;
 const isModelTurn = (event) => event.event === "request" && event.turn === true;
+const readyOrFailed = ({ events }) =>
+  events.some(observedValue("ready", true)) ||
+  events.some(
+    (event) => event.event === "observe" && event.key === "runtimeFailure" && event.value !== null,
+  );
+
+// CI keeps only a failed assertion's location, so each startup failure the
+// stand-in provider should not cause fails on its own line.
+function assertStartupReady(run) {
+  const failure = run.snapshot.events.find(
+    (event) => event.event === "observe" && event.key === "runtimeFailure" && event.value !== null,
+  )?.value;
+  const detail = `${run.snapshot.output}\n${JSON.stringify(run.snapshot.events)}`;
+  if (failure === "MODEL_PROBE_TIMEOUT") {
+    assert.fail(`the model probe timed out\n${detail}`);
+  }
+  if (failure === "MODEL_PROBE_FAILED") {
+    assert.fail(`the model probe failed\n${detail}`);
+  }
+  if (failure !== undefined) {
+    assert.fail(`startup failed with ${failure}\n${detail}`);
+  }
+}
 const isTurnAnswer = (event) => event.event === "turn-answered";
 
 function phaseAt(phases, phase) {
@@ -2893,10 +2920,11 @@ async function assertConcurrentStartupProbe(t, kind) {
       mode: "answer",
       delayMs,
       concurrent,
-      until: ({ events }) => events.some(observedValue("ready", true)),
+      until: readyOrFailed,
     });
 
   const serial = await readyScenario(false);
+  assertStartupReady(serial);
   await withStartupProbeEvidence(serial, async () => {
     const { events, phases } = serial.snapshot;
     const answered = serial.first(events, isTurnAnswer);
@@ -2906,11 +2934,17 @@ async function assertConcurrentStartupProbe(t, kind) {
     assert.ok(
       phaseAt(phases, "model-probe").sinceStartMs <= phaseAt(phases, "native-spawn").sinceStartMs,
     );
-    assert.ok(phaseAt(phases, "native-spawn").sinceStartMs >= answered.ms);
+    // Phase times count from wrapper start, endpoint times from container
+    // start; compare each only within its own clock.
+    assert.equal(
+      observationsBefore(events, "native", answered.at).some(({ value }) => value === true),
+      false,
+    );
     t.diagnostic(describeStartupProbeRun(`${kind} serial, ${delayMs} ms model turn`, serial));
   });
 
   const concurrent = await readyScenario(true);
+  assertStartupReady(concurrent);
   await withStartupProbeEvidence(concurrent, async () => {
     const { events, phases } = concurrent.snapshot;
     const turn = concurrent.first(events, isModelTurn);
@@ -2918,7 +2952,8 @@ async function assertConcurrentStartupProbe(t, kind) {
     assert.ok(turn && answered, "the stand-in provider answered the probe");
     assert.equal(phaseAt(phases, "model-probe")?.outcome, "ok");
     // The native process started before the provider even saw the model turn.
-    assert.ok(phaseAt(phases, "native-spawn").sinceStartMs < turn.ms);
+    const listening = concurrent.first(events, observedValue("native", true));
+    assert.ok(listening && listening.at < answered.at, "app-server listened before the answer");
     assert.ok(
       phaseAt(phases, "native-spawn").sinceStartMs < phaseAt(phases, "model-probe").sinceStartMs,
     );
@@ -3056,20 +3091,24 @@ test(
   "runtime image embedded Gateway probes its model before it starts OpenClaw",
   { ...imageTestOptions, timeout: 1_800_000 },
   async (t) => {
-    const delayMs = 8_000;
+    // A short turn keeps the probe well inside its 30-second attempt cap.
+    const delayMs = 2_000;
     const answered = await runStartupProbeScenario(t, {
       kind: "gateway",
       mode: "answer",
       delayMs,
       concurrent: true,
-      until: ({ events }) => events.some(observedValue("ready", true)),
+      until: readyOrFailed,
     });
+    assertStartupReady(answered);
     await withStartupProbeEvidence(answered, async () => {
       const { events, phases } = answered.snapshot;
       const answer = answered.first(events, isTurnAnswer);
       assert.ok(answer, "the stand-in provider answered the probe");
       assert.equal(phaseAt(phases, "model-probe")?.outcome, "ok");
-      assert.ok(phaseAt(phases, "native-spawn").sinceStartMs >= answer.ms);
+      assert.ok(
+        phaseAt(phases, "model-probe").sinceStartMs <= phaseAt(phases, "native-spawn").sinceStartMs,
+      );
       assert.equal(
         observationsBefore(events, "native", answer.at).some(({ value }) => value === true),
         false,
