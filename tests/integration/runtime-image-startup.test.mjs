@@ -2842,11 +2842,18 @@ async function runStartupProbeScenario(t, { kind, mode, delayMs = 0, concurrent,
 const observedValue = (key, value) => (event) =>
   event.event === "observe" && event.key === key && event.value === value;
 const isModelTurn = (event) => event.event === "request" && event.turn === true;
-const readyOrFailed = ({ events }) =>
-  events.some(observedValue("ready", true)) ||
+const startupFailed = (events) =>
   events.some(
     (event) => event.event === "observe" && event.key === "runtimeFailure" && event.value !== null,
   );
+// The endpoint reads status and runs readiness in parallel, so readiness can
+// pass before the same poll's status read shows it: wait until both have.
+const readyOrFailed = ({ events }, { wrapper }) =>
+  startupFailed(events) ||
+  (events.some(observedValue("ready", true)) &&
+    events.some(observedValue("plugin", "ready")) &&
+    (!wrapper.environment.some((entry) => entry.startsWith("OPENCLAW_RUNTIME_STATUS_PORT=")) ||
+      events.some(observedValue("startup", "ready"))));
 
 // CI keeps only a failed assertion's location, so each startup failure the
 // stand-in provider should not cause fails on its own line.
@@ -2901,12 +2908,15 @@ async function withStartupProbeEvidence(run, check) {
   try {
     await check();
   } catch (error) {
-    throw new Error(
-      `${error.message}\nendpoint events:\n` +
-        run.snapshot.events.map((event) => JSON.stringify(event)).join("\n") +
-        `\nwrapper output:\n${run.snapshot.output}`,
-      { cause: error },
-    );
+    // Keep the original error, and so its location, which is all CI records.
+    const evidence =
+      `\nendpoint events:\n${run.snapshot.events.map((event) => JSON.stringify(event)).join("\n")}` +
+      `\nwrapper output:\n${run.snapshot.output}`;
+    error.message += evidence;
+    if (typeof error.stack === "string") {
+      error.stack += evidence;
+    }
+    throw error;
   }
 }
 
