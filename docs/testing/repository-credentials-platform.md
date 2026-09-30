@@ -150,9 +150,10 @@ Use `repository-credentials-k3d-real.test.mjs` for the joined installed path:
 fresh Helm controller/PostgreSQL, API-created Namespace and Agent, worker-opened
 session, private Kubernetes runtime material and the model's own
 clone/edit/commit/push/native-PR task in both embedded OpenClaw and Dedicated
-Codex. Each case creates a ready-for-review PR. One explicitly authorized disposable
-repository is sufficient; two-repository deterministic coverage remains in the
-controlled platform case.
+Codex. The write-capable cases create a ready-for-review PR; the Dedicated
+read-only case verifies that a push is denied. One explicitly authorized
+disposable repository is sufficient; two-repository deterministic coverage
+remains in the controlled platform case.
 
 Prepare the [real Kubernetes runtime prerequisites](kubernetes.md#kubernetes-model-turns-and-secrets).
 Select the `repository-credentials-installed` lane with the same prepare/run/cleanup
@@ -203,7 +204,7 @@ The installed case additionally uses these variables with prefix
 
 The runner sets `OCC_TEST_REPOSITORY_CREDENTIALS_REAL=1` and runs
 `tests/integration/repository-credentials-k3d-real.test.mjs` from prepared state;
-all three scenarios must pass. To select only Dedicated against an already
+all four scenarios must pass. To select only Dedicated against an already
 prepared disposable cluster, supply the same protected inputs and immutable
 image variables, then run:
 
@@ -213,8 +214,9 @@ OCC_TEST_REPOSITORY_CREDENTIALS_REAL=1 node --test \
   tests/integration/repository-credentials-k3d-real.test.mjs
 ```
 
-This selected command exercises both Dedicated scenarios. The full lane retains
-the embedded case and rejects skips. A selected run must supply the prepared
+This selected command exercises the Dedicated `git-full`, `git-write`, and
+read-only scenarios. The full lane retains the embedded case and rejects skips.
+A selected run must supply the prepared
 `OCC_TEST_KUBERNETES_CODEX_SECCOMP_PROFILE` and use the same owned cluster.
 
 Before cleanup after a failure, the test records container readiness, restart

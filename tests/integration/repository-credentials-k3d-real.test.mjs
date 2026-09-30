@@ -187,6 +187,17 @@ for (const mode of ["embedded", "dedicated"]) {
 }
 
 test(
+  "installed dedicated git-write Agent clones, edits, commits, pushes and creates a native repository PR",
+  {
+    skip: selected
+      ? false
+      : "Set OCC_TEST_REPOSITORY_CREDENTIALS_REAL=1 with explicit authorized repository, protected App inputs, model key and immutable images.",
+    timeout: 1800000,
+  },
+  installedRepositoryJourney("dedicated", "git-write"),
+);
+
+test(
   "installed dedicated read-only Agent fetches and is denied a repository push",
   {
     skip: selected
