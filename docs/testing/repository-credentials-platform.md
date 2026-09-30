@@ -156,10 +156,30 @@ disposable repository is sufficient; two-repository deterministic coverage
 remains in the controlled platform case.
 
 Prepare the [real Kubernetes runtime prerequisites](kubernetes.md#kubernetes-model-turns-and-secrets).
-Select the `repository-credentials-installed` lane with the same prepare/run/cleanup
-sequence above. This lane is CLI-only and excluded from normal `ci`/`full` groups
-and hosted workflow dispatch. It requires explicit live authorization and never
-falls back to controlled evidence.
+The `repository-credentials-installed` lane is CLI-only and excluded from normal
+`ci`/`full` groups and hosted workflow dispatch. It requires explicit live
+authorization and never falls back to controlled evidence. Run it with:
+
+```bash
+(
+  set -e
+  CREDENTIAL_TEST_RUN="$(mktemp -d)"
+  printf 'Evidence directory: %s\n' "$CREDENTIAL_TEST_RUN"
+  trap 'cleanup_exit_code=$?; trap - EXIT; node scripts/ci/cleanup.mjs --state "$CREDENTIAL_TEST_RUN/state.json" || cleanup_exit_code=1; exit "$cleanup_exit_code"' EXIT
+  node scripts/ci/prepare.mjs --lane repository-credentials-installed \
+    --state "$CREDENTIAL_TEST_RUN/state.json"
+  CI_RUNNER_TEST_TIMEOUT_MS=9000000 node scripts/ci/run-tests.mjs run repository-credentials-installed \
+    --state "$CREDENTIAL_TEST_RUN/state.json" \
+    --results "$CREDENTIAL_TEST_RUN/results.json"
+)
+```
+
+The runner's default one-hour timeout applies to the whole test file. Its four
+cases run sequentially and each has a 30-minute limit; the 150-minute override
+allows their combined limits and additional cleanup headroom. Preparation and
+the final lane cleanup run outside that file timeout. Keep any outer job timeout
+long enough for both. If cleanup fails, retain the private state and investigate
+the owned resources before retrying.
 
 Supply existing authorized `OPENAI_API_KEY`, `OCC_TEST_OPENAI_MODEL`, and immutable
 `OCC_TEST_PRODUCTION_POSTGRES_IMAGE` and `OCC_TEST_PRODUCTION_NODE_IMAGE`.
