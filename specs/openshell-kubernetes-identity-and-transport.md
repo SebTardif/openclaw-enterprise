@@ -93,6 +93,8 @@ If a reply is lost, the app effect is unknown. Revision and resource correlation
 
 Upstream owners first agree on and implement projection, child delivery and integrity. OCE then maps the contract and qualifies A, or owners explicitly select B or C with their additional work. Preserve admission, native authentication, TLS/CA checks and existing access holds. Static-token bridges, borrowed supervisor tokens, `pods/proxy` waivers and hidden shared modes are excluded.
 
+If implemented, update the living references for [SandboxDriver](../docs/reference/drivers/sandbox.md), [OpenShell SandboxDriver](../docs/reference/drivers/openshell-sandbox.md), [Kubernetes ComputeDriver](../docs/reference/drivers/kubernetes-compute.md), and [Harness execution](../docs/reference/harness-execution.md) to describe the resulting behavior.
+
 The deployment and request must retain the original request's authority through State, Work and IAM. The integration also needs the separate image and configuration, plus a broker, credential material and a way to check that access is still current. These suppliers are tracked in [issue #118](https://github.com/openclaw/openclaw-enterprise/issues/118). Originating a request does not authenticate the transport. Require agreement on the startup-derived bearer and immutable plugin configuration. These inputs have not yet been accepted together as a working integration.
 
 Before accepting the integration:
