@@ -9,7 +9,7 @@ node --test tests/conformance/platform-audit.test.mjs tests/conformance/audit.te
 
 These tests exercise the production raw-row projector, closed event/page parsers,
 and page encoder. They cover the twelve selected producer tuples in the
-[Platform audit proposal](../../specs/37-platform-audit.md), including both
+[Platform audit proposal](../../specs/rfcs/37-platform-audit/index.md), including both
 bootstrap actions and the two creation-denial collection targets.
 
 **There is no implemented Platform audit reader.** This component is a source
