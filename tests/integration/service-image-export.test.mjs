@@ -838,9 +838,8 @@ test("cleanup reconciliation accepts only absent state, tags and inspection cont
 });
 
 function parseYaml(path) {
-  // The baseline lane installs the docs site's pinned dependencies before its tests.
-  const requireDocsDependency = createRequire(join(root, "scripts/docs-site/package.json"));
-  const { parse } = requireDocsDependency("yaml");
+  const requireRootDependency = createRequire(join(root, "package.json"));
+  const { parse } = requireRootDependency("yaml");
   return parse(readFileSync(path, "utf8"));
 }
 
