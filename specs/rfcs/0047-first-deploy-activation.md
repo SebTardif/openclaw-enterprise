@@ -14,7 +14,8 @@ status_note: "Retroactive record. The design is already implemented on main (PRs
   [Harness RWO workspace plan](../plans/38-harness-rwo-workspace-plan.md); current contracts in
   [harness execution](../../docs/reference/harness-execution.md),
   [Kubernetes storage](../../docs/reference/drivers/kubernetes-compute/storage-and-credentials.md) and
-  [networking](../../docs/reference/drivers/kubernetes-compute/networking-and-isolation.md).
+  [networking](../../docs/reference/drivers/kubernetes-compute/networking-and-isolation.md);
+  open, unlanded proposal on activation evidence: [#458](https://github.com/openclaw/openclaw-enterprise/pull/458).
 - **Source baseline:** `main` at `521549dff`. Symbols are in the driver
   [`kubernetes/index.ts`][index] or the wrappers [`runtime-entrypoints.ts`][entry] unless named.
 
@@ -32,8 +33,8 @@ This record also covers related predecessor, fail-fast and resource changes.
 
 ## Motivation
 
-The S1 ratchet test (#588, main `7676bc88`) pinned the old first deploy at 5 starts over 3
-pending passes. The causes were structural:
+The S1 ratchet test (#588, written against main `7676bc88`) pinned the old first deploy at 5
+starts over 3 pending passes. The causes were structural:
 
 1. `prepareWorkspaceNode` could mint a setup code only once the Gateway was ready, and
    `addWorkspaceNode` then changed the Harness template. Kubernetes replaced the Harness.
@@ -75,8 +76,8 @@ Redeploy serving continuity (D67) is not solved; see the open questions.
   registry. Activation waits up to 20 s (`WORKSPACE_NODE_BINDING_ACK_TIMEOUT_MS`) and fails at
   once on a reported cause such as `RELOAD_NOT_CONFIRMED`.
 - **S4b, Gateway alongside the Harness ([#652]).** With no Gateway yet and a Deployment-backed
-  Codex Harness (`initialDedicatedCodexGateway`), pass 1 reconciles network policies, the
-  revision-scoped agent Service, the Harness route, the Gateway, then the Harness. The wrapper's
+  Codex Harness (`initialDedicatedCodexGateway`), pass 1 reconciles the revision-scoped agent
+  Service, the Agent network policies, the Harness route, the Gateway, then the Harness. The wrapper's
   first peer wait (`waitForPeerPluginRuntimeStatus`) has no deadline and keeps readiness false.
   Redeploys keep the Service on the serving revision until activation.
 - **S4a, in-place respawn ([#668]).** On a Harness peer change the wrapper drops readiness and
@@ -129,12 +130,14 @@ _Implemented flow: first dedicated Codex deploy with status-proxy CIDRs set._
   NetworkPolicies select every revision (`anyRevision`), so preparation no longer cuts the serving
   Gateway's ingress. [#698]: an embedded redeploy re-renders a never-served, unready predecessor
   Gateway (D20), and [#752] deletes that older revision's Secret and ConfigMap copies.
-- **Fail fast.** [#583]: `finalizeRevision` fails a revision permanently with
-  `RUNTIME_AUTHENTICATION_FAILED` when runtime status reports `AUTHENTICATION_FAILED`, which the
+- **Fail fast.** [#583]: the worker resolves the revision permanently with
+  `RUNTIME_AUTHENTICATION_FAILED` (`processRevision`, recorded by `finalizeRevision`) when
+  runtime status reports `AUTHENTICATION_FAILED`, which the
   entrypoints publish only for provider 401/403 or invalid-key rejection, instead of waiting for
   the 900 s deadline. [#838]: the OpenClaw probe first sends one empty `POST` to the default OpenAI
   or Anthropic endpoint (`credentialRejectedUpfront`). Only a 401 fails; anything else runs the
-  full probe. Custom endpoints, headers, other providers and Anthropic setup tokens skip it.
+  full probe. A non-default endpoint or API, extra provider or request options, model headers, other
+  providers and Anthropic setup tokens skip it.
 - **Resources.** [#683]: Gateway, Harness and namespace-default CPU limits are `"4"` in the profile
   renderer and production example, requests stay `100m`, and an unquoted quantity names its
   field. [#841]: Gateways request `1280Mi` (limit `2Gi`) in the renderer, production example and
