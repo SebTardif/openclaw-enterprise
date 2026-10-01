@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { loadTestSuites } from "../../scripts/ci/test-suites.mjs";
 import { prepareCodexSeccompProfile } from "../../scripts/ci/codex-seccomp.mjs";
+import { prepareInstalledRepositoryCodexSeccomp } from "../../scripts/ci/prepare.mjs";
 import { createKubernetesInstallationConfiguration } from "../helpers/kubernetes-real.mjs";
 
 const repositoryRoot = resolve(fileURLToPath(new URL("../../", import.meta.url)));
@@ -1208,7 +1209,12 @@ test("installed repository qualification selects four distinct cases and retains
   const paths = new Set();
   for (const [name, title] of Object.entries(expected)) {
     const lane = manifest.lanes[name];
+    const requiresDedicatedSeccomp = name !== "repository-credentials-installed-embedded-full";
     assert.equal(lane.env.OCC_TEST_REPOSITORY_CREDENTIALS_REAL, "1");
+    assert.equal(
+      lane.requiredEnv.includes("OCC_TEST_KUBERNETES_CODEX_SECCOMP_PROFILE"),
+      requiresDedicatedSeccomp,
+    );
     assert.equal(lane.prepare.requiresPreparedStateForFile, true);
     assert.ok(lane.prepare.requireEnv.includes("OCC_TEST_REPOSITORY_CREDENTIALS_APP_KEY_FILE"));
     assert.ok(lane.prepare.immutableEnvImages.includes("OCC_TEST_REPOSITORY_CREDENTIALS_IMAGE"));
@@ -1217,6 +1223,58 @@ test("installed repository qualification selects four distinct cases and retains
     paths.add(lane.files[0].path);
   }
   assert.equal(paths.size, 4);
+});
+
+test("installed repository preparation derives Codex seccomp only for Dedicated lanes", async (t) => {
+  const root = await fixture(t);
+  const profileName = "openclaw/codex-bwrap.json";
+  const lanes = [
+    "repository-credentials-installed-embedded-full",
+    "repository-credentials-installed-dedicated-full",
+    "repository-credentials-installed-dedicated-write",
+    "repository-credentials-installed-dedicated-read",
+  ];
+
+  for (const lane of lanes) {
+    const statePath = join(root, `${lane}.json`);
+    const cluster = { kubectl: `/test-owned/${lane}/kubectl` };
+    const state = { lane, cluster };
+    const env = {
+      OCC_TEST_KUBERNETES_RUNTIME_IMAGE: immutableImage,
+      OCC_TEST_KUBERNETES_CODEX_VERSION: "0.158.0",
+    };
+    const calls = [];
+
+    await prepareInstalledRepositoryCodexSeccomp({
+      lane,
+      statePath,
+      state,
+      cluster,
+      env,
+      prepareProfile: async (input) => {
+        calls.push(input);
+        return { profileName, nodes: [`${lane}-node`] };
+      },
+    });
+
+    if (lane === "repository-credentials-installed-embedded-full") {
+      assert.deepEqual(calls, []);
+      assert.equal(env.OCC_TEST_KUBERNETES_CODEX_SECCOMP_PROFILE, undefined);
+      assert.equal(cluster.codexSeccompProfile, undefined);
+      await assert.rejects(() => stat(statePath), { code: "ENOENT" });
+      continue;
+    }
+
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].cluster, cluster);
+    assert.equal(calls[0].image, immutableImage);
+    assert.equal(calls[0].kubectl, cluster.kubectl);
+    assert.equal(calls[0].codexVersion, "0.158.0");
+    assert.equal(env.OCC_TEST_KUBERNETES_CODEX_SECCOMP_PROFILE, profileName);
+    assert.equal(cluster.codexSeccompProfile, profileName);
+    assert.deepEqual(cluster.codexSeccompProfiles, [`${lane}-node`]);
+    assert.deepEqual(JSON.parse(await readFile(statePath, "utf8")), state);
+  }
 });
 
 test("ordinary CI groups require platform proof and exclude installed live repository writes", async () => {

@@ -243,9 +243,10 @@ The installed case additionally uses these variables with prefix
 | `GH_BINARY`       | Optional absolute managed host `gh` path for independently authenticated readback and guarded cleanup |
 
 The runner sets `OCC_TEST_REPOSITORY_CREDENTIALS_REAL=1` for each selected
-lane. Each result covers one case; all four results and their separate cleanup
-receipts are needed for the aggregate qualification. Dedicated cases require
-the prepared `OCC_TEST_KUBERNETES_CODEX_SECCOMP_PROFILE` in their own cluster.
+lane. Each result covers one case. All four case results and separately verified
+outer cleanup are prerequisites for a later independent qualification; the
+aggregate runner never qualifies them. Dedicated cases require the prepared
+`OCC_TEST_KUBERNETES_CODEX_SECCOMP_PROFILE` in their own cluster.
 
 Before cleanup after a failure, the test records container readiness, restart
 counts, the plugin-ready marker state, and allowlisted runtime startup failure
