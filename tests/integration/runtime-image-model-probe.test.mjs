@@ -10,6 +10,8 @@ import {
   modelProbeSettled,
   modelProbeDiagnostic,
   trackProbeCpuHog,
+  modelProbeLoadGate,
+  waitForProbeCpuLoad,
 } from "../helpers/runtime-model-probe-observation.mjs";
 import { promisify } from "node:util";
 import { imageSmokeTimeoutMultiplier } from "../helpers/image-smoke-timeout.mjs";
@@ -235,9 +237,10 @@ function containerTime(value) {
 // "hang". Resolves once `until` accepts an observation snapshot.
 async function runEmbeddedGatewayProbe(
   t,
-  { mode, delayMs = 0, cpus, memory, until, limitMs, stress, afterStop },
+  { mode, delayMs = 0, cpus, memory, until, limitMs, stress, beforeProbe, afterStop },
 ) {
   const gateway = embeddedGateway();
+  const loadGate = beforeProbe ? modelProbeLoadGate(GATEWAY_RUNTIME_ENTRYPOINT) : undefined;
   const material = await createProbeMaterial(t, gateway.configuration);
   const suffix = randomBytes(6).toString("hex");
   const sidecar = `oce-runtime-model-probe-endpoint-${suffix}`;
@@ -329,7 +332,7 @@ async function runEmbeddedGatewayProbe(
     image,
     "-e",
     // As the driver renders it: compressed pieces below the exec argument limit.
-    ...nodeProgramArguments(GATEWAY_RUNTIME_ENTRYPOINT),
+    ...nodeProgramArguments(loadGate?.program ?? GATEWAY_RUNTIME_ENTRYPOINT),
   ]);
   const startedAt = containerTime(
     (await runDocker(["inspect", containerName, "--format", "{{.State.StartedAt}}"])).stdout,
@@ -365,6 +368,18 @@ async function runEmbeddedGatewayProbe(
   };
   const deadline = Date.now() + limitMs * imageSmokeTimeoutMultiplier;
   try {
+    if (beforeProbe) {
+      // Admission consumes the existing observation budget. Eventual markers
+      // after the probe has run cannot qualify the CPU-starvation precondition.
+      await beforeProbe(containerName, deadline);
+      const remainingMs = deadline - Date.now();
+      if (remainingMs <= 0) {
+        throw new Error("The Gateway observation budget expired before load release.");
+      }
+      await runDocker(["exec", containerName, "node", "-e", loadGate.release], {
+        timeout: Math.min(60_000 * imageSmokeTimeoutMultiplier, remainingMs),
+      });
+    }
     for (;;) {
       const snapshot = await collect();
       if (until(snapshot, containerName)) {
@@ -489,28 +504,33 @@ test(
       afterStop: async () => {
         await hogs;
       },
-      until: (snapshot, containerName) => {
-        hogs ??= Promise.all(
-          Array.from({ length: 8 }, () =>
-            trackProbeCpuHog(
-              execute(
-                docker,
-                [
-                  "exec",
-                  containerName,
-                  "node",
-                  "-e",
-                  'process.stdout.write("openclaw-cpu-hog-started\\n"); for (;;) {}',
-                ],
-                {
-                  timeout: 600_000,
-                  maxBuffer: 4_000_000,
-                },
-              ),
-              stress,
+      beforeProbe: async (containerName, admissionDeadline) => {
+        if (Date.now() >= admissionDeadline) {
+          throw new Error("CPU load admission exceeded its budget.");
+        }
+        const load = Array.from({ length: 8 }, () =>
+          trackProbeCpuHog(
+            execute(
+              docker,
+              [
+                "exec",
+                containerName,
+                "node",
+                "-e",
+                'process.stdout.write("openclaw-cpu-hog-started\\n"); for (;;) {}',
+              ],
+              {
+                timeout: 600_000,
+                maxBuffer: 4_000_000,
+              },
             ),
+            stress,
           ),
         );
+        hogs = Promise.all(load.map((client) => client.settled));
+        await waitForProbeCpuLoad(load, stress, admissionDeadline);
+      },
+      until: (snapshot) => {
         return modelProbeSettled(snapshot);
       },
     });
@@ -520,6 +540,7 @@ test(
     const probe = jsonLines(output).find(({ event }) => event === "openclaw.model_probe");
     try {
       assert.equal(stress.started, 8, "all eight owned CPU hogs reached their loops");
+      assert.equal(stress.settled, 0, "the load stayed active until probe settlement");
       assert.ok(probe, `the wrapper logged its probe${detail}`);
       assert.equal(probe.capMs, 110_000, `cap from the 500m cgroup limit${detail}`);
       assert.ok(probe.elapsedMs >= probe.capMs, `the probe reached its cap${detail}`);

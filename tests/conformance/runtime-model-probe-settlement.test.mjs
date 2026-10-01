@@ -5,11 +5,16 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
+import { setTimeout as delay } from "node:timers/promises";
+import { inflateRawSync } from "node:zlib";
+import { nodeProgramArguments } from "../../apps/controller/src/drivers/compute/node-program.ts";
 import test from "node:test";
 import vm from "node:vm";
 import {
   modelProbeSettled,
   trackProbeCpuHog,
+  modelProbeLoadGate,
+  waitForProbeCpuLoad,
 } from "../helpers/runtime-model-probe-observation.mjs";
 import reporter from "../../scripts/ci/reporter.mjs";
 import { GATEWAY_RUNTIME_ENTRYPOINT } from "../../apps/controller/src/drivers/compute/kubernetes/runtime-entrypoints.ts";
@@ -50,15 +55,10 @@ test("actual starved-case callback accepts READY; guard-removal control does not
   const end = body.indexOf("\n      },", start) + 8;
   const callback = body.slice(start, end);
   const evaluate = (code) =>
-    vm.runInNewContext(`let hogs; (${code})`, {
-      Promise,
+    vm.runInNewContext(`(${code})`, {
       modelProbeSettled,
       failed: ({ events }) =>
         events.some((event) => event.key === "runtimeFailure" && event.value != null),
-      trackProbeCpuHog: () => Promise.resolve(),
-      execute: () => Promise.resolve(),
-      docker: "unused",
-      stress: {},
     });
   assert.equal(evaluate(callback)(ready, "owned"), true);
   const negative = callback.replace(
@@ -67,7 +67,7 @@ test("actual starved-case callback accepts READY; guard-removal control does not
   );
   assert.notEqual(negative, callback);
   assert.equal(evaluate(negative)(ready, "owned"), false);
-  const program = /'([^']*openclaw-cpu-hog-started[^']*)'/u.exec(callback)?.[1];
+  const program = /'([^']*openclaw-cpu-hog-started[^']*)'/u.exec(body)?.[1];
   assert.ok(program);
   const actualArgument = vm.runInNewContext(`'${program}'`);
   assert.doesNotThrow(() => new vm.Script(actualArgument));
@@ -83,17 +83,21 @@ test(
       ["-e", 'process.stdout.write("openclaw-cpu-hog-started\\n")'],
       { timeout: 2_000 },
     );
-    await trackProbeCpuHog(operation, stress);
+    const tracked = trackProbeCpuHog(operation, stress);
+    assert.equal(await tracked.admitted, true);
+    await tracked.settled;
     assert.deepEqual(stress, { requested: 1, started: 1, settled: 1, rejected: 0 });
   },
 );
 
 test("a rejected owned inert child is not counted as started", { timeout: 10_000 }, async () => {
   const stress = { requested: 0, started: 0, settled: 0, rejected: 0 };
-  await trackProbeCpuHog(
+  const tracked = trackProbeCpuHog(
     execute(process.execPath, ["-e", "process.exit(3)"], { timeout: 2_000 }),
     stress,
   );
+  assert.equal(await tracked.admitted, false);
+  await tracked.settled;
   assert.deepEqual(stress, { requested: 1, started: 0, settled: 1, rejected: 1 });
 });
 
@@ -276,4 +280,281 @@ test("real generated probe marks spawn return and cleanup without changing CAP",
     assert.deepEqual(Object.keys(event).sort(), ["capMs", "elapsedMs", "event", "stage"]);
     assert.equal(event.capMs, 110000);
   }
+});
+
+// Exercise the image fixture's actual admission callback, substituting only
+// its Docker transport with owned, inert Node processes controlled through stdin.
+async function loadAdmissionFixture(t, behaviors = {}) {
+  const source = await readFile(
+    new URL("../integration/runtime-image-model-probe.test.mjs", import.meta.url),
+    "utf8",
+  );
+  const body = source.slice(
+    source.indexOf('"runtime image embedded Gateway reports a CPU-starved model probe at its cap"'),
+  );
+  const begin = body.indexOf("beforeProbe: ") + "beforeProbe: ".length;
+  const end = body.indexOf("\n      },", begin) + 8;
+  assert.ok(begin >= "beforeProbe: ".length && end > begin);
+  const callback = body.slice(begin, end);
+  const operations = [];
+  const stress = { requested: 0, started: 0, settled: 0, rejected: 0 };
+  const context = {
+    Promise,
+    Date,
+    trackProbeCpuHog,
+    waitForProbeCpuLoad,
+    stress,
+    docker: "not-executed",
+    execute(_engine, args, options) {
+      assert.equal(args[0], "exec");
+      assert.equal(options.timeout, 600_000);
+      assert.match(args[4], /openclaw-cpu-hog-started/);
+      const behavior = behaviors[operations.length] ?? "hold";
+      const program =
+        behavior === "refuse"
+          ? "process.exit(3)"
+          : `process.stdin.once("data", () => {
+          process.stdout.write("openclaw-cpu-hog-started\\n");
+          ${behavior === "exit" ? "process.exit(0);" : "setInterval(() => {}, 1000);"}
+        });`;
+      const operation = execute(process.execPath, ["-e", program], {
+        timeout: 2_000,
+        maxBuffer: 1024,
+      });
+      operations.push(operation);
+      return operation;
+    },
+  };
+  const fixture = vm.runInNewContext(
+    `let hogs; const start = (${callback}); ({start, settled: () => hogs})`,
+    context,
+  );
+  const admissions = [];
+  t.after(async () => {
+    for (const operation of operations) {
+      if (operation.child.exitCode === null && operation.child.signalCode === null) {
+        operation.child.kill("SIGTERM");
+      }
+    }
+    await fixture.settled();
+    await Promise.all(admissions);
+    assert.equal(stress.settled, operations.length);
+  });
+  return {
+    ...fixture,
+    operations,
+    stress,
+    start(...args) {
+      const admission = fixture.start(...args);
+      // A failing assertion must still observe the pending admission's outcome
+      // when cleanup stops its children. Callers retain the original rejection.
+      admissions.push(admission.catch(() => {}));
+      return admission;
+    },
+  };
+}
+
+async function waitForObserved(predicate) {
+  const deadline = Date.now() + 1_500;
+  while (!predicate()) {
+    assert.ok(Date.now() < deadline, "the owned process observation must settle");
+    await delay(5);
+  }
+}
+
+async function inertGatedGateway(t) {
+  const directory = await mkdtemp(join(tmpdir(), "model-probe-gate-"));
+  const gate = modelProbeLoadGate(
+    'process.stdout.write("owned-gateway-started\\n")',
+    join(directory, "release"),
+  );
+  const operation = execute(process.execPath, ["-e", gate.program], {
+    timeout: 2_000,
+    maxBuffer: 4096,
+  });
+  // Observe the terminal outcome immediately as well as on cleanup, so a stopped
+  // gate never creates an unhandled rejection or an unobserved process handle.
+  const settled = operation.then(
+    (result) => ({ result }),
+    (error) => ({ error }),
+  );
+  let output = "";
+  operation.child.stdout.on("data", (chunk) => {
+    output += String(chunk);
+  });
+  t.after(async () => {
+    if (operation.child.exitCode === null && operation.child.signalCode === null) {
+      operation.child.kill("SIGTERM");
+    }
+    await settled;
+    await rm(directory, { recursive: true, force: true });
+  });
+  await waitForObserved(() => output.includes("openclaw-probe-load-waiting\n"));
+  return { gate, operation, settled, output: () => output };
+}
+
+test(
+  "load admission gates the actual callback and generated program until all eight markers",
+  { timeout: 10_000 },
+  async (t) => {
+    const gateway = await inertGatedGateway(t);
+    const load = await loadAdmissionFixture(t);
+    let admitted = false;
+    const admission = load.start("owned", Date.now() + 1_500).then(() => {
+      admitted = true;
+    });
+    for (const operation of load.operations.slice(0, 7)) {
+      operation.child.stdin.end("admit\n");
+    }
+    await waitForObserved(() => load.stress.started === 7);
+    assert.equal(admitted, false, "seven starts cannot admit the Gateway");
+    assert.doesNotMatch(
+      gateway.output(),
+      /owned-gateway-started/,
+      "Gateway must remain gated before all eight admissions",
+    );
+    load.operations[7].child.stdin.end("admit\n");
+    await admission;
+    assert.equal(load.stress.settled, 0);
+    assert.doesNotMatch(
+      gateway.output(),
+      /owned-gateway-started/,
+      "admission alone does not synthesize gate release",
+    );
+    await execute(process.execPath, ["-e", gateway.gate.release], { timeout: 1_000 });
+    const outcome = await gateway.settled;
+    assert.equal(outcome.error, undefined);
+    assert.match(outcome.result.stdout, /owned-gateway-started/);
+  },
+);
+
+test(
+  "refused admission keeps the generated gate closed and settles owned children",
+  { timeout: 10_000 },
+  async (t) => {
+    const gateway = await inertGatedGateway(t);
+    const load = await loadAdmissionFixture(t, { 0: "refuse" });
+    const admission = load.start("owned", Date.now() + 1_500);
+    for (const operation of load.operations.slice(1)) {
+      operation.child.stdin.end("admit\n");
+    }
+    await assert.rejects(admission, /All eight CPU load clients must be running/);
+    assert.equal(load.stress.rejected, 1);
+    assert.doesNotMatch(gateway.output(), /owned-gateway-started/);
+  },
+);
+
+test(
+  "a client stopping after its marker cannot qualify sustained load admission",
+  { timeout: 10_000 },
+  async (t) => {
+    const gateway = await inertGatedGateway(t);
+    const load = await loadAdmissionFixture(t, { 0: "exit" });
+    const admission = load.start("owned", Date.now() + 1_500);
+    load.operations[0].child.stdin.end("admit\n");
+    await waitForObserved(() => load.stress.settled === 1);
+    for (const operation of load.operations.slice(1)) {
+      operation.child.stdin.end("admit\n");
+    }
+    await assert.rejects(admission, /All eight CPU load clients must be running/);
+    assert.equal(load.stress.started, 8);
+    assert.doesNotMatch(gateway.output(), /owned-gateway-started/);
+  },
+);
+
+test(
+  "late markers cannot reopen an exhausted admission budget or launch the Gateway",
+  { timeout: 10_000 },
+  async (t) => {
+    const gateway = await inertGatedGateway(t);
+    const load = await loadAdmissionFixture(t);
+    await assert.rejects(load.start("owned", Date.now() + 30), /admission exceeded its budget/);
+    for (const operation of load.operations) {
+      operation.child.stdin.end("late\n");
+    }
+    await waitForObserved(() => load.stress.started === 8);
+    assert.doesNotMatch(gateway.output(), /owned-gateway-started/);
+  },
+);
+
+test(
+  "an already exhausted shared deadline admits no load command",
+  { timeout: 10_000 },
+  async (t) => {
+    const load = await loadAdmissionFixture(t);
+    await assert.rejects(load.start("owned", Date.now() - 1), /admission exceeded its budget/);
+    assert.equal(load.operations.length, 0);
+    assert.deepEqual(load.stress, { requested: 0, started: 0, settled: 0, rejected: 0 });
+  },
+);
+
+test(
+  "a never-open generated gate stops within its owned process bound",
+  { timeout: 10_000 },
+  async (t) => {
+    const directory = await mkdtemp(join(tmpdir(), "model-probe-never-open-"));
+    t.after(() => rm(directory, { recursive: true, force: true }));
+    const gate = modelProbeLoadGate(
+      'process.stdout.write("must-not-start")',
+      join(directory, "absent"),
+    );
+    await assert.rejects(
+      execute(process.execPath, ["-e", gate.program], { timeout: 300, maxBuffer: 4096 }),
+      (error) => {
+        assert.equal(error.killed, true);
+        assert.equal(error.signal, "SIGTERM");
+        assert.match(error.stdout, /openclaw-probe-load-waiting/);
+        assert.doesNotMatch(error.stdout, /must-not-start/);
+        return true;
+      },
+    );
+  },
+);
+
+test("the gated Gateway keeps real generated bytes and bounded launch arguments", () => {
+  const gate = modelProbeLoadGate(GATEWAY_RUNTIME_ENTRYPOINT);
+  const args = nodeProgramArguments(gate.program);
+  assert.ok(args.every((argument) => Buffer.byteLength(argument) <= 32_768));
+  const decoded = inflateRawSync(Buffer.from(args.slice(1).join(""), "base64")).toString("utf8");
+  assert.equal(decoded, gate.program);
+  assert.doesNotThrow(() => new vm.Script(decoded));
+  let tick;
+  let opened = false;
+  let suppliedProgram;
+  let cleared = false;
+  const fs = {
+    existsSync: () => opened,
+    writeFileSync() {
+      opened = true;
+    },
+  };
+  const context = {
+    process: { stdout: { write() {} } },
+    setInterval(callback) {
+      tick = callback;
+      return 1;
+    },
+    clearInterval(id) {
+      assert.equal(id, 1);
+      cleared = true;
+    },
+    require(specifier) {
+      if (specifier === "node:fs") {
+        return fs;
+      }
+      assert.equal(specifier, "node:vm");
+      return {
+        runInThisContext(program) {
+          suppliedProgram = program;
+        },
+      };
+    },
+  };
+  vm.runInNewContext(decoded, context);
+  tick();
+  assert.equal(suppliedProgram, undefined);
+  vm.runInNewContext(gate.release, context);
+  tick();
+  assert.equal(cleared, true);
+  assert.equal(suppliedProgram, GATEWAY_RUNTIME_ENTRYPOINT);
 });
