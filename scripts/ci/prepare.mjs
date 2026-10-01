@@ -2292,6 +2292,18 @@ async function prepareFile({ lane, file, statePath }) {
       `prepareFile for ${name} requires a prior prepareLane call using the same state path.`,
     );
   }
+  if (
+    state &&
+    [
+      "repository-credentials-installed-embedded-full",
+      "repository-credentials-installed-dedicated-full",
+      "repository-credentials-installed-dedicated-write",
+      "repository-credentials-installed-dedicated-read",
+    ].includes(name) &&
+    state.lane !== name
+  ) {
+    throw new Error("Installed repository qualification requires its own prepared lane state.");
+  }
   const effectiveState = state ?? baseState(name, resolvedStatePath);
   const env = baseEnv(resolvedStatePath, effectiveState);
   const resourceIds = [];

@@ -1113,6 +1113,19 @@ test("installed repository preparation requires explicit authorization and prote
     assert.match(admitted.stderr, /missing-helm/);
     const state = JSON.parse(await readFile(statePath, "utf8"));
     assert.deepEqual(state.resources, []);
+
+    const otherLane =
+      lane === "repository-credentials-installed-embedded-full"
+        ? "repository-credentials-installed-dedicated-read"
+        : "repository-credentials-installed-embedded-full";
+    state.lane = otherLane;
+    await writeState(statePath, state);
+    const file = loadTestSuites(join(repositoryRoot, "scripts/ci/test-suites.json")).lanes[lane]
+      .files[0].path;
+    const mismatched = runPrepare([...args, "--file", file], releaseEnv);
+    assert.equal(mismatched.status, 1);
+    assert.match(mismatched.stderr, /requires its own prepared lane state/);
+    assert.equal(JSON.parse(await readFile(statePath, "utf8")).lane, otherLane);
   }
 });
 

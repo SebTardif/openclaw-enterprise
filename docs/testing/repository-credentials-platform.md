@@ -186,17 +186,19 @@ operator; retain the private evidence directory between invocations:
 Each test has a 30-minute limit and the runner has its normal one-hour file
 timeout; preparation and final cleanup need additional time. Preserve failed or
 uncertain cleanup state and reconcile owned resources before any retry. After all
-four individual runs, check their case inventories and source identity together:
+four individual runs, check their case reports and recorded commit IDs together:
 
 ```bash
 node scripts/ci/run-tests.mjs aggregate repository-credentials-installed \
   --results-dir "$CREDENTIAL_TEST_RUN/results"
 ```
 
-The aggregate checks test results, not the separate outer cleanup result. A
-qualification requires both the aggregate and independently verified cleanup
-for every case. These Kubernetes cases do not qualify the broader QA matrix,
-Compose, or OpenShell.
+The aggregate checks the reported case results and commit IDs. It does not
+prove the working tree, build context, or selected images are identical to that
+commit, and it does not check the separate outer cleanup result. Qualification
+requires independent source and image provenance plus verified cleanup for every
+case. These Kubernetes cases do not qualify the broader QA matrix, Compose, or
+OpenShell.
 
 Supply existing authorized `OPENAI_API_KEY`, `OCC_TEST_OPENAI_MODEL`, and immutable
 `OCC_TEST_PRODUCTION_POSTGRES_IMAGE` and `OCC_TEST_PRODUCTION_NODE_IMAGE`.

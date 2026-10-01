@@ -797,6 +797,13 @@ function validateLaneEvidence(summary, laneName, lane, issues) {
   }
 
   const observedFiles = new Map(summary.files.map((file) => [file.path, file]));
+  if (observedFiles.size !== summary.files.length || summary.files.length !== lane.files.length) {
+    issues.push(
+      issue("invalid-lane-evidence", `lane ${laneName} has unexpected or duplicate file evidence`, {
+        lane: laneName,
+      }),
+    );
+  }
   for (const expectedFile of lane.files) {
     const observed = observedFiles.get(expectedFile.path);
     if (!observed) {
@@ -828,6 +835,48 @@ function validateLaneEvidence(summary, laneName, lane, issues) {
           lane: laneName,
           file: expectedFile.path,
         }),
+      );
+    }
+    if (Array.isArray(observed.tests) && observed.counts) {
+      const statuses = ["passed", "failed", "skipped", "todo"];
+      const counts = Object.fromEntries(
+        statuses.map((status) => [
+          status,
+          observed.tests.filter((test) => test.status === status).length,
+        ]),
+      );
+      if (
+        observed.tests.some((test) => !isObject(test) || test.status !== "passed") ||
+        observed.counts.total !== observed.tests.length ||
+        statuses.some((status) => observed.counts[status] !== counts[status]) ||
+        expectedFile.expectedTests.some(
+          (name) => !observed.tests.some((test) => test.name === name && test.status === "passed"),
+        )
+      ) {
+        issues.push(
+          issue(
+            "invalid-lane-evidence",
+            `lane ${laneName} has inconsistent or incomplete test evidence`,
+            { lane: laneName, file: expectedFile.path },
+          ),
+        );
+      }
+    }
+    if (
+      laneName.startsWith("repository-credentials-installed-") &&
+      (observed.cleanup?.status !== "passed" ||
+        observed.nodeExitCode !== 0 ||
+        observed.signal !== null)
+    ) {
+      issues.push(
+        issue(
+          "missing-lane-evidence",
+          `lane ${laneName} lacks successful file exit or cleanup evidence`,
+          {
+            lane: laneName,
+            file: expectedFile.path,
+          },
+        ),
       );
     }
     if (observed.cleanup?.status === "failed") {

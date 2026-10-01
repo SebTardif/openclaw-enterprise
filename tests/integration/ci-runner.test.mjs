@@ -1450,6 +1450,77 @@ test("installed repository aggregate rejects missing profile results", async (t)
   );
 });
 
+test("installed repository aggregate rejects malformed case and cleanup evidence", async (t) => {
+  const root = await fixture(t);
+  const lane = "repository-credentials-installed-dedicated-write";
+  const path = "tests/integration/write.test.mjs";
+  const name = "dedicated git-write journey";
+  await writeJson(join(root, "manifest.json"), {
+    version: 1,
+    lanes: { [lane]: { files: [{ path, expectedTests: [name] }] } },
+    groups: { installed: [lane] },
+  });
+  const good = {
+    version: 1,
+    command: "run",
+    sourceSha: currentSha(),
+    lane,
+    status: "passed",
+    exitCode: 0,
+    files: [
+      {
+        path,
+        status: "passed",
+        nodeExitCode: 0,
+        signal: null,
+        counts: { passed: 1, failed: 0, skipped: 0, todo: 0, total: 1 },
+        tests: [{ name, status: "passed" }],
+        cleanup: { status: "passed" },
+      },
+    ],
+  };
+  const variants = [
+    (value) => {
+      value.files[0].tests[0].name = "unrelated";
+    },
+    (value) => {
+      value.files[0].tests[0].status = "failed";
+    },
+    (value) => {
+      value.files[0].counts.total = 2;
+    },
+    (value) => {
+      value.files[0].cleanup = null;
+    },
+    (value) => {
+      value.files[0].nodeExitCode = 1;
+    },
+    (value) => {
+      value.files.push(value.files[0]);
+    },
+  ];
+  const check = async (summary, expectedStatus) => {
+    await writeJson(join(root, "results", `${lane}.json`), summary);
+    const result = run(root, [
+      "aggregate",
+      "installed",
+      "--manifest",
+      "manifest.json",
+      "--root",
+      root,
+      "--results-dir",
+      "results",
+    ]);
+    assert.equal(result.status, expectedStatus);
+  };
+  await check(good, 0);
+  for (const change of variants) {
+    const altered = structuredClone(good);
+    change(altered);
+    await check(altered, 1);
+  }
+});
+
 test("aggregate requires fixed lane outputs, successful needs, and matching source SHA", async (t) => {
   const root = await fixture(t);
   const sha = currentSha();
@@ -1561,7 +1632,7 @@ test("aggregate accepts a lane as a singleton target and rejects tampered result
   let summary = JSON.parse(tampered.stdout);
   assert.deepEqual(
     summary.issues.map((entry) => entry.code),
-    ["missing-lane-evidence"],
+    ["invalid-lane-evidence", "missing-lane-evidence"],
   );
 
   await writeJson(join(root, "results/docker-model.json"), {
