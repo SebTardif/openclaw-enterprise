@@ -74,11 +74,14 @@ The manual `repository-service-export` workflow reruns this lane only from the
 selected `main` workflow revision after verifying an exact successful
 same-source `main` CI run and attempt. Its explicit opt-in exports the tested
 service image as an OCI archive before ordinary lane cleanup. The workflow
-uploads the archive only after independent readback confirms that the owned
-service, client, and qualification tags, lane state, and export inspection
-container are absent. The one-day artifact is available to repository readers;
-it is preparation evidence, not a registry reference, installed-lane input, or
-live qualification.
+binds each archived gzip or plain layer payload to the tested config's ordered
+filesystem diff IDs and rejects unsupported compression or unsafe tar topology.
+It uploads the archive only after independent readback confirms the archive's
+descriptor chain and that the owned service, client, and qualification tags,
+lane state, and export inspection container are absent. The one-day artifact is
+available to repository readers; it is preparation evidence, not a registry
+reference, installed-lane input, or live qualification. Real skopeo compatibility
+and hosted execution remain separate qualification gates.
 
 Kubernetes fixture lanes load bridge netfilter and enable IPv4 bridge filtering
 before cluster creation so K3s enforces NetworkPolicies on bridged Pod traffic.

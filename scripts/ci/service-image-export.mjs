@@ -17,6 +17,7 @@ import {
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { gunzipSync } from "node:zlib";
 import { github, githubPages, repository, validateCi } from "./container-release.mjs";
 
 export const exportWorkflow = ".github/workflows/repository-service-export.yml";
@@ -27,6 +28,10 @@ const repositoryRoot = resolve(fileURLToPath(new URL("../..", import.meta.url)))
 const shaPattern = /^[a-f0-9]{40}$/;
 const digestPattern = /^sha256:[a-f0-9]{64}$/;
 const integerPattern = /^[1-9][0-9]*$/;
+const ociJsonLimit = 4 * 1024 * 1024;
+const ociLayerLimit = 512 * 1024 * 1024;
+const ociExpandedLayerLimit = 1024 * 1024 * 1024;
+const ociArchiveLimit = 2 * 1024 * 1024 * 1024;
 
 function sha256(bytes) {
   return createHash("sha256").update(bytes).digest("hex");
@@ -44,23 +49,22 @@ function contained(root, path) {
 function command(commandName, args, options = {}) {
   const result = spawnSync(commandName, args, {
     cwd: options.cwd ?? repositoryRoot,
-    encoding: "utf8",
-    maxBuffer: 16 * 1024 * 1024,
+    encoding: options.encoding === undefined ? "utf8" : options.encoding,
+    maxBuffer: options.maxBuffer ?? 16 * 1024 * 1024,
     timeout: options.timeout ?? 120_000,
     env: { ...process.env, ...(options.env ?? {}) },
   });
   if (result.error) {
-    throw result.error;
+    throw new Error(`${commandName} could not be executed.`);
   }
   if (result.status !== 0 && !options.allowFailure) {
-    const detail = result.stderr.trim() || result.stdout.trim() || `exit ${result.status}`;
-    throw new Error(`${commandName} ${args.join(" ")} failed: ${detail}`);
+    throw new Error(`${commandName} failed.`);
   }
   return result;
 }
 
 async function readJson(path) {
-  return JSON.parse(await readFile(path, "utf8"));
+  return checkedJson(await readFile(path, "utf8"), "JSON document");
 }
 
 async function writeJsonAtomic(path, value, { exclusive = false } = {}) {
@@ -216,86 +220,162 @@ async function inventory(root, { normalizeModes = false, omit = new Set() } = {}
 }
 
 export function validateServiceConfiguration(service, base, serviceHistory, baseHistory) {
-  assert.equal(service.Config?.User, "node");
-  assert.equal(service.Config?.WorkingDir, "/app");
-  assert.deepEqual(service.Config?.Entrypoint, ["node", "/app/dist/repository-credentials.js"]);
-  assert.deepEqual(
-    service.Config?.Cmd,
-    base.Config?.Cmd,
+  assert.ok(service.Config?.User === "node", "The service image must use the node user.");
+  assert.ok(service.Config?.WorkingDir === "/app", "The service image working directory changed.");
+  assert.ok(
+    canonicalHash(service.Config?.Entrypoint) ===
+      canonicalHash(["node", "/app/dist/repository-credentials.js"]),
+    "The service image entrypoint changed.",
+  );
+  assert.ok(
+    canonicalHash(service.Config?.Cmd) === canonicalHash(base.Config?.Cmd),
     "The service image must retain the pinned base command.",
   );
-  assert.deepEqual(
-    service.Config?.Env,
-    base.Config?.Env,
+  assert.ok(
+    canonicalHash(service.Config?.Env) === canonicalHash(base.Config?.Env),
     "The service image must not add environment values.",
   );
   const baseLayers = base.RootFS?.Layers;
   const serviceLayers = service.RootFS?.Layers;
   assert.ok(Array.isArray(baseLayers) && baseLayers.length > 0);
   assert.ok(Array.isArray(serviceLayers) && serviceLayers.length > baseLayers.length);
-  assert.deepEqual(serviceLayers.slice(0, baseLayers.length), baseLayers);
+  assert.ok(
+    canonicalHash(serviceLayers.slice(0, baseLayers.length)) === canonicalHash(baseLayers),
+    "The service image must retain the ordered base layers.",
+  );
   assert.ok(Array.isArray(baseHistory) && baseHistory.length > 0);
   assert.ok(serviceHistory.length > baseHistory.length);
-  assert.deepEqual(serviceHistory.slice(-baseHistory.length), baseHistory);
+  assert.ok(
+    canonicalHash(serviceHistory.slice(-baseHistory.length)) === canonicalHash(baseHistory),
+    "The service image history must retain the pinned base suffix.",
+  );
   const serviceOwnedHistory = serviceHistory.slice(0, -baseHistory.length);
-  assert.doesNotMatch(
-    serviceOwnedHistory.join("\n"),
-    /(?:authorization|bearer|password|private[ _-]?key|secret|token)[=:][^ ,]+/i,
+  assert.ok(
+    !/(?:authorization|bearer|password|private[ _-]?key|secret|token)[=:][^ ,]+/i.test(
+      serviceOwnedHistory.join("\n"),
+    ),
     "Service-owned image history must not carry credential values.",
   );
   return { baseLayers, serviceLayers, serviceOwnedHistory };
 }
 
-async function verifyBlob(layout, digest) {
-  assert.match(digest ?? "", digestPattern);
-  const path = join(layout, "blobs", "sha256", digest.slice("sha256:".length));
-  const bytes = await readFile(path);
-  assert.equal(`sha256:${sha256(bytes)}`, digest);
-  return bytes;
+function checkedJson(bytes, label) {
+  try {
+    return JSON.parse(bytes);
+  } catch {
+    throw new Error(`${label} is not valid JSON.`);
+  }
 }
 
-export async function validateOciLayout(layout, service) {
-  assert.deepEqual((await readdir(layout)).sort(), ["blobs", "index.json", "oci-layout"]);
-  assert.deepEqual(await readdir(join(layout, "blobs")), ["sha256"]);
-  assert.deepEqual(await readJson(join(layout, "oci-layout")), { imageLayoutVersion: "1.0.0" });
-  const indexBytes = await readFile(join(layout, "index.json"));
-  const index = JSON.parse(indexBytes);
-  assert.equal(index.schemaVersion, 2);
-  assert.equal(index.manifests?.length, 1);
-  const descriptor = index.manifests[0];
-  assert.equal(descriptor.mediaType, "application/vnd.oci.image.manifest.v1+json");
-  assert.equal(descriptor.annotations?.["org.opencontainers.image.ref.name"], "service");
-  const manifestBytes = await verifyBlob(layout, descriptor.digest);
-  assert.equal(descriptor.size, manifestBytes.length);
-  const manifest = JSON.parse(manifestBytes);
-  assert.equal(manifest.schemaVersion, 2);
-  assert.equal(manifest.mediaType, "application/vnd.oci.image.manifest.v1+json");
-  assert.equal(manifest.config?.mediaType, "application/vnd.oci.image.config.v1+json");
-  assert.equal(
-    manifest.config?.digest,
-    service.Id,
-    "OCI config identity must equal the tested Docker config ID.",
+function expectedOci(service) {
+  return {
+    configId: service.Id,
+    diffIds: service.RootFS?.Layers,
+    user: service.Config?.User,
+    workingDir: service.Config?.WorkingDir,
+    entrypoint: service.Config?.Entrypoint,
+    command: service.Config?.Cmd ?? null,
+    environmentSha256: canonicalHash(service.Config?.Env),
+  };
+}
+
+function validateLayerPayload(bytes, mediaType, expectedDiffId) {
+  let expanded;
+  if (mediaType === "application/vnd.oci.image.layer.v1.tar") {
+    assert.ok(bytes.length <= ociExpandedLayerLimit, "OCI layer exceeds the expanded size limit.");
+    expanded = bytes;
+  } else if (mediaType === "application/vnd.oci.image.layer.v1.tar+gzip") {
+    try {
+      expanded = gunzipSync(bytes, { maxOutputLength: ociExpandedLayerLimit });
+    } catch {
+      throw new Error("OCI gzip layer is invalid or exceeds the expanded size limit.");
+    }
+  } else {
+    throw new Error("OCI layer compression is unsupported by this verifier.");
+  }
+  assert.ok(
+    `sha256:${sha256(expanded)}` === expectedDiffId,
+    "OCI layer payload does not match the ordered tested filesystem layer.",
   );
-  const configBytes = await verifyBlob(layout, manifest.config.digest);
-  assert.equal(manifest.config.size, configBytes.length);
-  const config = JSON.parse(configBytes);
-  assert.deepEqual(config.rootfs?.diff_ids, service.RootFS.Layers);
-  assert.equal(config.config?.User, service.Config.User);
-  assert.equal(config.config?.WorkingDir, service.Config.WorkingDir);
-  assert.deepEqual(config.config?.Entrypoint, service.Config.Entrypoint);
-  assert.deepEqual(config.config?.Cmd ?? null, service.Config.Cmd ?? null);
-  assert.deepEqual(config.config?.Env, service.Config.Env);
-  assert.ok(Array.isArray(manifest.layers) && manifest.layers.length > 0);
-  for (const layer of manifest.layers) {
+}
+
+async function validateOci(readRoot, readBlob, listBlobNames, expected) {
+  assert.ok(
+    Array.isArray(expected.diffIds) &&
+      expected.diffIds.length > 0 &&
+      expected.diffIds.every((digest) => digestPattern.test(digest)),
+    "Tested filesystem layer identities are invalid.",
+  );
+  const indexBytes = await readRoot("index.json", ociJsonLimit);
+  const index = checkedJson(indexBytes, "OCI index");
+  assert.ok(index.schemaVersion === 2, "OCI index schema is unsupported.");
+  assert.ok(index.manifests?.length === 1, "OCI index must name exactly one manifest.");
+  const descriptor = index.manifests[0];
+  assert.ok(
+    descriptor.mediaType === "application/vnd.oci.image.manifest.v1+json",
+    "OCI manifest media type is unsupported.",
+  );
+  assert.ok(
+    descriptor.annotations?.["org.opencontainers.image.ref.name"] === "service",
+    "OCI service reference is missing.",
+  );
+  const manifestBytes = await readBlob(descriptor.digest, ociJsonLimit);
+  assert.ok(descriptor.size === manifestBytes.length, "OCI manifest descriptor size changed.");
+  const manifest = checkedJson(manifestBytes, "OCI manifest");
+  assert.ok(manifest.schemaVersion === 2, "OCI manifest schema is unsupported.");
+  assert.ok(
+    manifest.mediaType === "application/vnd.oci.image.manifest.v1+json",
+    "OCI manifest media type changed.",
+  );
+  assert.ok(
+    manifest.config?.mediaType === "application/vnd.oci.image.config.v1+json",
+    "OCI config media type is unsupported.",
+  );
+  assert.ok(manifest.config?.digest === expected.configId, "OCI config identity changed.");
+  const configBytes = await readBlob(manifest.config.digest, ociJsonLimit);
+  assert.ok(manifest.config.size === configBytes.length, "OCI config descriptor size changed.");
+  const config = checkedJson(configBytes, "OCI config");
+  assert.ok(
+    Array.isArray(config.rootfs?.diff_ids) &&
+      config.rootfs.diff_ids.length > 0 &&
+      config.rootfs.diff_ids.every((digest) => digestPattern.test(digest)),
+    "OCI config filesystem layer identities are invalid.",
+  );
+  assert.ok(
+    canonicalHash(config.rootfs?.diff_ids) === canonicalHash(expected.diffIds),
+    "OCI config filesystem layers do not match the tested image.",
+  );
+  assert.ok(config.config?.User === expected.user, "OCI config user changed.");
+  assert.ok(config.config?.WorkingDir === expected.workingDir, "OCI working directory changed.");
+  assert.ok(
+    canonicalHash(config.config?.Entrypoint) === canonicalHash(expected.entrypoint),
+    "OCI entrypoint changed.",
+  );
+  assert.ok(
+    canonicalHash(config.config?.Cmd ?? null) === canonicalHash(expected.command),
+    "OCI command changed.",
+  );
+  assert.ok(
+    canonicalHash(config.config?.Env) === expected.environmentSha256,
+    "OCI environment changed.",
+  );
+  assert.ok(
+    Array.isArray(manifest.layers) && manifest.layers.length > 0,
+    "OCI layers are missing.",
+  );
+  assert.ok(
+    manifest.layers.length === config.rootfs.diff_ids.length,
+    "OCI manifest and config layer counts differ.",
+  );
+  for (const [index, layer] of manifest.layers.entries()) {
     assert.ok(
-      [
-        "application/vnd.oci.image.layer.v1.tar+gzip",
-        "application/vnd.oci.image.layer.v1.tar+zstd",
-        "application/vnd.oci.image.layer.v1.tar",
-      ].includes(layer.mediaType),
+      layer.mediaType === "application/vnd.oci.image.layer.v1.tar+gzip" ||
+        layer.mediaType === "application/vnd.oci.image.layer.v1.tar",
+      "OCI layer compression is unsupported by this verifier.",
     );
-    const bytes = await verifyBlob(layout, layer.digest);
-    assert.equal(layer.size, bytes.length);
+    const bytes = await readBlob(layer.digest, ociLayerLimit);
+    assert.ok(layer.size === bytes.length, "OCI layer descriptor size changed.");
+    validateLayerPayload(bytes, layer.mediaType, config.rootfs.diff_ids[index]);
   }
   const expectedBlobs = [
     descriptor.digest,
@@ -304,18 +384,125 @@ export async function validateOciLayout(layout, service) {
   ]
     .map((digest) => digest.slice("sha256:".length))
     .sort();
-  assert.deepEqual((await readdir(join(layout, "blobs", "sha256"))).sort(), expectedBlobs);
+  assert.ok(
+    canonicalHash((await listBlobNames()).sort()) === canonicalHash(expectedBlobs),
+    "OCI blob topology differs from the descriptor chain.",
+  );
   return {
     indexSha256: sha256(indexBytes),
     manifestDigest: descriptor.digest,
     configDigest: manifest.config.digest,
+    diffIds: [...config.rootfs.diff_ids],
     layerDigests: manifest.layers.map(({ digest }) => digest),
   };
 }
 
+async function verifyLayoutFile(path, limit, label) {
+  const metadata = await lstat(path);
+  assert.ok(metadata.isFile() && metadata.nlink === 1, `${label} must be one regular file.`);
+  assert.ok(metadata.size <= limit, `${label} exceeds its size limit.`);
+  return readFile(path);
+}
+
+async function verifyBlob(layout, digest, limit) {
+  assert.ok(digestPattern.test(digest ?? ""), "OCI blob digest is invalid.");
+  const path = join(layout, "blobs", "sha256", digest.slice("sha256:".length));
+  const bytes = await verifyLayoutFile(path, limit, "OCI blob");
+  assert.ok(`sha256:${sha256(bytes)}` === digest, "OCI blob digest changed.");
+  return bytes;
+}
+
+export async function validateOciLayout(layout, service) {
+  assert.ok(
+    canonicalHash((await readdir(layout)).sort()) ===
+      canonicalHash(["blobs", "index.json", "oci-layout"]),
+    "OCI layout topology is invalid.",
+  );
+  for (const directory of [join(layout, "blobs"), join(layout, "blobs", "sha256")]) {
+    const metadata = await lstat(directory);
+    assert.ok(
+      metadata.isDirectory() && !metadata.isSymbolicLink(),
+      "OCI blob path must be a directory.",
+    );
+  }
+  assert.ok(
+    canonicalHash(await readdir(join(layout, "blobs"))) === canonicalHash(["sha256"]),
+    "OCI blob namespace is invalid.",
+  );
+  assert.ok(
+    canonicalHash(
+      checkedJson(
+        await verifyLayoutFile(join(layout, "oci-layout"), ociJsonLimit, "OCI layout"),
+        "OCI layout",
+      ),
+    ) === canonicalHash({ imageLayoutVersion: "1.0.0" }),
+    "OCI layout version is unsupported.",
+  );
+  return validateOci(
+    (name, limit) => verifyLayoutFile(join(layout, name), limit, `OCI ${name}`),
+    (digest, limit) => verifyBlob(layout, digest, limit),
+    () => readdir(join(layout, "blobs", "sha256")),
+    expectedOci(service),
+  );
+}
+
+export async function validateOciArchive(archive, serviceOrExpected) {
+  const archiveMetadata = await lstat(archive);
+  assert.ok(
+    archiveMetadata.isFile() && archiveMetadata.nlink === 1,
+    "OCI archive must be one regular file.",
+  );
+  assert.ok(archiveMetadata.size <= ociArchiveLimit, "OCI archive exceeds its size limit.");
+  const names = command("tar", ["-tf", archive], { maxBuffer: ociJsonLimit })
+    .stdout.split("\n")
+    .filter(Boolean);
+  const verbose = command("tar", ["--numeric-owner", "-tvf", archive], {
+    maxBuffer: ociJsonLimit,
+  })
+    .stdout.split("\n")
+    .filter(Boolean);
+  assert.ok(names.length === verbose.length, "OCI archive member table is inconsistent.");
+  assert.ok(new Set(names).size === names.length, "OCI archive contains duplicate members.");
+  for (const [index, name] of names.entries()) {
+    const directory = name === "blobs/" || name === "blobs/sha256/";
+    const regular =
+      name === "index.json" || name === "oci-layout" || /^blobs\/sha256\/[a-f0-9]{64}$/.test(name);
+    assert.ok(directory || regular, "OCI archive contains an unexpected member.");
+    assert.ok(
+      verbose[index][0] === (directory ? "d" : "-"),
+      "OCI archive contains a link or special member.",
+    );
+  }
+  const readMember = async (name, limit) => {
+    assert.ok(names.includes(name), "OCI archive member is missing.");
+    return command("tar", ["-xOf", archive, name], { encoding: null, maxBuffer: limit }).stdout;
+  };
+  assert.ok(
+    canonicalHash(checkedJson(await readMember("oci-layout", ociJsonLimit), "OCI layout")) ===
+      canonicalHash({ imageLayoutVersion: "1.0.0" }),
+    "OCI layout version is unsupported.",
+  );
+  const expected = serviceOrExpected.Id ? expectedOci(serviceOrExpected) : serviceOrExpected;
+  const readArchiveBlob = async (digest, limit) => {
+    assert.ok(digestPattern.test(digest ?? ""), "OCI blob digest is invalid.");
+    const bytes = await readMember(`blobs/sha256/${digest.slice("sha256:".length)}`, limit);
+    assert.ok(`sha256:${sha256(bytes)}` === digest, "OCI blob digest changed.");
+    return bytes;
+  };
+  return validateOci(
+    readMember,
+    readArchiveBlob,
+    async () =>
+      names
+        .filter((name) => /^blobs\/sha256\/[a-f0-9]{64}$/.test(name))
+        .map((name) => basename(name)),
+    expected,
+  );
+}
+
 async function inspectImage(reference) {
   const result = command(process.env.OCC_DOCKER_BIN ?? "docker", ["image", "inspect", reference]);
-  const parsed = JSON.parse(result.stdout);
+  const parsed = checkedJson(result.stdout, "Image inspection");
   assert.equal(parsed.length, 1);
   return parsed[0];
 }
@@ -330,7 +517,7 @@ function imageHistory(reference) {
   ])
     .stdout.split("\n")
     .filter(Boolean)
-    .map((line) => JSON.parse(line));
+    .map((line) => checkedJson(line, "Image history entry"));
 }
 
 async function requireCheckout(env) {
@@ -356,8 +543,8 @@ async function exportImage(statePath, receiptPath, outputArgument, env = process
   await mkdir(output, { recursive: false, mode: 0o700 });
   const stateBytes = await readFile(resolve(statePath));
   const receiptBytes = await readFile(resolve(receiptPath));
-  const state = JSON.parse(stateBytes);
-  const receipt = JSON.parse(receiptBytes);
+  const state = checkedJson(stateBytes, "Lane state");
+  const receipt = checkedJson(receiptBytes, "Lane receipt");
   validateLaneIdentity(state, receipt, env);
   const checkout = await requireCheckout(env);
   const dockerfilePath = join(repositoryRoot, "deploy/runtime/repository-credentials/Dockerfile");
@@ -396,7 +583,7 @@ async function exportImage(statePath, receiptPath, outputArgument, env = process
       "--config",
       `docker://${baseReference}`,
     ]).stdout;
-    const baseConfig = JSON.parse(baseConfigOutput);
+    const baseConfig = checkedJson(baseConfigOutput, "Base image configuration");
     assert.equal(baseConfig.os, inspected.service.Os);
     assert.equal(baseConfig.architecture, inspected.service.Architecture);
     const base = {
@@ -431,8 +618,11 @@ async function exportImage(statePath, receiptPath, outputArgument, env = process
       ["container", "inspect", container],
       { allowFailure: true },
     );
-    assert.notEqual(removed.status, 0, "The export inspection container must be absent.");
-    assert.match(`${removed.stderr}\n${removed.stdout}`, /No such container|No such object/i);
+    assert.ok(removed.status !== 0, "The export inspection container must be absent.");
+    assert.ok(
+      /No such container|No such object/i.test(`${removed.stderr}\n${removed.stdout}`),
+      "Inspection container absence could not be verified.",
+    );
     const oci = join(work, "oci");
     command(process.env.OCC_SKOPEO_BIN ?? "skopeo", [
       "copy",
@@ -441,7 +631,7 @@ async function exportImage(statePath, receiptPath, outputArgument, env = process
       `docker-daemon:${receipt.images.service.tag}`,
       `oci:${oci}:service`,
     ]);
-    const ociIdentity = await validateOciLayout(oci, inspected.service);
+    await validateOciLayout(oci, inspected.service);
     const archive = join(output, "repository-credentials-service.oci.tar");
     command("tar", [
       "--sort=name",
@@ -457,6 +647,7 @@ async function exportImage(statePath, receiptPath, outputArgument, env = process
       "index.json",
       "oci-layout",
     ]);
+    const ociIdentity = await validateOciArchive(archive, inspected.service);
     const archiveBytes = await readFile(archive);
     const metadata = {
       version: 1,
@@ -538,7 +729,7 @@ async function reconcileCleanup(statePath, receiptPath, outputArgument) {
   assert.equal(metadata.cleanup?.status, "pending");
   const receiptBytes = await readFile(resolve(receiptPath));
   assert.equal(sha256(receiptBytes), metadata.lane?.receiptSha256);
-  const receipt = JSON.parse(receiptBytes);
+  const receipt = checkedJson(receiptBytes, "Lane receipt");
   assert.deepEqual(
     metadata.cleanup.ownedTags,
     exportRoles.map((role) => receipt.images[role].tag),
@@ -548,18 +739,37 @@ async function reconcileCleanup(statePath, receiptPath, outputArgument) {
     const result = command(process.env.OCC_DOCKER_BIN ?? "docker", ["image", "inspect", tag], {
       allowFailure: true,
     });
-    assert.notEqual(result.status, 0, `Owned image tag remains after cleanup: ${tag}`);
-    assert.match(`${result.stderr}\n${result.stdout}`, /No such image|No such object/i);
+    assert.ok(result.status !== 0, "An owned image tag remains after cleanup.");
+    assert.ok(
+      /No such image|No such object/i.test(`${result.stderr}\n${result.stdout}`),
+      "Owned image tag absence could not be verified.",
+    );
   }
   const container = command(
     process.env.OCC_DOCKER_BIN ?? "docker",
     ["container", "inspect", metadata.cleanup.container],
     { allowFailure: true },
   );
-  assert.notEqual(container.status, 0, "The export inspection container remains after cleanup.");
-  assert.match(`${container.stderr}\n${container.stdout}`, /No such container|No such object/i);
+  assert.ok(container.status !== 0, "The export inspection container remains after cleanup.");
+  assert.ok(
+    /No such container|No such object/i.test(`${container.stderr}\n${container.stdout}`),
+    "Inspection container absence could not be verified.",
+  );
   const archive = await readFile(join(output, metadata.archive.path));
   assert.equal(sha256(archive), metadata.archive.sha256);
+  const archiveIdentity = await validateOciArchive(join(output, metadata.archive.path), {
+    configId: metadata.tested.configId,
+    diffIds: metadata.oci.diffIds,
+    user: metadata.configuration.user,
+    workingDir: metadata.configuration.workingDir,
+    entrypoint: metadata.configuration.entrypoint,
+    command: metadata.configuration.command ?? null,
+    environmentSha256: metadata.configuration.environmentSha256,
+  });
+  assert.ok(
+    canonicalHash(archiveIdentity) === canonicalHash(metadata.oci),
+    "OCI archive identity changed before upload.",
+  );
   assert.deepEqual((await readdir(output)).sort(), ["export.json", metadata.archive.path].sort());
   metadata.cleanup = {
     status: "verified",

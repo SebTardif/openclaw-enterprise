@@ -1,17 +1,29 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  link,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  symlink,
+  unlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
+import { gzipSync } from "node:zlib";
 import {
   exportLane,
   exportWorkflow,
   validateExportRequest,
   validateHostedContext,
   validateLaneIdentity,
+  validateOciArchive,
   validateOciLayout,
   validateServiceConfiguration,
   validateServiceRecipe,
@@ -245,28 +257,51 @@ test("service configuration binds the pinned base and excludes added environment
   );
 });
 
-test("OCI descriptors and blobs must resolve to the tested Docker config identity", async (t) => {
+async function ociFixture(
+  t,
+  {
+    expandedLayers = [
+      Buffer.from("first filesystem layer"),
+      Buffer.from("second filesystem layer"),
+    ],
+    storedLayers,
+    mediaTypes = [
+      "application/vnd.oci.image.layer.v1.tar+gzip",
+      "application/vnd.oci.image.layer.v1.tar",
+    ],
+    diffIds = expandedLayers.map((bytes) => `sha256:${hash(bytes)}`),
+    configEnvironment = ["PATH=/usr/bin"],
+    serviceEnvironment = configEnvironment,
+  } = {},
+) {
   const directory = await mkdtemp(join(tmpdir(), "service-oci-layout-"));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const blobs = join(directory, "blobs/sha256");
   await mkdir(blobs, { recursive: true });
-  const layers = [imageId("1"), imageId("2")];
+  const encoded =
+    storedLayers ??
+    expandedLayers.map((bytes, index) =>
+      mediaTypes[index] === "application/vnd.oci.image.layer.v1.tar+gzip" ? gzipSync(bytes) : bytes,
+    );
   const config = Buffer.from(
     JSON.stringify({
       config: {
         User: "node",
         WorkingDir: "/app",
         Entrypoint: ["node", "/app/dist/repository-credentials.js"],
-        Env: ["PATH=/usr/bin"],
+        Env: configEnvironment,
       },
-      rootfs: { type: "layers", diff_ids: layers },
+      rootfs: { type: "layers", diff_ids: diffIds },
     }),
   );
   const configDigest = `sha256:${hash(config)}`;
   await writeFile(join(blobs, hash(config)), config);
-  const layer = Buffer.from("synthetic-layer");
-  const layerDigest = `sha256:${hash(layer)}`;
-  await writeFile(join(blobs, hash(layer)), layer);
+  const layerDescriptors = [];
+  for (const [index, bytes] of encoded.entries()) {
+    const digest = `sha256:${hash(bytes)}`;
+    await writeFile(join(blobs, hash(bytes)), bytes);
+    layerDescriptors.push({ mediaType: mediaTypes[index], digest, size: bytes.length });
+  }
   const manifest = Buffer.from(
     JSON.stringify({
       schemaVersion: 2,
@@ -276,13 +311,7 @@ test("OCI descriptors and blobs must resolve to the tested Docker config identit
         digest: configDigest,
         size: config.length,
       },
-      layers: [
-        {
-          mediaType: "application/vnd.oci.image.layer.v1.tar+gzip",
-          digest: layerDigest,
-          size: layer.length,
-        },
-      ],
+      layers: layerDescriptors,
     }),
   );
   const manifestDigest = `sha256:${hash(manifest)}`;
@@ -308,13 +337,184 @@ test("OCI descriptors and blobs must resolve to the tested Docker config identit
       User: "node",
       WorkingDir: "/app",
       Entrypoint: ["node", "/app/dist/repository-credentials.js"],
-      Env: ["PATH=/usr/bin"],
+      Env: serviceEnvironment,
     },
-    RootFS: { Layers: layers },
+    RootFS: { Layers: diffIds },
   };
-  assert.equal((await validateOciLayout(directory, service)).configDigest, configDigest);
-  await writeFile(join(blobs, hash(layer)), "changed");
-  await assert.rejects(() => validateOciLayout(directory, service));
+  return { blobs, configDigest, directory, layerDescriptors, service };
+}
+
+function archiveLayout(layout, archive, extra = []) {
+  execFileSync("tar", [
+    "-cf",
+    archive,
+    "-C",
+    layout,
+    "blobs",
+    "index.json",
+    "oci-layout",
+    ...extra,
+  ]);
+}
+
+test("OCI layers bind ordered gzip and plain payloads to every tested diff ID", async (t) => {
+  const fixture = await ociFixture(t);
+  const identity = await validateOciLayout(fixture.directory, fixture.service);
+  assert.equal(identity.configDigest, fixture.configDigest);
+  assert.deepEqual(identity.diffIds, fixture.service.RootFS.Layers);
+
+  const countMismatch = await ociFixture(t, {
+    storedLayers: [gzipSync(Buffer.from("first filesystem layer"))],
+    mediaTypes: ["application/vnd.oci.image.layer.v1.tar+gzip"],
+  });
+  await assert.rejects(() => validateOciLayout(countMismatch.directory, countMismatch.service));
+
+  const unrelated = await ociFixture(t, {
+    storedLayers: [
+      gzipSync(Buffer.from("valid but unrelated layer")),
+      Buffer.from("second filesystem layer"),
+    ],
+  });
+  await assert.rejects(() => validateOciLayout(unrelated.directory, unrelated.service));
+
+  for (const invalid of [
+    await ociFixture(t, {
+      storedLayers: [Buffer.from("not gzip"), Buffer.from("second filesystem layer")],
+    }),
+    await ociFixture(t, {
+      mediaTypes: [
+        "application/vnd.oci.image.layer.v1.tar+zstd",
+        "application/vnd.oci.image.layer.v1.tar",
+      ],
+      storedLayers: [Buffer.from("unsupported zstd"), Buffer.from("second filesystem layer")],
+    }),
+  ]) {
+    await assert.rejects(() => validateOciLayout(invalid.directory, invalid.service));
+  }
+});
+
+test("completed OCI archive rejects duplicates, links, and special members", async (t) => {
+  const valid = await ociFixture(t);
+  const archive = join(valid.directory, "valid.tar");
+  archiveLayout(valid.directory, archive);
+  assert.equal((await validateOciArchive(archive, valid.service)).configDigest, valid.configDigest);
+
+  const linkedArchive = join(valid.directory, "linked-archive.tar");
+  await link(archive, linkedArchive);
+  await assert.rejects(() => validateOciArchive(linkedArchive, valid.service));
+  await unlink(linkedArchive);
+  const symlinkedArchive = join(valid.directory, "symlinked-archive.tar");
+  await symlink("valid.tar", symlinkedArchive);
+  await assert.rejects(() => validateOciArchive(symlinkedArchive, valid.service));
+
+  await writeFile(join(valid.directory, "unexpected"), "unexpected archive member");
+  const unexpected = join(valid.directory, "unexpected.tar");
+  archiveLayout(valid.directory, unexpected, ["unexpected"]);
+  await assert.rejects(() => validateOciArchive(unexpected, valid.service));
+
+  await writeFile(
+    join(valid.blobs, valid.layerDescriptors[0].digest.slice("sha256:".length)),
+    "changed archived layer",
+  );
+  const changedBlob = join(valid.directory, "changed-blob.tar");
+  archiveLayout(valid.directory, changedBlob);
+  await assert.rejects(() => validateOciArchive(changedBlob, valid.service));
+
+  const duplicate = join(valid.directory, "duplicate.tar");
+  archiveLayout(valid.directory, duplicate, ["index.json"]);
+  await assert.rejects(() => validateOciArchive(duplicate, valid.service));
+
+  for (const kind of ["symlink", "hardlink", "fifo"]) {
+    const fixture = await ociFixture(t);
+    await unlink(join(fixture.directory, "oci-layout"));
+    if (kind === "symlink") {
+      await symlink("index.json", join(fixture.directory, "oci-layout"));
+    } else if (kind === "hardlink") {
+      await link(join(fixture.directory, "index.json"), join(fixture.directory, "oci-layout"));
+    } else {
+      execFileSync("mkfifo", [join(fixture.directory, "oci-layout")]);
+    }
+    const changed = join(fixture.directory, `${kind}.tar`);
+    archiveLayout(fixture.directory, changed);
+    await assert.rejects(() => validateOciArchive(changed, fixture.service));
+  }
+});
+
+test("rejected configuration and history values stay out of failure messages", async (t) => {
+  const sentinel = "SAFE_REJECTED_SECRET_SENTINEL";
+  const fixture = await ociFixture(t, {
+    configEnvironment: ["PATH=/usr/bin", `TOKEN=${sentinel}`],
+    serviceEnvironment: ["PATH=/usr/bin"],
+  });
+  await assert.rejects(
+    () => validateOciLayout(fixture.directory, fixture.service),
+    (error) => !error.message.includes(sentinel),
+  );
+  const base = {
+    Config: { Env: ["PATH=/usr/bin"], Cmd: ["node"] },
+    RootFS: { Layers: [imageId("1")] },
+  };
+  const service = {
+    Config: {
+      User: "node",
+      WorkingDir: "/app",
+      Entrypoint: ["node", "/app/dist/repository-credentials.js"],
+      Cmd: ["node", sentinel],
+      Env: ["PATH=/usr/bin", sentinel],
+    },
+    RootFS: { Layers: [imageId("1"), imageId("2")] },
+  };
+  for (const invocation of [
+    () => validateServiceConfiguration(service, base, ["COPY closure", "base"], ["base"]),
+    () =>
+      validateServiceConfiguration(
+        { ...service, Config: { ...service.Config, Cmd: ["node"], Env: ["PATH=/usr/bin"] } },
+        base,
+        [`TOKEN=${sentinel}`, "base"],
+        ["base"],
+      ),
+  ]) {
+    assert.throws(invocation, (error) => !error.message.includes(sentinel));
+  }
+});
+
+test("export orchestration suppresses rejected subprocess output", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "service-export-command-error-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const bin = join(directory, "bin");
+  await mkdir(bin);
+  const sentinel = "SAFE_COMMAND_ERROR_SECRET_SENTINEL";
+  const git = join(bin, "git");
+  await writeFile(git, `#!/bin/sh\nprintf '%s\\n' '${sentinel}' >&2\nexit 2\n`);
+  await chmod(git, 0o700);
+  const fixture = laneFixture();
+  const statePath = join(directory, "state.json");
+  const receiptPath = join(directory, "receipt.json");
+  await writeFile(statePath, JSON.stringify(fixture.state));
+  await writeFile(receiptPath, JSON.stringify(fixture.receipt));
+  const result = spawnSync(
+    process.execPath,
+    [script, "export", statePath, receiptPath, join(directory, "output")],
+    {
+      cwd: root,
+      encoding: "utf8",
+      env: {
+        PATH: `${bin}:/usr/bin:/bin`,
+        OPENCLAW_EXPORT_SERVICE_IMAGE: "true",
+        RUNNER_TEMP: directory,
+        SOURCE_SHA: source,
+        SOURCE_TREE: sourceTree,
+        GITHUB_WORKFLOW_SHA: source,
+        GITHUB_RUN_ID: "123",
+        GITHUB_RUN_ATTEMPT: "1",
+        CI_RUN_ID: "456",
+        CI_ATTEMPT: "2",
+      },
+    },
+  );
+  assert.notEqual(result.status, 0);
+  assert.ok(!result.stderr.includes(sentinel));
+  assert.match(result.stderr, /git failed/);
 });
 
 async function cleanupFixture(t) {
@@ -322,8 +522,11 @@ async function cleanupFixture(t) {
   t.after(() => rm(directory, { recursive: true, force: true }));
   const output = join(directory, "output");
   await mkdir(output);
-  const archive = Buffer.from("synthetic OCI archive");
-  await writeFile(join(output, "repository-credentials-service.oci.tar"), archive);
+  const oci = await ociFixture(t);
+  const archivePath = join(output, "repository-credentials-service.oci.tar");
+  archiveLayout(oci.directory, archivePath);
+  const archive = await readFile(archivePath);
+  const ociIdentity = await validateOciArchive(archivePath, oci.service);
   const receipt = laneFixture().receipt;
   const receiptPath = join(directory, "receipt.json");
   const receiptBytes = Buffer.from(JSON.stringify(receipt));
@@ -334,6 +537,15 @@ async function cleanupFixture(t) {
       version: 1,
       kind: "repository-credentials-service-oci-preparation",
       lane: { receiptSha256: hash(receiptBytes) },
+      tested: { configId: oci.service.Id },
+      configuration: {
+        user: oci.service.Config.User,
+        workingDir: oci.service.Config.WorkingDir,
+        entrypoint: oci.service.Config.Entrypoint,
+        command: oci.service.Config.Cmd,
+        environmentSha256: hash(Buffer.from(`${JSON.stringify(oci.service.Config.Env)}\n`)),
+      },
+      oci: ociIdentity,
       archive: { path: "repository-credentials-service.oci.tar", sha256: hash(archive) },
       cleanup: {
         status: "pending",
@@ -353,7 +565,7 @@ async function cleanupFixture(t) {
       "const args = process.argv.slice(2);\n" +
       "const target = args.at(-1);\n" +
       'if (process.env.SURVIVE_TAG && target === process.env.SURVIVE_TAG) { console.log("[]"); process.exit(0); }\n' +
-      'if (process.env.UNKNOWN_ABSENCE) { console.error("daemon unavailable"); process.exit(1); }\n' +
+      'if (process.env.UNKNOWN_ABSENCE) { console.error(`daemon unavailable ${process.env.SUBPROCESS_SENTINEL ?? ""}`); process.exit(1); }\n' +
       'console.error(args[0] === "container" ? "No such container" : "No such image");\n' +
       "process.exit(1);\n",
   );
@@ -393,34 +605,112 @@ test("cleanup reconciliation accepts only absent state, tags and inspection cont
   );
 
   const unknown = await cleanupFixture(t);
-  assert.notEqual(reconcile(unknown, { UNKNOWN_ABSENCE: "1" }).status, 0);
+  const sentinel = "SAFE_SUBPROCESS_SECRET_SENTINEL";
+  const unknownResult = reconcile(unknown, {
+    UNKNOWN_ABSENCE: "1",
+    SUBPROCESS_SENTINEL: sentinel,
+  });
+  assert.notEqual(unknownResult.status, 0);
+  assert.ok(!unknownResult.stderr.includes(sentinel));
 
   const changedArchive = await cleanupFixture(t);
   await writeFile(join(changedArchive.output, "repository-credentials-service.oci.tar"), "changed");
   assert.notEqual(reconcile(changedArchive).status, 0);
 });
 
-test("workflow uploads only after the opt-in lane action completes cleanup verification", async () => {
-  const action = await readFile(join(root, ".github/actions/run-ci-lane/action.yml"), "utf8");
-  const workflow = await readFile(
-    join(root, ".github/workflows/repository-service-export.yml"),
-    "utf8",
+function parseYaml(path) {
+  return JSON.parse(
+    execFileSync(process.env.OCC_YQ_BIN ?? "yq", ["-o=json", ".", path], {
+      encoding: "utf8",
+    }),
   );
-  assert.match(action, /export-service-image:\n[\s\S]*?default: "false"/);
+}
+
+function assertServiceExportGates(action, workflow) {
+  assert.equal(action.inputs["export-service-image"].default, "false");
+  const actionSteps = action.runs.steps;
+  const exported = actionSteps.find(
+    (step) => step.name === "Export the exact tested repository credential service image",
+  );
+  const cleanup = actionSteps.find((step) => step.name === "Cleanup lane");
+  const reconcileStep = actionSteps.find(
+    (step) => step.name === "Verify exact service export cleanup",
+  );
+  assert.equal(exported.if, "success() && inputs.export-service-image == 'true'");
+  assert.equal(cleanup.if, "always()");
+  assert.equal(reconcileStep.if, "always() && inputs.export-service-image == 'true'");
+  assert.ok(actionSteps.indexOf(exported) < actionSteps.indexOf(cleanup));
+  assert.ok(actionSteps.indexOf(cleanup) < actionSteps.indexOf(reconcileStep));
+  assert.ok(actionSteps.every((step) => step["continue-on-error"] === undefined));
+
+  assert.deepEqual(workflow.permissions, { contents: "read" });
+  assert.deepEqual(workflow.jobs.validate.permissions, { actions: "read", contents: "read" });
+  assert.equal(workflow.jobs.validate.if, undefined);
+  const prepare = workflow.jobs.prepare;
+  assert.equal(prepare.needs, "validate");
+  assert.equal(prepare.if, undefined);
+  assert.deepEqual(prepare.permissions, { contents: "read" });
+  assert.ok(Object.values(workflow.jobs).every((job) => job["continue-on-error"] === undefined));
+  const lane = prepare.steps.find((step) => step.uses === "./.github/actions/run-ci-lane");
+  const upload = prepare.steps.find(
+    (step) => step.name === "Upload preparation-only OCI archive for repository readers",
+  );
+  assert.deepEqual(
+    {
+      lane: lane.with.lane,
+      profile: lane.with.profile,
+      export: lane.with["export-service-image"],
+    },
+    { lane: "repository-credentials-container", profile: "images", export: "true" },
+  );
+  assert.equal(lane.if, undefined);
+  assert.equal(lane["continue-on-error"], undefined);
+  assert.equal(upload.if, undefined);
+  assert.equal(upload["continue-on-error"], undefined);
+  assert.ok(prepare.steps.indexOf(lane) < prepare.steps.indexOf(upload));
+  assert.equal(upload.with["if-no-files-found"], "error");
+  assert.equal(upload.with["retention-days"], 1);
   assert.ok(
-    action.indexOf("service-image-export.mjs export") < action.indexOf("name: Cleanup lane"),
+    Object.values(workflow.jobs).every((job) =>
+      job.steps.every((step) => step["continue-on-error"] === undefined),
+    ),
   );
-  assert.ok(
-    action.indexOf("name: Cleanup lane") < action.indexOf("service-image-export.mjs reconcile"),
-  );
-  assert.match(
-    workflow,
-    /lane: repository-credentials-container[\s\S]*?export-service-image: "true"/,
-  );
-  assert.ok(
-    workflow.indexOf("uses: .\/.github\/actions\/run-ci-lane") <
-      workflow.indexOf("name: Upload preparation-only OCI archive"),
-  );
-  assert.doesNotMatch(workflow, /packages:\s*write|docker push|skopeo copy[^\n]*docker:\/\//);
-  assert.match(workflow, /retention-days: 1/g);
+
+  const commandSource = [
+    ...actionSteps.map((step) => step.run ?? ""),
+    ...Object.values(workflow.jobs).flatMap((job) => job.steps.map((step) => step.run ?? "")),
+  ].join("\n");
+  assert.doesNotMatch(commandSource, /docker push|skopeo copy[^\n]*docker:\/\//);
+}
+
+test("structured workflow gates upload on successful lane cleanup verification", () => {
+  const action = parseYaml(join(root, ".github/actions/run-ci-lane/action.yml"));
+  const workflow = parseYaml(join(root, ".github/workflows/repository-service-export.yml"));
+  assertServiceExportGates(action, workflow);
+
+  for (const mutate of [
+    (candidateAction) => {
+      candidateAction.runs.steps.find(
+        (step) => step.name === "Verify exact service export cleanup",
+      )["continue-on-error"] = true;
+    },
+    (_candidateAction, candidateWorkflow) => {
+      candidateWorkflow.jobs.prepare.steps.find(
+        (step) => step.name === "Upload preparation-only OCI archive for repository readers",
+      ).if = "${{ always() }}";
+    },
+    (_candidateAction, candidateWorkflow) => {
+      candidateWorkflow.jobs.prepare.steps.find(
+        (step) => step.uses === "./.github/actions/run-ci-lane",
+      )["continue-on-error"] = true;
+    },
+    (_candidateAction, candidateWorkflow) => {
+      candidateWorkflow.jobs.prepare.needs = undefined;
+    },
+  ]) {
+    const candidateAction = structuredClone(action);
+    const candidateWorkflow = structuredClone(workflow);
+    mutate(candidateAction, candidateWorkflow);
+    assert.throws(() => assertServiceExportGates(candidateAction, candidateWorkflow));
+  }
 });
