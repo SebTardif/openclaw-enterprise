@@ -663,7 +663,14 @@ async function validateLaneInputsBeforeSideEffects(lane, env = {}) {
       assertNodeBaseImage(effectiveEnv.NODE_BASE_IMAGE);
     }
   }
-  if (name === "repository-credentials-installed") {
+  if (
+    [
+      "repository-credentials-installed-embedded-full",
+      "repository-credentials-installed-dedicated-full",
+      "repository-credentials-installed-dedicated-write",
+      "repository-credentials-installed-dedicated-read",
+    ].includes(name)
+  ) {
     const imageMode = effectiveEnv.OCC_TEST_REPOSITORY_CREDENTIALS_IMAGE_MODE || "source";
     if (imageMode === "release") {
       assertImmutableEnvImages(
@@ -2102,7 +2109,10 @@ async function prepareLane({ lane, statePath }) {
       ).reference;
       break;
     }
-    case "repository-credentials-installed": {
+    case "repository-credentials-installed-embedded-full":
+    case "repository-credentials-installed-dedicated-full":
+    case "repository-credentials-installed-dedicated-write":
+    case "repository-credentials-installed-dedicated-read": {
       await commandAvailable(process.env.OCC_HELM_BIN ?? "helm", ["version", "--short"]);
       const cluster = await ensureK3dCluster(resolvedStatePath, state);
       const routing = await prepareGatewayRouting({ cluster, execFile });

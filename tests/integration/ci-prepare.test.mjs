@@ -1022,85 +1022,98 @@ test("repository platform preparation refuses a public relay gateway before buil
 });
 
 test("installed repository preparation requires explicit authorization and protected inputs before side effects", async (t) => {
-  const root = await fixture(t);
-  const statePath = join(root, "installed-state.json");
-  const configPath = join(root, "app.json");
-  const keyPath = join(root, "app.pem");
-  await writeFile(configPath, "{}", { mode: 0o600 });
-  await writeFile(keyPath, "test-only key", { mode: 0o600 });
-  const env = {
-    OPENAI_API_KEY: "test-only-model-key",
-    OCC_TEST_OPENAI_MODEL: "test-model",
-    NODE_BASE_IMAGE: `docker.io/library/node:24-bookworm@sha256:${digest}`,
-    OCC_TEST_REPOSITORY_CREDENTIALS_AUTHORIZED: "0",
-    OCC_TEST_REPOSITORY_CREDENTIALS_REPOSITORY: "fixture/repository",
-    OCC_TEST_REPOSITORY_CREDENTIALS_APP_CONFIG_FILE: configPath,
-    OCC_TEST_REPOSITORY_CREDENTIALS_APP_KEY_FILE: keyPath,
-    OCC_TEST_REPOSITORY_CREDENTIALS_IMAGE: immutableImage,
-    OCC_TEST_REPOSITORY_CREDENTIALS_UPSTREAM_CIDRS: "203.0.113.1/32",
-    OCC_TEST_PRODUCTION_POSTGRES_IMAGE: immutableImage,
-    OCC_TEST_PRODUCTION_NODE_IMAGE: immutableImage,
-  };
-  const args = ["--lane", "repository-credentials-installed", "--state", statePath];
-  const unauthorized = runPrepare(args, env);
-  assert.equal(unauthorized.status, 1);
-  assert.match(unauthorized.stderr, /explicit write and cleanup authorization/);
-  await assert.rejects(() => stat(statePath), { code: "ENOENT" });
-
-  await chmod(keyPath, 0o644);
-  const unprotected = runPrepare(args, { ...env, OCC_TEST_REPOSITORY_CREDENTIALS_AUTHORIZED: "1" });
-  assert.equal(unprotected.status, 1);
-  assert.match(unprotected.stderr, /must have mode 0600/);
-  await assert.rejects(() => stat(statePath), { code: "ENOENT" });
-
-  await chmod(keyPath, 0o600);
-  const linkedKey = join(root, "linked-key.pem");
-  await symlink(keyPath, linkedKey);
-  const linked = runPrepare(args, {
-    ...env,
-    OCC_TEST_REPOSITORY_CREDENTIALS_AUTHORIZED: "1",
-    OCC_TEST_REPOSITORY_CREDENTIALS_APP_KEY_FILE: linkedKey,
-  });
-  assert.equal(linked.status, 1);
-  assert.match(linked.stderr, /bounded regular private file/);
-  await assert.rejects(() => stat(statePath), { code: "ENOENT" });
-
-  const invalidScope = runPrepare(args, {
-    ...env,
-    OCC_TEST_REPOSITORY_CREDENTIALS_AUTHORIZED: "1",
-    OCC_TEST_REPOSITORY_CREDENTIALS_UPSTREAM_CIDRS: "10.0.0.1/32",
-  });
-  assert.equal(invalidScope.status, 1);
-  assert.match(invalidScope.stderr, /approved public IPv4/);
-  await assert.rejects(() => stat(statePath), { code: "ENOENT" });
-
-  const releaseEnv = {
-    ...env,
-    OCC_TEST_REPOSITORY_CREDENTIALS_AUTHORIZED: "1",
-    OCC_TEST_REPOSITORY_CREDENTIALS_IMAGE_MODE: "release",
-    OCC_TEST_PRODUCTION_CONTROLLER_IMAGE: immutableImage,
-    OCC_TEST_KUBERNETES_RUNTIME_IMAGE: immutableImage,
-    NODE_BASE_IMAGE: "",
-  };
-  for (const [override, expected] of [
-    [{ OCC_TEST_PRODUCTION_CONTROLLER_IMAGE: "" }, /OCC_TEST_PRODUCTION_CONTROLLER_IMAGE/],
-    [{ OCC_TEST_KUBERNETES_RUNTIME_IMAGE: "runtime:latest" }, /OCC_TEST_KUBERNETES_RUNTIME_IMAGE/],
-    [{ OCC_TEST_REPOSITORY_CREDENTIALS_IMAGE_MODE: "unexpected" }, /must be source or release/],
-    [{ OCC_TEST_REPOSITORY_CREDENTIALS_IMAGE_MODE: "source" }, /NODE_BASE_IMAGE/],
+  for (const lane of [
+    "repository-credentials-installed-embedded-full",
+    "repository-credentials-installed-dedicated-full",
+    "repository-credentials-installed-dedicated-write",
+    "repository-credentials-installed-dedicated-read",
   ]) {
-    const rejected = runPrepare(args, { ...releaseEnv, ...override });
-    assert.equal(rejected.status, 1);
-    assert.match(rejected.stderr, expected);
+    const root = await fixture(t);
+    const statePath = join(root, "installed-state.json");
+    const configPath = join(root, "app.json");
+    const keyPath = join(root, "app.pem");
+    await writeFile(configPath, "{}", { mode: 0o600 });
+    await writeFile(keyPath, "test-only key", { mode: 0o600 });
+    const env = {
+      OPENAI_API_KEY: "test-only-model-key",
+      OCC_TEST_OPENAI_MODEL: "test-model",
+      NODE_BASE_IMAGE: `docker.io/library/node:24-bookworm@sha256:${digest}`,
+      OCC_TEST_REPOSITORY_CREDENTIALS_AUTHORIZED: "0",
+      OCC_TEST_REPOSITORY_CREDENTIALS_REPOSITORY: "fixture/repository",
+      OCC_TEST_REPOSITORY_CREDENTIALS_APP_CONFIG_FILE: configPath,
+      OCC_TEST_REPOSITORY_CREDENTIALS_APP_KEY_FILE: keyPath,
+      OCC_TEST_REPOSITORY_CREDENTIALS_IMAGE: immutableImage,
+      OCC_TEST_REPOSITORY_CREDENTIALS_UPSTREAM_CIDRS: "203.0.113.1/32",
+      OCC_TEST_PRODUCTION_POSTGRES_IMAGE: immutableImage,
+      OCC_TEST_PRODUCTION_NODE_IMAGE: immutableImage,
+    };
+    const args = ["--lane", lane, "--state", statePath];
+    const unauthorized = runPrepare(args, env);
+    assert.equal(unauthorized.status, 1);
+    assert.match(unauthorized.stderr, /explicit write and cleanup authorization/);
     await assert.rejects(() => stat(statePath), { code: "ENOENT" });
-  }
 
-  // A complete release selection reaches tool discovery without a build base;
-  // no cluster or image is created by this preflight check.
-  const admitted = runPrepare(args, { ...releaseEnv, OCC_HELM_BIN: join(root, "missing-helm") });
-  assert.equal(admitted.status, 1);
-  assert.match(admitted.stderr, /missing-helm/);
-  const state = JSON.parse(await readFile(statePath, "utf8"));
-  assert.deepEqual(state.resources, []);
+    await chmod(keyPath, 0o644);
+    const unprotected = runPrepare(args, {
+      ...env,
+      OCC_TEST_REPOSITORY_CREDENTIALS_AUTHORIZED: "1",
+    });
+    assert.equal(unprotected.status, 1);
+    assert.match(unprotected.stderr, /must have mode 0600/);
+    await assert.rejects(() => stat(statePath), { code: "ENOENT" });
+
+    await chmod(keyPath, 0o600);
+    const linkedKey = join(root, "linked-key.pem");
+    await symlink(keyPath, linkedKey);
+    const linked = runPrepare(args, {
+      ...env,
+      OCC_TEST_REPOSITORY_CREDENTIALS_AUTHORIZED: "1",
+      OCC_TEST_REPOSITORY_CREDENTIALS_APP_KEY_FILE: linkedKey,
+    });
+    assert.equal(linked.status, 1);
+    assert.match(linked.stderr, /bounded regular private file/);
+    await assert.rejects(() => stat(statePath), { code: "ENOENT" });
+
+    const invalidScope = runPrepare(args, {
+      ...env,
+      OCC_TEST_REPOSITORY_CREDENTIALS_AUTHORIZED: "1",
+      OCC_TEST_REPOSITORY_CREDENTIALS_UPSTREAM_CIDRS: "10.0.0.1/32",
+    });
+    assert.equal(invalidScope.status, 1);
+    assert.match(invalidScope.stderr, /approved public IPv4/);
+    await assert.rejects(() => stat(statePath), { code: "ENOENT" });
+
+    const releaseEnv = {
+      ...env,
+      OCC_TEST_REPOSITORY_CREDENTIALS_AUTHORIZED: "1",
+      OCC_TEST_REPOSITORY_CREDENTIALS_IMAGE_MODE: "release",
+      OCC_TEST_PRODUCTION_CONTROLLER_IMAGE: immutableImage,
+      OCC_TEST_KUBERNETES_RUNTIME_IMAGE: immutableImage,
+      NODE_BASE_IMAGE: "",
+    };
+    for (const [override, expected] of [
+      [{ OCC_TEST_PRODUCTION_CONTROLLER_IMAGE: "" }, /OCC_TEST_PRODUCTION_CONTROLLER_IMAGE/],
+      [
+        { OCC_TEST_KUBERNETES_RUNTIME_IMAGE: "runtime:latest" },
+        /OCC_TEST_KUBERNETES_RUNTIME_IMAGE/,
+      ],
+      [{ OCC_TEST_REPOSITORY_CREDENTIALS_IMAGE_MODE: "unexpected" }, /must be source or release/],
+      [{ OCC_TEST_REPOSITORY_CREDENTIALS_IMAGE_MODE: "source" }, /NODE_BASE_IMAGE/],
+    ]) {
+      const rejected = runPrepare(args, { ...releaseEnv, ...override });
+      assert.equal(rejected.status, 1);
+      assert.match(rejected.stderr, expected);
+      await assert.rejects(() => stat(statePath), { code: "ENOENT" });
+    }
+
+    // A complete release selection reaches tool discovery without a build base;
+    // no cluster or image is created by this preflight check.
+    const admitted = runPrepare(args, { ...releaseEnv, OCC_HELM_BIN: join(root, "missing-helm") });
+    assert.equal(admitted.status, 1);
+    assert.match(admitted.stderr, /missing-helm/);
+    const state = JSON.parse(await readFile(statePath, "utf8"));
+    assert.deepEqual(state.resources, []);
+  }
 });
 
 test("production upgrade preparation requires two distinct immutable image pairs before creating resources", async (t) => {
@@ -1166,11 +1179,40 @@ test("production upgrade preparation requires two distinct immutable image pairs
   assert.match(unprepared.stderr, /must match the prepared lane state/);
 });
 
+test("installed repository qualification selects four distinct cases and retains protected preparation", async () => {
+  const manifest = loadTestSuites(join(repositoryRoot, "scripts/ci/test-suites.json"));
+  const expected = {
+    "repository-credentials-installed-embedded-full":
+      "installed embedded Agent clones, edits, commits, pushes and creates a native repository PR",
+    "repository-credentials-installed-dedicated-full":
+      "installed dedicated Agent clones, edits, commits, pushes and creates a native repository PR",
+    "repository-credentials-installed-dedicated-write":
+      "installed dedicated git-write Agent clones, edits, commits, pushes and creates a native repository PR",
+    "repository-credentials-installed-dedicated-read":
+      "installed dedicated read-only Agent fetches and is denied a repository push",
+  };
+  assert.deepEqual(manifest.groups["repository-credentials-installed"], Object.keys(expected));
+  const paths = new Set();
+  for (const [name, title] of Object.entries(expected)) {
+    const lane = manifest.lanes[name];
+    assert.equal(lane.env.OCC_TEST_REPOSITORY_CREDENTIALS_REAL, "1");
+    assert.equal(lane.prepare.requiresPreparedStateForFile, true);
+    assert.ok(lane.prepare.requireEnv.includes("OCC_TEST_REPOSITORY_CREDENTIALS_APP_KEY_FILE"));
+    assert.ok(lane.prepare.immutableEnvImages.includes("OCC_TEST_REPOSITORY_CREDENTIALS_IMAGE"));
+    assert.equal(lane.files.length, 1);
+    assert.deepEqual(lane.files[0].expectedTests, [title]);
+    paths.add(lane.files[0].path);
+  }
+  assert.equal(paths.size, 4);
+});
+
 test("ordinary CI groups require platform proof and exclude installed live repository writes", async () => {
   const manifest = loadTestSuites(join(repositoryRoot, "scripts/ci/test-suites.json"));
   for (const name of ["ci", "full"]) {
     assert.ok(manifest.groups[name].includes("repository-credentials-platform"));
-    assert.ok(!manifest.groups[name].includes("repository-credentials-installed"));
+    for (const lane of manifest.groups["repository-credentials-installed"]) {
+      assert.ok(!manifest.groups[name].includes(lane));
+    }
     for (const lane of manifest.groups[name]) {
       assert.notEqual(manifest.lanes[lane].env?.OCC_TEST_REPOSITORY_CREDENTIALS_REAL, "1");
     }

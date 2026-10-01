@@ -1426,6 +1426,30 @@ test("audit requires current discovered test files and rejects duplicate ownersh
   ]);
 });
 
+test("installed repository aggregate rejects missing profile results", async (t) => {
+  const root = await fixture(t);
+  const result = run(root, [
+    "aggregate",
+    "repository-credentials-installed",
+    "--root",
+    repositoryRoot,
+    "--results-dir",
+    join(root, "results"),
+  ]);
+  assert.equal(result.status, 1);
+  const summary = JSON.parse(result.stdout);
+  assert.equal(summary.status, "failed");
+  assert.deepEqual(
+    summary.issues.filter(({ code }) => code === "missing-lane-output").map(({ lane }) => lane),
+    [
+      "repository-credentials-installed-embedded-full",
+      "repository-credentials-installed-dedicated-full",
+      "repository-credentials-installed-dedicated-write",
+      "repository-credentials-installed-dedicated-read",
+    ],
+  );
+});
+
 test("aggregate requires fixed lane outputs, successful needs, and matching source SHA", async (t) => {
   const root = await fixture(t);
   const sha = currentSha();

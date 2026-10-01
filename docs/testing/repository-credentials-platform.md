@@ -146,7 +146,7 @@ without its selector and fails on missing selected prerequisites.
 
 The [standalone live smoke](repository-credentials.md#run-an-authorized-live-smoke)
 does not exercise OCC admission or a model.
-Use `repository-credentials-k3d-real.test.mjs` for the joined installed path:
+Use the installed repository credential cases for the joined installed path:
 fresh Helm controller/PostgreSQL, API-created Namespace and Agent, worker-opened
 session, private Kubernetes runtime material and the model's own
 clone/edit/commit/push/native-PR task in both embedded OpenClaw and Dedicated
@@ -156,30 +156,47 @@ disposable repository is sufficient; two-repository deterministic coverage
 remains in the controlled platform case.
 
 Prepare the [real Kubernetes runtime prerequisites](kubernetes.md#kubernetes-model-turns-and-secrets).
-The `repository-credentials-installed` lane is CLI-only and excluded from normal
-`ci`/`full` groups and hosted workflow dispatch. It requires explicit live
-authorization and never falls back to controlled evidence. Run it with:
+The four `repository-credentials-installed-*` lanes are CLI-only, excluded from
+normal `ci`/`full` groups and hosted workflow dispatch. Each uses explicit live
+authorization and a separate owned fixture and cleanup. Their cases are:
+
+- `repository-credentials-installed-embedded-full`: embedded `git-full`.
+- `repository-credentials-installed-dedicated-full`: Dedicated `git-full`.
+- `repository-credentials-installed-dedicated-write`: Dedicated `git-write`.
+- `repository-credentials-installed-dedicated-read`: Dedicated `git-read`.
+
+Run each lane in its own bounded allocation with a unique state file and the
+same source commit. The following runs one lane selected explicitly by the
+operator; retain the private evidence directory between invocations:
 
 ```bash
 (
   set -e
-  CREDENTIAL_TEST_RUN="$(mktemp -d)"
-  printf 'Evidence directory: %s\n' "$CREDENTIAL_TEST_RUN"
-  trap 'cleanup_exit_code=$?; trap - EXIT; node scripts/ci/cleanup.mjs --state "$CREDENTIAL_TEST_RUN/state.json" || cleanup_exit_code=1; exit "$cleanup_exit_code"' EXIT
-  node scripts/ci/prepare.mjs --lane repository-credentials-installed \
-    --state "$CREDENTIAL_TEST_RUN/state.json"
-  CI_RUNNER_TEST_TIMEOUT_MS=9000000 node scripts/ci/run-tests.mjs run repository-credentials-installed \
-    --state "$CREDENTIAL_TEST_RUN/state.json" \
-    --results "$CREDENTIAL_TEST_RUN/results.json"
+  : "${CREDENTIAL_TEST_RUN:?Set an owned private evidence directory}"
+  : "${CREDENTIAL_TEST_LANE:?Select one installed credential lane}"
+  mkdir -p "$CREDENTIAL_TEST_RUN/results"
+  state="$CREDENTIAL_TEST_RUN/$CREDENTIAL_TEST_LANE.state.json"
+  trap 'cleanup_exit_code=$?; trap - EXIT; node scripts/ci/cleanup.mjs --state "$state" || cleanup_exit_code=1; exit "$cleanup_exit_code"' EXIT
+  node scripts/ci/prepare.mjs --lane "$CREDENTIAL_TEST_LANE" --state "$state"
+  node scripts/ci/run-tests.mjs run "$CREDENTIAL_TEST_LANE" --state "$state" \
+    --results "$CREDENTIAL_TEST_RUN/results/$CREDENTIAL_TEST_LANE.json"
 )
 ```
 
-The runner's default one-hour timeout applies to the whole test file. Its four
-cases run sequentially and each has a 30-minute limit; the 150-minute override
-allows their combined limits and additional cleanup headroom. Preparation and
-the final lane cleanup run outside that file timeout. Keep any outer job timeout
-long enough for both. If cleanup fails, retain the private state and investigate
-the owned resources before retrying.
+Each test has a 30-minute limit and the runner has its normal one-hour file
+timeout; preparation and final cleanup need additional time. Preserve failed or
+uncertain cleanup state and reconcile owned resources before any retry. After all
+four individual runs, check their case inventories and source identity together:
+
+```bash
+node scripts/ci/run-tests.mjs aggregate repository-credentials-installed \
+  --results-dir "$CREDENTIAL_TEST_RUN/results"
+```
+
+The aggregate checks test results, not the separate outer cleanup result. A
+qualification requires both the aggregate and independently verified cleanup
+for every case. These Kubernetes cases do not qualify the broader QA matrix,
+Compose, or OpenShell.
 
 Supply existing authorized `OPENAI_API_KEY`, `OCC_TEST_OPENAI_MODEL`, and immutable
 `OCC_TEST_PRODUCTION_POSTGRES_IMAGE` and `OCC_TEST_PRODUCTION_NODE_IMAGE`.
@@ -222,22 +239,10 @@ The installed case additionally uses these variables with prefix
 | `UPSTREAM_CIDRS`  | Comma-separated approved public IPv4 `/32` destinations; no broad fallback                            |
 | `GH_BINARY`       | Optional absolute managed host `gh` path for independently authenticated readback and guarded cleanup |
 
-The runner sets `OCC_TEST_REPOSITORY_CREDENTIALS_REAL=1` and runs
-`tests/integration/repository-credentials-k3d-real.test.mjs` from prepared state;
-all four scenarios must pass. To select only Dedicated against an already
-prepared disposable cluster, supply the same protected inputs and immutable
-image variables, then run:
-
-```sh
-OCC_TEST_REPOSITORY_CREDENTIALS_REAL=1 node --test \
-  --test-name-pattern='^installed dedicated ' \
-  tests/integration/repository-credentials-k3d-real.test.mjs
-```
-
-This selected command exercises the Dedicated `git-full`, `git-write`, and
-read-only scenarios. The full lane retains the embedded case and rejects skips.
-A selected run must supply the prepared
-`OCC_TEST_KUBERNETES_CODEX_SECCOMP_PROFILE` and use the same owned cluster.
+The runner sets `OCC_TEST_REPOSITORY_CREDENTIALS_REAL=1` for each selected
+lane. Each result covers one case; all four results and their separate cleanup
+receipts are needed for the aggregate qualification. Dedicated cases require
+the prepared `OCC_TEST_KUBERNETES_CODEX_SECCOMP_PROFILE` in their own cluster.
 
 Before cleanup after a failure, the test records container readiness, restart
 counts, the plugin-ready marker state, and allowlisted runtime startup failure

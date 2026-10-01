@@ -30,9 +30,9 @@ lane or `all`. Model/service lanes require configured credentials and infrastruc
 belongs to the CLI-only `dev-up-k3d` lane, outside both workflow groups and
 Full Integration dispatch. See [run the local installation lane](README.md#run-the-local-installation-lane).
 
-[repository-credentials-k3d-real.test.mjs](../../tests/integration/repository-credentials-k3d-real.test.mjs)
-belongs to the explicitly selected `repository-credentials-installed` CLI lane,
-excluded from both workflow groups and Full Integration dispatch. Follow the
+The explicitly selected `repository-credentials-installed-*` CLI lanes cover
+the installed Git credential cases independently. They are excluded from both
+workflow groups and Full Integration dispatch. Follow the
 [installed repository credential qualification](repository-credentials.md)
 for protected App inputs, authorized live writes, model execution, and cleanup.
 

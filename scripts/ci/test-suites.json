@@ -29,11 +29,14 @@
     "repository-credentials-container": "./test-suites/repository-credentials-container.json",
     "repository-credentials-live": "./test-suites/repository-credentials-live.json",
     "repository-credentials-platform": "./test-suites/repository-credentials-platform.json",
-    "repository-credentials-installed": "./test-suites/repository-credentials-installed.json",
     "k3d-two-cluster": "./test-suites/k3d-two-cluster.json",
     "k3d-observability": "./test-suites/k3d-observability.json",
     "k3d-observability-demo": "./test-suites/k3d-observability-demo.json",
-    "runtime-image-fixture": "./test-suites/runtime-image-fixture.json"
+    "runtime-image-fixture": "./test-suites/runtime-image-fixture.json",
+    "repository-credentials-installed-embedded-full": "./test-suites/repository-credentials-installed-embedded-full.json",
+    "repository-credentials-installed-dedicated-full": "./test-suites/repository-credentials-installed-dedicated-full.json",
+    "repository-credentials-installed-dedicated-write": "./test-suites/repository-credentials-installed-dedicated-write.json",
+    "repository-credentials-installed-dedicated-read": "./test-suites/repository-credentials-installed-dedicated-read.json"
   },
   "groups": {
     "ci": [
@@ -79,6 +82,12 @@
       "repository-credentials-platform",
       "k3d-observability",
       "k3d-observability-demo"
+    ],
+    "repository-credentials-installed": [
+      "repository-credentials-installed-embedded-full",
+      "repository-credentials-installed-dedicated-full",
+      "repository-credentials-installed-dedicated-write",
+      "repository-credentials-installed-dedicated-read"
     ]
   }
 }
