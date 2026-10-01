@@ -378,12 +378,14 @@ async function validateOci(readRoot, readBlob, listBlobNames, expected) {
     validateLayerPayload(bytes, layer.mediaType, config.rootfs.diff_ids[index]);
   }
   const expectedBlobs = [
-    descriptor.digest,
-    manifest.config.digest,
-    ...manifest.layers.map(({ digest }) => digest),
-  ]
-    .map((digest) => digest.slice("sha256:".length))
-    .sort();
+    ...new Set(
+      [
+        descriptor.digest,
+        manifest.config.digest,
+        ...manifest.layers.map(({ digest }) => digest),
+      ].map((digest) => digest.slice("sha256:".length)),
+    ),
+  ].sort();
   assert.ok(
     canonicalHash((await listBlobNames()).sort()) === canonicalHash(expectedBlobs),
     "OCI blob topology differs from the descriptor chain.",

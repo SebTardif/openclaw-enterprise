@@ -363,6 +363,23 @@ test("OCI layers bind ordered gzip and plain payloads to every tested diff ID", 
   assert.equal(identity.configDigest, fixture.configDigest);
   assert.deepEqual(identity.diffIds, fixture.service.RootFS.Layers);
 
+  const repeatedLayer = Buffer.from("same filesystem layer");
+  const repeated = await ociFixture(t, {
+    expandedLayers: [repeatedLayer, repeatedLayer],
+    mediaTypes: [
+      "application/vnd.oci.image.layer.v1.tar",
+      "application/vnd.oci.image.layer.v1.tar",
+    ],
+  });
+  const repeatedIdentity = await validateOciLayout(repeated.directory, repeated.service);
+  assert.equal(repeatedIdentity.layerDigests[0], repeatedIdentity.layerDigests[1]);
+  const repeatedArchive = join(repeated.directory, "repeated.tar");
+  archiveLayout(repeated.directory, repeatedArchive);
+  assert.equal(
+    (await validateOciArchive(repeatedArchive, repeated.service)).configDigest,
+    repeated.configDigest,
+  );
+
   const countMismatch = await ociFixture(t, {
     storedLayers: [gzipSync(Buffer.from("first filesystem layer"))],
     mediaTypes: ["application/vnd.oci.image.layer.v1.tar+gzip"],
@@ -420,9 +437,21 @@ test("completed OCI archive rejects duplicates, links, and special members", asy
   archiveLayout(valid.directory, changedBlob);
   await assert.rejects(() => validateOciArchive(changedBlob, valid.service));
 
-  const duplicate = join(valid.directory, "duplicate.tar");
-  archiveLayout(valid.directory, duplicate, ["index.json"]);
-  await assert.rejects(() => validateOciArchive(duplicate, valid.service));
+  const duplicateFixture = await ociFixture(t);
+  const duplicate = join(duplicateFixture.directory, "duplicate.tar");
+  archiveLayout(duplicateFixture.directory, duplicate);
+  execFileSync("tar", [
+    "--no-recursion",
+    "-rf",
+    duplicate,
+    "-C",
+    duplicateFixture.directory,
+    "blobs/",
+  ]);
+  await assert.rejects(
+    () => validateOciArchive(duplicate, duplicateFixture.service),
+    /duplicate members/,
+  );
 
   for (const kind of ["symlink", "hardlink", "fifo"]) {
     const fixture = await ociFixture(t);
@@ -565,6 +594,7 @@ async function cleanupFixture(t) {
       "const args = process.argv.slice(2);\n" +
       "const target = args.at(-1);\n" +
       'if (process.env.SURVIVE_TAG && target === process.env.SURVIVE_TAG) { console.log("[]"); process.exit(0); }\n' +
+      'if (process.env.SURVIVE_CONTAINER && args[0] === "container" && target === process.env.SURVIVE_CONTAINER) { console.log("[]"); process.exit(0); }\n' +
       'if (process.env.UNKNOWN_ABSENCE) { console.error(`daemon unavailable ${process.env.SUBPROCESS_SENTINEL ?? ""}`); process.exit(1); }\n' +
       'console.error(args[0] === "container" ? "No such container" : "No such image");\n' +
       "process.exit(1);\n",
@@ -602,6 +632,16 @@ test("cleanup reconciliation accepts only absent state, tags and inspection cont
   assert.notEqual(
     reconcile(tagRetained, { SURVIVE_TAG: laneFixture().receipt.images.client.tag }).status,
     0,
+  );
+
+  const containerRetained = await cleanupFixture(t);
+  assert.notEqual(
+    reconcile(containerRetained, { SURVIVE_CONTAINER: "openclaw-service-export-123-1" }).status,
+    0,
+  );
+  assert.equal(
+    JSON.parse(await readFile(join(containerRetained.output, "export.json"))).cleanup.status,
+    "pending",
   );
 
   const unknown = await cleanupFixture(t);
