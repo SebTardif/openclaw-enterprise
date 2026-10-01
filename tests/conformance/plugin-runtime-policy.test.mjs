@@ -899,7 +899,7 @@ test("a Gateway given its node in the environment configures it at start and arm
   assert.deepEqual(kills, []);
 });
 
-test("a workspace-node Gateway keeps owner Codex tool excludes, pins the codex provider, and refuses malformed settings", async () => {
+test("a workspace-node Gateway keeps owner Codex tool excludes, pins every model provider, and refuses malformed settings", async () => {
   const withExcludes = (codexDynamicToolsExclude) => {
     const config = codexGatewayConfig();
     config.plugins.entries.codex.config.codexDynamicToolsExclude = codexDynamicToolsExclude;
@@ -942,8 +942,41 @@ test("a workspace-node Gateway keeps owner Codex tool excludes, pins the codex p
         request: { proxy: { mode: "explicit-proxy", url: "http://proxy.example.test:3128" } },
         models: [{ id: "gpt-5", headers: { "x-model": "d" }, contextWindow: 400000 }],
       },
-      anthropic: { baseUrl: "https://api.anthropic.com", models: [] },
+      // Any other provider with a credential would give a built-in run a model.
+      " Anthropic ": {
+        baseUrl: "https://api.anthropic.com",
+        api: "anthropic-messages",
+        apiKey: { source: "env", provider: "default", id: "MODEL_KEY" },
+        auth: "api-key",
+        headers: { "x-api-key": "owner-key" },
+        models: [{ id: "claude-test", api: "anthropic-messages", contextWindow: 200000 }],
+      },
+      bedrock: { auth: "aws-sdk", region: "us-east-1", api: "bedrock-converse-stream", models: [] },
     },
+  };
+  // Agent and model params are provider request params to OpenClaw, which would
+  // make Codex hand its turns to the built-in runtime; only run controls stay.
+  ownerConfig.agents = {
+    defaults: {
+      model: { primary: "codex/gpt-test", fallbacks: ["Google/gemini-test"] },
+      params: { thinking: "high", temperature: 0 },
+      models: {
+        "codex/gpt-test": {
+          agentRuntime: { id: "codex" },
+          params: { thinking: "high", fastMode: true, fastSeconds: 30, store: false },
+        },
+        "openai/gpt-5": { params: { temperature: 1 } },
+        "openrouter/*": {},
+      },
+    },
+    list: [
+      {
+        id: "main",
+        model: "groq/llama-test",
+        params: { cacheRetention: "long" },
+        models: { "codex/gpt-test": { params: { thinking: 3 } } },
+      },
+    ],
   };
   const { files } = await runOpenClawRuntimeHelper(undefined, [], {
     baseConfig: ownerConfig,
@@ -974,9 +1007,84 @@ test("a workspace-node Gateway keeps owner Codex tool excludes, pins the codex p
         baseUrl: "http://127.0.0.1:9",
         api: "openai-responses",
       },
-      anthropic: ownerConfig.models.providers.anthropic,
+      " Anthropic ": {
+        models: [{ id: "claude-test", contextWindow: 200000 }],
+        baseUrl: "http://127.0.0.1:9",
+        api: "openai-responses",
+      },
+      bedrock: { models: [], baseUrl: "http://127.0.0.1:9", api: "openai-responses" },
+      // Providers a selection names get a stub row, so OpenClaw's default
+      // transport cannot use a credential from the environment; openai keeps
+      // its default as above.
+      google: { baseUrl: "http://127.0.0.1:9", api: "openai-responses", models: [] },
+      openrouter: { baseUrl: "http://127.0.0.1:9", api: "openai-responses", models: [] },
+      groq: { baseUrl: "http://127.0.0.1:9", api: "openai-responses", models: [] },
     },
   });
+  assert.deepEqual(effective.agents, {
+    defaults: {
+      model: ownerConfig.agents.defaults.model,
+      models: {
+        "codex/gpt-test": {
+          agentRuntime: { id: "codex" },
+          params: { thinking: "high", fastMode: true, fastSeconds: 30 },
+        },
+        "openai/gpt-5": {},
+        "openrouter/*": {},
+      },
+      // The allowlist OpenClaw applied, made explicit.
+      modelPolicy: { allow: ["codex/gpt-test", "openai/gpt-5", "openrouter/*"] },
+    },
+    list: [{ id: "main", model: "groq/llama-test", models: { "codex/gpt-test": {} } }],
+  });
+  // A policy that allows any model would let a session pick a bundled provider,
+  // which reads its credential from the environment: it gets the selected models.
+  const selectedOnly = { allow: ["codex/gpt-test", "codex/gpt-other"] };
+  for (const [agents, meta, expectedAgents, stubbed] of [
+    [{ defaults: { modelPolicy: {} } }, undefined, { defaults: { modelPolicy: selectedOnly } }, []],
+    [
+      { defaults: {} },
+      { migrations: { modelPolicyAllowlist: true } },
+      { defaults: { modelPolicy: selectedOnly } },
+      [],
+    ],
+    [
+      // A bare ref is dropped: OpenClaw would infer its provider from its catalog.
+      {
+        defaults: { modelPolicy: { allow: ["claude-test", "Anthropic/*"] } },
+        entries: {
+          ops: { modelPolicy: { allow: [] } },
+          research: { modelPolicy: { allow: ["mistral/m"] } },
+        },
+      },
+      undefined,
+      {
+        defaults: { modelPolicy: { allow: ["Anthropic/*"] } },
+        entries: {
+          ops: { modelPolicy: { allow: ["Anthropic/*"] } },
+          research: { modelPolicy: { allow: ["mistral/m"] } },
+        },
+      },
+      ["anthropic", "mistral"],
+    ],
+  ]) {
+    const config = codexGatewayConfig();
+    config.agents = structuredClone(agents);
+    config.agents.defaults.model = { primary: "codex/gpt-test", fallbacks: ["codex/gpt-other"] };
+    config.agents.defaults.models = { "codex/gpt-test": {}, "codex/gpt-other": {} };
+    if (meta !== undefined) {
+      config.meta = meta;
+    }
+    const run = await runOpenClawRuntimeHelper(undefined, [], {
+      baseConfig: config,
+      env: { APP_SERVER_URL: "ws://harness.example.test:18790" },
+      workspaceNodeId: "enrolled-node",
+    });
+    const result = JSON.parse(run.files.get("/home/node/.openclaw/openclaw.json"));
+    assert.deepEqual(result.agents.defaults.modelPolicy, expectedAgents.defaults.modelPolicy);
+    assert.deepEqual(result.agents.entries, expectedAgents.entries);
+    assert.deepEqual(Object.keys(result.models.providers).sort(), ["codex", ...stubbed].sort());
+  }
   // An openai row that names no transport keeps OpenClaw's default (no credential
   // in the Gateway) so Codex keeps owning its account's models; overrides still go.
   // APP_SERVER_URL marks a Codex Gateway, so the pin holds without the plugin entry.

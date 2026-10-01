@@ -216,13 +216,17 @@ Other Harnesses are replaced, restarting their Gateway.
   schedules and trigger scripts run in the Gateway; timed automations still run
   Codex turns. Codex's native tools act in the Harness; the file-transfer tools
   reach it through the node.
-- The Harness reaches the model itself, so the Gateway's `codex` and `openai`
-  provider rows keep only their models: overrides (`request`, `headers`,
-  `params`, `localService`) are dropped, and an authored transport (always for
-  `codex`) becomes the `http://127.0.0.1:9` stub. A
-  session an operator switches to OpenClaw's built-in runtime with
-  `/model <ref> --runtime openclaw` runs in the Gateway with no reachable model,
-  and Codex never hands that runtime a turn.
+- The Harness reaches the model itself, so every Gateway provider row keeps only
+  its models: credentials and overrides (`apiKey`, `request`, `headers`,
+  `params`, `localService`) are dropped, and its transport becomes the
+  `http://127.0.0.1:9` stub. An `openai` row without one keeps OpenClaw's
+  default, which has no credential in the Gateway. A provider a model selection
+  names gets a stub row. Agent and model `params` are dropped too, except
+  `thinking` and fast-mode controls. A session an operator switches to
+  OpenClaw's built-in runtime with `/model <ref> --runtime openclaw` runs in the
+  Gateway with no reachable model. Codex hands that runtime a turn only for a
+  `thinking` or fast-mode value OpenClaw does not recognize, and it fails the
+  same way.
 - Default reads cover the enrolled Agent's Harness workspace and managed skill
   roots. Symlinks are not followed; explicit policies remain authoritative. This
   serves previews, browsing, bootstrap and outputs.
