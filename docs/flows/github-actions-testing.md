@@ -141,7 +141,7 @@ diagnostic remains available for upload but cannot satisfy required test results
 
 Per-file cleanup releases its disposable database; job cleanup removes only state-owned resources. A whole owned `k3d-cluster` owns deletion of its Collector Namespace and RBAC through the Kubernetes API. Logging cleanup independently removes the local Docker backend container and JSONL/config directory, even if the Kubernetes API is down. Cleanup failure fails the check; its private state file is usable only while the runner host and path remain available. User databases, contexts, unrelated containers and global images remain outside that ownership.
 
-`CI Required` checks job outcomes even after failures. In full mode, the aggregate checks recorded commit and lane identity, success, case evidence, and reported cleanup outcomes. It does not independently establish working-tree or image provenance. Docs mode checks documentation and audit outcomes and skipped test jobs without aggregating results; it proves only those selected checks. Full Integration accounts for its selected `full` group or requested lane. The explicit `ssh-host` lane stays outside automatic groups until an operator prepares its disposable host; see [SSH raw-host testing](../testing/ssh.md#ssh-raw-hosts). Abrupt hosted-runner loss can prevent teardown and loses private `RUNNER_TEMP` state at job end. External resource reconciliation awaits an approved resource ledger.
+`CI Required` checks job outcomes even after failures. In full mode, the aggregate checks recorded commit and lane identity, success, case evidence, and reported cleanup outcomes. It does not independently establish working-tree or image provenance. The installed repository-credential aggregate remains incomplete until separate source, image and outer-cleanup proof is available. Docs mode checks documentation and audit outcomes and skipped test jobs without aggregating results; it proves only those selected checks. Full Integration accounts for its selected `full` group or requested lane. The explicit `ssh-host` lane stays outside automatic groups until an operator prepares its disposable host; see [SSH raw-host testing](../testing/ssh.md#ssh-raw-hosts). Abrupt hosted-runner loss can prevent teardown and loses private `RUNNER_TEMP` state at job end. External resource reconciliation awaits an approved resource ledger.
 
 ## Debugging and Verification
 
@@ -164,6 +164,8 @@ Per-file cleanup releases its disposable database; job cleanup removes only stat
 [keep this for the user to add notes. do not change between edits]
 
 ## Changelog
+
+- 2026-10-01 07:05: Keep installed repository qualification incomplete without separate provenance and cleanup proof. (01a0b0e4-839a-71b3-9ec1-3b1000b5d06a - 3bd1b0e73d6d0cf72db8c31ff1b01b71ccfa0ca6)
 
 - 2026-10-01 06:41: Clarify aggregate case checks and their source-provenance limit. (01a0b0e4-839a-71b3-9ec1-3b1000b5d06a - 1c02ada5fd0c32ddf46384dd710f83ee385f4458)
 

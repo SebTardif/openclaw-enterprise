@@ -996,12 +996,24 @@ async function aggregateGroup(root, manifest, groupName, resultsDir, needsPath) 
     }
   }
 
+  const caseResultsStatus = issues.length === 0 ? "passed" : "failed";
+  const installedRepositorySummary = groupName === "repository-credentials-installed";
   return {
     version: 1,
     command: "aggregate",
     sourceSha: currentSha,
     group: groupName,
-    status: issues.length === 0 ? "passed" : "failed",
+    status:
+      installedRepositorySummary && caseResultsStatus === "passed"
+        ? "incomplete"
+        : caseResultsStatus,
+    ...(installedRepositorySummary
+      ? {
+          caseResultsStatus,
+          qualificationStatus: "not-evaluated",
+          qualificationGaps: ["source-and-image-provenance", "outer-resource-cleanup"],
+        }
+      : {}),
     lanes,
     issues,
   };

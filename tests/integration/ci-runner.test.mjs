@@ -1450,6 +1450,56 @@ test("installed repository aggregate rejects missing profile results", async (t)
   );
 });
 
+test("installed repository aggregate cannot claim qualification from case results alone", async (t) => {
+  const root = await fixture(t);
+  const index = JSON.parse(
+    await readFile(join(repositoryRoot, "scripts/ci/test-suites.json"), "utf8"),
+  );
+  const lanes = index.groups["repository-credentials-installed"];
+  for (const lane of lanes) {
+    const manifest = JSON.parse(
+      await readFile(join(repositoryRoot, "scripts/ci", index.lanes[lane]), "utf8"),
+    );
+    const file = manifest.files[0];
+    await writeJson(join(root, "results", `${lane}.json`), {
+      version: 1,
+      command: "run",
+      sourceSha: currentSha(),
+      lane,
+      status: "passed",
+      exitCode: 0,
+      files: [
+        {
+          path: file.path,
+          status: "passed",
+          nodeExitCode: 0,
+          signal: null,
+          counts: { passed: 1, failed: 0, skipped: 0, todo: 0, total: 1 },
+          tests: [{ name: file.expectedTests[0], status: "passed" }],
+          cleanup: { status: "passed" },
+        },
+      ],
+    });
+  }
+  const result = run(root, [
+    "aggregate",
+    "repository-credentials-installed",
+    "--root",
+    repositoryRoot,
+    "--results-dir",
+    join(root, "results"),
+  ]);
+  assert.equal(result.status, 1);
+  const summary = JSON.parse(result.stdout);
+  assert.equal(summary.status, "incomplete");
+  assert.equal(summary.caseResultsStatus, "passed");
+  assert.equal(summary.qualificationStatus, "not-evaluated");
+  assert.deepEqual(summary.qualificationGaps, [
+    "source-and-image-provenance",
+    "outer-resource-cleanup",
+  ]);
+});
+
 test("installed repository aggregate rejects malformed case and cleanup evidence", async (t) => {
   const root = await fixture(t);
   const lane = "repository-credentials-installed-dedicated-write";

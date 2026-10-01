@@ -193,7 +193,8 @@ node scripts/ci/run-tests.mjs aggregate repository-credentials-installed \
   --results-dir "$CREDENTIAL_TEST_RUN/results"
 ```
 
-The aggregate checks the reported case results and commit IDs. It does not
+The aggregate checks the reported case results and commit IDs. It returns
+`incomplete` and exits nonzero even when every case result passed: it does not
 prove the working tree, build context, or selected images are identical to that
 commit, and it does not check the separate outer cleanup result. Qualification
 requires independent source and image provenance plus verified cleanup for every
