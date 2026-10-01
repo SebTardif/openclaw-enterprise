@@ -161,7 +161,9 @@ test("repository credential preparation records the exact source commit and tree
     receiptPath,
     execFile: async (command, args) => {
       calls.push([command, ...args]);
-      if (command === "git" && args.at(-1) === "HEAD") return { stdout: `${source}\n` };
+      if (command === "git" && args.at(-1) === "HEAD") {
+        return { stdout: `${source}\n` };
+      }
       if (command === "git" && args.at(-1) === "HEAD^{tree}") {
         return { stdout: `${sourceTree}\n` };
       }
