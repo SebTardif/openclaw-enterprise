@@ -9,7 +9,7 @@ status_note: "Retroactive record. The design below is implemented on main (PRs #
 - **Owner:** needs a human owner; this record was written from the landed PRs
 - **Created:** 2026-10-01
 - **Last updated:** 2026-10-01
-- **RFC PR:** this PR
+- **RFC PR:** https://github.com/openclaw/openclaw-enterprise/pull/854
 - **Implementation:** [#696], [#711], [#726], [#730], [#737], [#739], [#741], [#742], [#745],
   [#747], [#793], [#807], [#811] (with the event from [#806])
 - **Related:** [Default production observability](36-production-observability.md) (the
@@ -27,7 +27,8 @@ runtime status (Pods, containers, restarts, Pod Events, log sources) and one bou
 redacted page of log text per request. The console has a Logs tab, and the CLI has
 `occ agent runtime` and `occ agent logs`. Sources are the Gateway container, the Agent
 (Harness) container, and, for OpenShell Harnesses, the sandbox's policy decisions.
-Nothing is stored or exported. Every log view and download is audited before the read,
+OCC stores no log text and the routes export nothing; the bundled Collector's allowlist
+gained only the bounded additions listed under Collector export below. Every log view and download is audited before the read,
 as the new audit kind `access`. A new, delegable `read_logs` Agent permission grants log
 text without full administration.
 
@@ -73,8 +74,7 @@ and cluster error text never reaches a client.
   `involvedObject.uid`, only for Pods listed for that revision, and re-reads the Pod after
   the log read. Docker and SSH omit the methods; `runtimeLogging: "driver"` gets `501`.
 - `SandboxDriver.readSandboxLogs?` ([#726]) calls OpenShell's read-only `GetSandboxLogs`
-  through a reader that exposes that one method, so this path cannot create, delete or
-  exec. The source is listed only when the selected Sandbox Driver provisioned the
+  through a reader that exposes only that method. The source is listed only when the selected Sandbox Driver provisioned the
   revision. OpenShell `NOT_FOUND` (absent, still provisioning, or concealed by Workspace
   membership) becomes `RUNTIME_LOGS_SANDBOX_NOT_FOUND` and never says which.
 - Helm `agentRuntimeLogs.enabled` (default `true`, in both charts) grants `pods/log get`
@@ -136,7 +136,10 @@ diagnostics.
   ([runtime-entrypoints.ts](../../apps/controller/src/drivers/compute/kubernetes/runtime-entrypoints.ts)).
   Unless `RUST_LOG` starts at `debug` or `trace`, it drops span `new`/`enter`/`exit`/`close`
   (except the `turn` span's `new`/`close`), loopback `websocket client connected` lines,
-  and repeats of the remote-control wait. The classifier renders the turn span as
+  repeats of the remote-control wait, and repeats of the macOS-only Unix-socket proxy
+  warning (the first per app-server is kept). It always drops Codex's startup ERROR that
+  bubblewrap is not on PATH: the image runs Codex's bundled `bwrap` on purpose, because a
+  `bwrap` on PATH triggers a namespace probe the seccomp profile denies. The classifier renders the turn span as
   `turn started`/`turn completed` with model, IDs, token counts and busy time.
 - `minLevel` is a server-side floor (`runtimeLogPageAtLevel`). It is applied after the
   page is read, sanitized and its cursor signed. Lines of `unknown` level, gaps and
@@ -171,18 +174,16 @@ grants learns only whether the feature is on, and spends only its own budget.
 
 ## Rationale and alternatives
 
-- **Gateway `logs.tail` RPC.** Rejected: it needs a live Gateway and cannot show crash
-  loops or the Harness.
+- **Gateway `logs.tail` RPC.** Rejected: needs a live Gateway; misses crash loops.
 - **Read from Loki or another log store.** Rejected for text. The Collector strips bodies
   by design, and OCE keeps no store; the backend stays a link.
 - **Streaming (SSE).** Deferred. Polling every 2 s with a cursor reuses normal request
   authorization and does not hold a kubelet connection per viewer.
 - **`administer` only.** Slice 1 used it, following the native admin precedent: that
-  audience already reaches Gateway logs through the native admin UI. `read_logs` was added
-  so log reading can be delegated without native admin.
+  audience already reaches Gateway logs through the native admin UI. `read_logs` lets log
+  reading be delegated.
 - **Audit as `mutation`.** Slice 1 did this; [#737] moved views and downloads to `access`.
-- **`RUST_LOG` to quiet Codex.** It cannot filter span events separately, and lowering a
-  target also drops its real events.
+- **`RUST_LOG` to quiet Codex.** It cannot drop span events alone.
 - **Client-side level filtering only.** Debug lines filled the page before
   `turn completed` was reached ([#807]).
 
@@ -198,7 +199,9 @@ grants learns only whether the feature is on, and spends only its own budget.
   fixture is derived from upstream source, not captured from a live OpenShell.
 - Kubernetes keeps only the current and previous container instance.
 - The Codex stderr filter is keyed to Codex 0.158 message shapes. A rename lets the noise
-  back, but nothing is lost.
+  back rather than hiding other lines. Two records are suppressed on purpose: span
+  enter/exit lines and the error-level missing-bubblewrap startup record, which never
+  reaches the Pod log unless `RUST_LOG` is `debug` or `trace`.
 - Rate and concurrency limits are per API replica.
 - Operators must refresh the Collector config Secret on upgrade to get [#793] and [#811].
 
