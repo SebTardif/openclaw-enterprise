@@ -264,11 +264,12 @@ the command's denial and independently reads both files. It verifies the selecte
 Localhost profile on the Agent container. This is local k3d evidence, not a
 production-node seccomp qualification.
 
-The full-access binding must clone, fetch, commit, push and create a ready-for-review PR.
-A separate `git-read` Agent must clone and fetch the same repository, then
-receive the broker's HTTP 400 denial on one push; independent provider readback
-must show no new branch. Both bind native command completions to the Gateway's
-mirrored turn. The full-access case also matches the remote commit and PR.
+Both `git-full` and `git-write` bindings must clone, fetch, commit, push and
+create a ready-for-review PR. A separate `git-read` Agent must clone and fetch
+the same repository, then receive the broker's HTTP 400 denial on one push;
+independent provider readback must show no new branch. All three Dedicated
+cases bind native command completions to the Gateway's mirrored turn. Each
+write-capable case also matches the remote commit and PR.
 The fixture checks separate Gateway/Codex Pod identities, repository material and
 model-key delivery to Codex only, and credential-service connectivity from Codex
 with denial from Gateway. The test runner observes and cleans up but does not
