@@ -5,11 +5,10 @@ import { chmod, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from "n
 import { createRequire } from "node:module";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import test from "node:test";
 import { loadTestSuites } from "../../scripts/ci/test-suites.mjs";
 import { prepareCodexSeccompProfile } from "../../scripts/ci/codex-seccomp.mjs";
-import { prepareInstalledRepositoryCodexSeccomp } from "../../scripts/ci/prepare.mjs";
 import { createKubernetesInstallationConfiguration } from "../helpers/kubernetes-real.mjs";
 
 const repositoryRoot = resolve(fileURLToPath(new URL("../../", import.meta.url)));
@@ -52,6 +51,7 @@ async function fixtureImageCommands(
   extraEnv = {},
 ) {
   const root = await fixture(t);
+  const resolvedExtraEnv = typeof extraEnv === "function" ? await extraEnv(root) : extraEnv;
   const bin = join(root, "bin");
   const home = join(root, "home");
   await mkdir(bin);
@@ -435,7 +435,7 @@ throw new Error("Unexpected external command: " + command + " " + JSON.stringify
     ),
     OPENCLAW_CI_K3D_BIN: join(bin, "k3d.mjs"),
     OCC_KUBECTL_BIN: join(bin, "kubectl.mjs"),
-    ...extraEnv,
+    ...resolvedExtraEnv,
   };
   const run = (script, args) =>
     spawnSync(process.execPath, [join(repositoryRoot, "scripts/ci", script), ...args], {
@@ -445,6 +445,8 @@ throw new Error("Unexpected external command: " + command + " " + JSON.stringify
       env,
     });
   return {
+    root,
+    env,
     statePath,
     githubEnv,
     prepare: () =>
@@ -1225,9 +1227,31 @@ test("installed repository qualification selects four distinct cases and retains
   assert.equal(paths.size, 4);
 });
 
-test("installed repository preparation derives Codex seccomp only for Dedicated lanes", async (t) => {
-  const root = await fixture(t);
-  const profileName = "openclaw/codex-bwrap.json";
+async function controlledInstalledPreparationHooks(root) {
+  const preload = join(root, "controlled-installed-preparation-hooks.mjs");
+  const callsPath = join(root, "seccomp-calls.jsonl");
+  const routing = pathToFileURL(join(repositoryRoot, "scripts/ci/routing.mjs")).href;
+  const seccomp = pathToFileURL(join(repositoryRoot, "scripts/ci/codex-seccomp.mjs")).href;
+  await writeFile(
+    preload,
+    `import { appendFileSync } from "node:fs";
+import { registerHooks } from "node:module";
+const modules = new Map([
+  [${JSON.stringify(routing)}, { url: "test:fixture-routing", source: \`export async function prepareGatewayRouting({ cluster, execFile }) { if (!cluster?.directory || typeof execFile !== "function") throw new Error("fixture routing lost production inputs"); return { env: { OCC_TEST_GATEWAY_ROUTING_REAL: "1", OCC_TEST_SLACK_LIVE: "0", OCC_TEST_ENVOY_GATEWAY_NAMESPACE: "envoy-gateway-system", OCC_TEST_CERT_MANAGER_NAMESPACE: "cert-manager", OCC_TEST_GATEWAY_CA_CERT_PATH: cluster.directory + "/fixture-ca.pem", OCC_TEST_GATEWAY_CA_KEY_PATH: cluster.directory + "/fixture-ca-key.pem", NODE_EXTRA_CA_CERTS: cluster.directory + "/fixture-ca.pem" } }; }\` }],
+  [${JSON.stringify(seccomp)}, { url: "test:fixture-seccomp", source: \`import { appendFileSync } from "node:fs"; export async function prepareCodexSeccompProfile({ cluster, image, execFile, kubectl, codexVersion }) { if (!cluster?.name || !image || typeof execFile !== "function" || !kubectl || !codexVersion) throw new Error("fixture seccomp lost production inputs"); appendFileSync(${JSON.stringify(callsPath)}, JSON.stringify({ cluster: cluster.name, image, kubectl, codexVersion, nodes: cluster.nodes }) + String.fromCharCode(10)); return { profileName: "openclaw/fixture-seccomp.json", profileSha256: "0".repeat(64), nodes: (cluster.nodes ?? []).map((name) => ({ name, status: "fixture" })) }; }\` }],
+]);
+registerHooks({
+  resolve(specifier, context, nextResolve) { const result = nextResolve(specifier, context); const fixture = modules.get(result.url); return fixture ? { url: fixture.url, shortCircuit: true } : result; },
+  load(url, context, nextLoad) { const fixture = [...modules.values()].find((item) => item.url === url); return fixture ? { format: "module", source: fixture.source, shortCircuit: true } : nextLoad(url, context); },
+});
+`,
+    { mode: 0o600 },
+  );
+  return { callsPath, preload };
+}
+
+test("installed repository prepare CLI derives Codex seccomp only for Dedicated lanes", async (t) => {
+  const profileName = "openclaw/fixture-seccomp.json";
   const lanes = [
     "repository-credentials-installed-embedded-full",
     "repository-credentials-installed-dedicated-full",
@@ -1236,44 +1260,67 @@ test("installed repository preparation derives Codex seccomp only for Dedicated 
   ];
 
   for (const lane of lanes) {
-    const statePath = join(root, `${lane}.json`);
-    const cluster = { kubectl: `/test-owned/${lane}/kubectl` };
-    const state = { lane, cluster };
-    const env = {
-      OCC_TEST_KUBERNETES_RUNTIME_IMAGE: immutableImage,
-      OCC_TEST_KUBERNETES_CODEX_VERSION: "0.158.0",
-    };
-    const calls = [];
-
-    await prepareInstalledRepositoryCodexSeccomp({
-      lane,
-      statePath,
-      state,
-      cluster,
-      env,
-      prepareProfile: async (input) => {
-        calls.push(input);
-        return { profileName, nodes: [`${lane}-node`] };
-      },
+    const commands = await fixtureImageCommands(t, "local-digest", lane, async (root) => {
+      const configPath = join(root, "app.json");
+      const keyPath = join(root, "app.pem");
+      await writeFile(configPath, "{}", { mode: 0o600 });
+      await writeFile(keyPath, "fixture-only key", { mode: 0o600 });
+      const hooks = await controlledInstalledPreparationHooks(root);
+      return {
+        CI_SECCOMP_CALLS_PATH: hooks.callsPath,
+        NODE_OPTIONS: `--import=${hooks.preload}`,
+        OPENAI_API_KEY: "fixture-only-model-key",
+        OCC_TEST_OPENAI_MODEL: "test-model",
+        OCC_TEST_REPOSITORY_CREDENTIALS_AUTHORIZED: "1",
+        OCC_TEST_REPOSITORY_CREDENTIALS_REPOSITORY: "fixture/repository",
+        OCC_TEST_REPOSITORY_CREDENTIALS_APP_CONFIG_FILE: configPath,
+        OCC_TEST_REPOSITORY_CREDENTIALS_APP_KEY_FILE: keyPath,
+        OCC_TEST_REPOSITORY_CREDENTIALS_UPSTREAM_CIDRS: "203.0.113.1/32",
+        OCC_TEST_REPOSITORY_CREDENTIALS_IMAGE_MODE: "release",
+        OCC_TEST_PRODUCTION_CONTROLLER_IMAGE: immutableImage,
+        OCC_TEST_KUBERNETES_RUNTIME_IMAGE: immutableImage,
+        OCC_TEST_PRODUCTION_POSTGRES_IMAGE: immutableImage,
+        OCC_TEST_PRODUCTION_NODE_IMAGE: immutableImage,
+        OCC_TEST_REPOSITORY_CREDENTIALS_IMAGE: immutableImage,
+        OCC_TEST_KUBERNETES_GATEWAY_IMAGE: immutableImage,
+        OCC_TEST_KUBERNETES_CODEX_VERSION: "0.158.0",
+      };
     });
+    const prepared = commands.prepare();
+    assert.equal(prepared.status, 0, prepared.stderr || prepared.stdout);
+    const state = JSON.parse(await readFile(commands.statePath, "utf8"));
+    const cluster = state.resources.find(({ kind }) => kind === "k3d-cluster");
+    const calls = await readFile(commands.env.CI_SECCOMP_CALLS_PATH, "utf8").then(
+      (value) => value.trim().split("\n").filter(Boolean).map(JSON.parse),
+      (error) => (error.code === "ENOENT" ? [] : Promise.reject(error)),
+    );
+    const published = (await readFile(commands.githubEnv, "utf8")).split("\n");
 
     if (lane === "repository-credentials-installed-embedded-full") {
       assert.deepEqual(calls, []);
-      assert.equal(env.OCC_TEST_KUBERNETES_CODEX_SECCOMP_PROFILE, undefined);
+      assert.equal(state.env.OCC_TEST_KUBERNETES_CODEX_SECCOMP_PROFILE, undefined);
       assert.equal(cluster.codexSeccompProfile, undefined);
-      await assert.rejects(() => stat(statePath), { code: "ENOENT" });
+      assert.equal(cluster.codexSeccompProfiles, undefined);
+      assert.equal(
+        published.some((line) => line.startsWith("OCC_TEST_KUBERNETES_CODEX_SECCOMP_PROFILE=")),
+        false,
+      );
       continue;
     }
 
     assert.equal(calls.length, 1);
-    assert.equal(calls[0].cluster, cluster);
-    assert.equal(calls[0].image, immutableImage);
-    assert.equal(calls[0].kubectl, cluster.kubectl);
+    assert.equal(calls[0].cluster, cluster.name);
+    assert.equal(calls[0].image, state.env.OCC_TEST_KUBERNETES_RUNTIME_IMAGE);
+    assert.equal(calls[0].kubectl, commands.env.OCC_KUBECTL_BIN);
     assert.equal(calls[0].codexVersion, "0.158.0");
-    assert.equal(env.OCC_TEST_KUBERNETES_CODEX_SECCOMP_PROFILE, profileName);
+    assert.deepEqual(calls[0].nodes, cluster.nodes);
+    assert.equal(state.env.OCC_TEST_KUBERNETES_CODEX_SECCOMP_PROFILE, profileName);
     assert.equal(cluster.codexSeccompProfile, profileName);
-    assert.deepEqual(cluster.codexSeccompProfiles, [`${lane}-node`]);
-    assert.deepEqual(JSON.parse(await readFile(statePath, "utf8")), state);
+    assert.deepEqual(
+      cluster.codexSeccompProfiles,
+      cluster.nodes.map((name) => ({ name, status: "fixture" })),
+    );
+    assert.ok(published.includes(`OCC_TEST_KUBERNETES_CODEX_SECCOMP_PROFILE=${profileName}`));
   }
 });
 

@@ -1848,41 +1848,6 @@ async function prepareLaneLogging(statePath, state, env, cluster) {
   await markResourceReady(statePath, state, logging.resource);
 }
 
-const dedicatedRepositoryCredentialLanes = new Set([
-  "repository-credentials-installed-dedicated-full",
-  "repository-credentials-installed-dedicated-write",
-  "repository-credentials-installed-dedicated-read",
-]);
-
-async function prepareInstalledRepositoryCodexSeccomp({
-  lane,
-  statePath,
-  state,
-  cluster,
-  env,
-  prepareProfile = prepareCodexSeccompProfile,
-}) {
-  if (lane === "repository-credentials-installed-embedded-full") {
-    return;
-  }
-  if (!dedicatedRepositoryCredentialLanes.has(lane)) {
-    throw new Error(`Unsupported installed repository lane: ${lane}.`);
-  }
-
-  progress(lane, "Deriving and installing the dedicated Codex seccomp profile.");
-  const seccomp = await prepareProfile({
-    cluster,
-    image: env.OCC_TEST_KUBERNETES_RUNTIME_IMAGE,
-    execFile,
-    kubectl: cluster.kubectl ?? process.env.OCC_KUBECTL_BIN ?? "kubectl",
-    codexVersion: await kubernetesCodexVersion(env),
-  });
-  env.OCC_TEST_KUBERNETES_CODEX_SECCOMP_PROFILE = seccomp.profileName;
-  cluster.codexSeccompProfile = seccomp.profileName;
-  cluster.codexSeccompProfiles = seccomp.nodes;
-  await writeState(statePath, state);
-}
-
 async function prepareLane({ lane, statePath }) {
   const name = assertLane(lane);
   await validateLaneInputsBeforeSideEffects(name);
@@ -2175,13 +2140,20 @@ async function prepareLane({ lane, statePath }) {
           "OCC_TEST_REPOSITORY_CREDENTIALS_IMAGE",
         )
       ).reference;
-      await prepareInstalledRepositoryCodexSeccomp({
-        lane: name,
-        statePath: resolvedStatePath,
-        state,
-        cluster,
-        env,
-      });
+      if (name !== "repository-credentials-installed-embedded-full") {
+        progress(name, "Deriving and installing the dedicated Codex seccomp profile.");
+        const seccomp = await prepareCodexSeccompProfile({
+          cluster,
+          image: env.OCC_TEST_KUBERNETES_RUNTIME_IMAGE,
+          execFile,
+          kubectl: cluster.kubectl ?? process.env.OCC_KUBECTL_BIN ?? "kubectl",
+          codexVersion: await kubernetesCodexVersion(env),
+        });
+        env.OCC_TEST_KUBERNETES_CODEX_SECCOMP_PROFILE = seccomp.profileName;
+        cluster.codexSeccompProfile = seccomp.profileName;
+        cluster.codexSeccompProfiles = seccomp.nodes;
+        await writeState(resolvedStatePath, state);
+      }
       if (process.env.OCC_TEST_REPOSITORY_CREDENTIALS_GH_BINARY) {
         env.OCC_TEST_REPOSITORY_CREDENTIALS_GH_BINARY =
           process.env.OCC_TEST_REPOSITORY_CREDENTIALS_GH_BINARY;
@@ -2471,7 +2443,7 @@ async function main() {
   );
 }
 
-export { prepareFile, prepareInstalledRepositoryCodexSeccomp, prepareLane };
+export { prepareFile, prepareLane };
 
 if (import.meta.url === `file://${process.argv[1]}`) {
   main().catch((error) => {
