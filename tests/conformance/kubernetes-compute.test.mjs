@@ -1563,6 +1563,10 @@ test("activation fails with OpenClaw's reason when the Gateway cannot apply its 
   );
 });
 
+// The start-count ratchet for installs without network.pluginStatusProxySourceCidrs.
+// The second Gateway start is the price of omitting them: the development
+// launcher sets them (internal/occdev status_proxy_k3d.go), so its first deploys
+// take the single-start path pinned above.
 test("without a status proxy a dedicated Codex Gateway keeps its workspace node in the pod spec", async () => {
   const {
     state,
@@ -1592,6 +1596,11 @@ test("without a status proxy a dedicated Codex Gateway keeps its workspace node 
   await driver.activateRevision(revision, authContext(revision));
   const gateways = templates.filter(({ name }) => name === gatewayName);
   assert.equal(gateways.length, 2, "activation replaces the Gateway once");
+  assert.deepEqual(
+    templates.map(({ name }) => (name === agentName ? "harness" : name)),
+    [gatewayName, "harness", gatewayName],
+    "Harness 1 + Gateway 2",
+  );
   const activated = gateways.at(-1).template;
   assert.equal(environment(activated).OPENCLAW_WORKSPACE_NODE_ID, "node-1");
   assert.equal(environment(activated).OPENCLAW_WORKSPACE_NODE_PATH, undefined);
@@ -3840,6 +3849,108 @@ test("direct service account token is confined to the model container and exact 
         agents: { defaults: { model: "anthropic/claude" } },
       }),
     /compatible model provider/i,
+  );
+});
+
+test("credential withdrawal revokes through the revision's exact Sandbox", async () => {
+  const withdrawals = [];
+  const sandboxDriver = {
+    id: "sandbox-openshell",
+    capability: "sandbox",
+    facets: ["networking"],
+    harnessResource({ namespace, revision }) {
+      return {
+        namespaceName: namespace.name,
+        resourceName: `os-${revision.id}`,
+        agentId: revision.agentId,
+        revisionId: revision.id,
+      };
+    },
+    async cleanup() {},
+  };
+  let reportedSource;
+  const credentialGatewayDriver = {
+    id: "credential-gateway",
+    capability: "credential_gateway",
+    async withdraw(context) {
+      withdrawals.push(context);
+      return { sourceId: reportedSource ?? context.sourceId, state: "revoked" };
+    },
+  };
+  const driver = new KubernetesComputeDriver(options(), { sandboxDriver, credentialGatewayDriver });
+  const namespace = kubernetesNamespaceName(tenant.id);
+  const namespaceResource = {
+    ...driver.manifest("v1", "Namespace", namespace, { namespaceId: tenant.id }),
+    status: { phase: "Active" },
+  };
+  let namespaceExists = true;
+  driver.apiClients = Promise.resolve({
+    core: {
+      async listNamespace() {
+        return { items: namespaceExists ? [structuredClone(namespaceResource)] : [] };
+      },
+      async readNamespace() {
+        if (!namespaceExists) {
+          throw Object.assign(new Error("Not found"), { statusCode: 404 });
+        }
+        return structuredClone(namespaceResource);
+      },
+    },
+  });
+  const revision = {
+    id: "rev-withdraw",
+    namespaceId: tenant.id,
+    agentId: "agent-withdraw",
+    compute: { id: driver.id, implementation: driver.implementation },
+    sandboxDriverId: sandboxDriver.id,
+    harness: { id: "codex", version: "1.0.0", mode: "dedicated" },
+    createdAt: "2026-09-28T00:00:00.000Z",
+  };
+  const source = {
+    id: "cs_00000000-0000-4000-8000-000000000002",
+    namespaceId: tenant.id,
+    type: "openai",
+    driverId: credentialGatewayDriver.id,
+  };
+  const signal = AbortSignal.timeout(5_000);
+
+  // Compute hands the gateway the Sandbox provisioning created, in the Namespace's placement.
+  assert.deepEqual(await driver.withdrawCredentialSource(revision, source, signal), {
+    sourceId: source.id,
+    state: "revoked",
+  });
+  assert.equal(withdrawals[0].namespace.name, namespace);
+  assert.deepEqual(withdrawals[0].sandbox, {
+    namespaceName: namespace,
+    resourceName: "os-rev-withdraw",
+    agentId: revision.agentId,
+    revisionId: revision.id,
+  });
+  assert.equal(withdrawals[0].sourceId, source.id);
+  assert.equal(withdrawals[0].revision, revision);
+
+  // A gateway answer about another source is not evidence for this withdrawal.
+  reportedSource = "cs_00000000-0000-4000-8000-000000000003";
+  await assert.rejects(
+    driver.withdrawCredentialSource(revision, source, signal),
+    /withdrew another credential source/,
+  );
+
+  // Without the Namespace there is no Sandbox left to revoke, and the gateway is not called.
+  namespaceExists = false;
+  withdrawals.length = 0;
+  assert.deepEqual(await driver.withdrawCredentialSource(revision, source, signal), {
+    sourceId: source.id,
+    state: "absent",
+  });
+  assert.equal(withdrawals.length, 0);
+  await assert.rejects(
+    driver.withdrawCredentialSource(
+      { ...revision, compute: { id: "other-compute", implementation: driver.implementation } },
+      source,
+      signal,
+    ),
+    /another Compute Driver/,
   );
 });
 
@@ -7818,7 +7929,8 @@ test("Gateway and Harness storage are separate and preserve ephemeral Codex cred
   assert.equal(JSON.stringify(harness).includes("openclaw-gateway-state"), false);
   assert.equal(harness.spec.template.spec.securityContext.fsGroup, 1000);
   assert.equal(harness.spec.template.spec.securityContext.fsGroupChangePolicy, "OnRootMismatch");
-  // The Harness retains task files and generated images; it cannot mount Gateway transcripts.
+  // The Harness retains task files, generated images and Codex thread rollouts, so
+  // the Gateway's bound thread resumes after stop/start; it cannot mount Gateway transcripts.
   const workspaceMounts = harness.spec.template.spec.containers[0].volumeMounts.filter(
     ({ name }) => name === "openclaw-workspace",
   );
@@ -7833,6 +7945,12 @@ test("Gateway and Harness storage are separate and preserve ephemeral Codex cred
       name: "openclaw-workspace",
       mountPath: "/home/node/.codex/generated_images",
       subPath: "generated-images",
+      readOnly: false,
+    },
+    {
+      name: "openclaw-workspace",
+      mountPath: "/home/node/.codex/sessions",
+      subPath: "codex-sessions",
       readOnly: false,
     },
   ]);
@@ -7857,7 +7975,7 @@ test("Gateway and Harness storage are separate and preserve ephemeral Codex cred
   assert.equal(initialState.args[0].includes("/runtime-state/home"), true);
   assert.equal(initialState.args[0].includes("/runtime-temporary/tmp"), true);
   assert.match(initialState.args[0], /chmodSync\(path, 0o700\)/);
-  for (const directory of ["workspace", "generated-images"]) {
+  for (const directory of ["workspace", "generated-images", "codex-sessions"]) {
     assert.equal(initialState.args[0].includes(`/harness-workspace-state/${directory}`), true);
   }
   // Pod and AgentRevision replacement keep node credentials in one Agent
@@ -9875,6 +9993,37 @@ for (const dualCluster of [false, true]) {
     );
     assert.equal(seedPod.containers[0].securityContext.readOnlyRootFilesystem, true);
     assert.deepEqual(seedPod.containers[0].securityContext.capabilities.drop, ["ALL"]);
+    // The process holding the seed sees only codex-home, never the rest of the Harness claim.
+    const seedClaim = seedPod.volumes.find(({ persistentVolumeClaim }) => persistentVolumeClaim);
+    const claimMounts = seedPod.containers[0].volumeMounts.filter(
+      ({ name }) => name === seedClaim.name,
+    );
+    assert.deepEqual(claimMounts, [
+      { name: seedClaim.name, mountPath: "/auth", subPath: "codex-home" },
+    ]);
+    assert.equal(
+      seedPod.containers[0].env.find(({ name }) => name === "CODEX_HOME").value,
+      "/auth",
+    );
+    assert.match(
+      seedPod.containers[0].readinessProbe.exec.command[2],
+      /"\/auth\/\.oce-oauth\.json"/,
+    );
+    // Only a credential-free init step sees the claim root, to create codex-home as uid 1000
+    // (a kubelet-created subPath is root-owned and world-writable).
+    assert.deepEqual(
+      seedPod.initContainers.map(({ name }) => name),
+      ["prepare-oauth-home"],
+    );
+    const [prepare] = seedPod.initContainers;
+    assert.deepEqual(prepare.volumeMounts, [
+      { name: seedClaim.name, mountPath: "/harness-workspace-state" },
+    ]);
+    assert.equal(prepare.env, undefined);
+    assert.match(prepare.args[0], /chmodSync\(path, 0o700\)/);
+    assert.match(prepare.args[0], /isDirectory\(\) === false/);
+    assert.equal(prepare.securityContext.readOnlyRootFilesystem, true);
+    assert.deepEqual(prepare.securityContext.capabilities.drop, ["ALL"]);
     assert.equal(
       records.some(
         ({ kind, metadata }) => kind === "Deployment" && metadata.name.startsWith("agent-"),
@@ -9953,6 +10102,16 @@ for (const dualCluster of [false, true]) {
       ({ mountPath }) => mountPath === "/home/node/.codex",
     );
     assert.equal(authMount.subPath, "codex-home");
+    // OAuth keeps thread rollouts inside codex-home, which a new OAuth source empties;
+    // a separate rollout directory would outlive that reset, so it is neither mounted nor kept.
+    assert.equal(
+      native.volumeMounts.some(({ subPath }) => subPath === "codex-sessions"),
+      false,
+    );
+    assert.match(
+      pod.initContainers.find(({ name }) => name === "prepare-private-state").args[0],
+      /rmSync\("\/harness-workspace-state\/codex-sessions", \{ recursive: true, force: true \}\)/,
+    );
     const claimName = pod.volumes.find(({ name }) => name === authMount.name).persistentVolumeClaim
       .claimName;
     assert.equal(

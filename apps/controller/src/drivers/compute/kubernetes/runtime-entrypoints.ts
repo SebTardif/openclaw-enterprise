@@ -2006,6 +2006,27 @@ function configureWorkspaceNodePlugins(config, workspaceNodeId) {
   (fileConfig.workspaces ??= {}).main = { nodeId: workspaceNodeId, remoteRoot };
 }
 
+// A Gateway with a workspace node serves no workspace: its /home/node/workspace
+// is an empty local directory, while Codex runs in the Harness Pod. OpenClaw executes
+// its dynamic tools in the Gateway process, so these would list, read, write or
+// run commands in the Gateway Pod instead. Codex's native tools cover them in
+// the Harness, and the file-transfer tools reach its workspace through the node.
+const GATEWAY_LOCAL_CODEX_DYNAMIC_TOOLS = [
+  "ls", "read", "write", "edit", "apply_patch",
+  "exec", "process", "gateway_exec", "gateway_process",
+];
+
+function excludeGatewayLocalCodexTools(config) {
+  const codex = config.plugins?.entries?.codex;
+  if (!isPlainObject(codex)) return;
+  const codexConfig = codex.config ??= {};
+  const configured = codexConfig.codexDynamicToolsExclude ?? [];
+  if (!Array.isArray(configured)) {
+    throw new Error("The Codex plugin codexDynamicToolsExclude setting must be a list.");
+  }
+  codexConfig.codexDynamicToolsExclude = [...new Set([...configured, ...GATEWAY_LOCAL_CODEX_DYNAMIC_TOOLS])];
+}
+
 const WORKSPACE_NODE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
 const workspaceNodeBindingPath = process.env.OPENCLAW_WORKSPACE_NODE_PATH;
 
@@ -2152,6 +2173,7 @@ function configureGateway(peerStatus) {
     if (environmentWorkspaceNodeId !== undefined || workspaceNodeBindingPath !== undefined) {
       // Refuse a revision that cannot host its node now, not when the node arrives.
       requireWorkspaceNodePlugins(config);
+      excludeGatewayLocalCodexTools(config);
     }
     workspaceNodeId = environmentWorkspaceNodeId ?? readWorkspaceNodeBinding();
     if (workspaceNodeId !== undefined) {
@@ -2520,6 +2542,104 @@ if (receipt?.sourceUid === expected.sourceUid) {
 }
 `;
 
+// Codex 0.158 app-server hard-codes FmtSpan::FULL on its stderr layer, so each
+// instrumented call prints span "new" and "close" records, and each poll of an
+// instrumented future a span "enter" and "exit" record, at the span's level:
+// hundreds per turn at info (fs.read_file, fs.sandbox_*, plugins...). Unless
+// RUST_LOG starts at debug or trace, the wrapper drops every span lifecycle
+// record except the "new" and "close" of the codex_core::tasks "turn" span (a
+// turn's start and end). Every event still passes. Two idle lines are dropped too:
+// the readiness probe's loopback WebSocket connection (every 2 s), and the
+// remote-control preference retry (every 1 s while Codex has no ChatGPT login),
+// which is kept once per 10 minutes. Everything else is forwarded unchanged.
+export const CODEX_STDERR_FILTER_HELPER = String.raw`
+const codexVerboseLog = /^(?:debug|trace)(?:,|$)/i.test(process.env.RUST_LOG ?? "");
+const CODEX_REMOTE_CONTROL_WAIT = "waiting to resolve remote control preference until authentication is available";
+const CODEX_STDERR_LINE_LIMIT = 65536;
+let codexRemoteControlWaitAt = -Infinity;
+function codexStderrLineKept(line, now = Date.now()) {
+  if (codexVerboseLog || !line.startsWith("{")) return true;
+  if (
+    !line.includes('"message":"new"') &&
+    !line.includes('"message":"close"') &&
+    !line.includes('"message":"enter"') &&
+    !line.includes('"message":"exit"') &&
+    !line.includes('"message":"websocket client connected"') &&
+    !line.includes(CODEX_REMOTE_CONTROL_WAIT)
+  ) return true;
+  let record;
+  try { record = JSON.parse(line); } catch { return true; }
+  if (record === null || typeof record !== "object" || record.fields === null || typeof record.fields !== "object") return true;
+  const message = record.fields.message;
+  if (
+    (message === "new" || message === "close" || message === "enter" || message === "exit") &&
+    record.span !== null &&
+    typeof record.span === "object" &&
+    !Array.isArray(record.span)
+  ) {
+    return (
+      (message === "new" || message === "close") &&
+      record.target === "codex_core::tasks" &&
+      record.span.name === "turn"
+    );
+  }
+  if (
+    record.target === "codex_app_server_transport::transport::websocket" &&
+    message === "websocket client connected" &&
+    /^(?:127\.\d{1,3}\.\d{1,3}\.\d{1,3}|\[::1\]|\[::ffff:127\.\d{1,3}\.\d{1,3}\.\d{1,3}\]):\d{1,5}$/.test(String(record.fields.peer_addr))
+  ) {
+    return false;
+  }
+  if (
+    record.target === "codex_app_server_transport::transport::remote_control::websocket" &&
+    message === CODEX_REMOTE_CONTROL_WAIT
+  ) {
+    if (now - codexRemoteControlWaitAt < 600000) return false;
+    codexRemoteControlWaitAt = now;
+  }
+  return true;
+}
+// Resolves when the stream ends. A line longer than the limit is forwarded
+// unfiltered as it arrives, so the wrapper never buffers without bound.
+function forwardCodexStderr(stream) {
+  let pending = "";
+  let passthrough = false;
+  stream.setEncoding("utf8");
+  stream.on("data", (chunk) => {
+    pending += chunk;
+    let index;
+    while ((index = pending.indexOf("\n")) !== -1) {
+      const line = pending.slice(0, index);
+      pending = pending.slice(index + 1);
+      if (passthrough) {
+        process.stderr.write(line + "\n");
+        passthrough = false;
+      } else if (codexStderrLineKept(line)) {
+        process.stderr.write(line + "\n");
+      }
+    }
+    if (pending.length > CODEX_STDERR_LINE_LIMIT) {
+      process.stderr.write(pending);
+      pending = "";
+      passthrough = true;
+    }
+  });
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      if (pending !== "" && (passthrough || codexStderrLineKept(pending))) process.stderr.write(pending);
+      pending = "";
+      resolve();
+    };
+    stream.on("end", finish);
+    stream.on("close", finish);
+    stream.on("error", finish);
+  });
+}
+`;
+
 export const AGENT_RUNTIME_ENTRYPOINT = String.raw`
 const { createHash } = require("node:crypto");
 const { mkdirSync, mkdtempSync, rmSync } = require("node:fs");
@@ -2528,6 +2648,7 @@ const { performance } = require("node:perf_hooks");
 
 ${PLUGIN_RUNTIME_HELPERS}
 ${AUTH_PROBE_FAILURE_HELPER}
+${CODEX_STDERR_FILTER_HELPER}
 ${startupPhaseHelper("agent")}
 startPluginRuntimeStatusServer();
 const loginMode = process.env.CODEX_LOGIN_MODE;
@@ -2813,10 +2934,18 @@ const child = spawn(
     "--ws-token-sha256",
     digest,
   ],
-  { stdio: "inherit", cwd: "/home/node/workspace", env: codexChildEnvironment() },
+  // stdout is the protocol stream; stderr passes through the span-noise filter.
+  { stdio: ["inherit", "inherit", "pipe"], cwd: "/home/node/workspace", env: codexChildEnvironment() },
 );
 forwardTermination(child);
-child.on("exit", (code, signal) => process.exit(code ?? (signal === "SIGTERM" ? 0 : 1)));
+const codexStderrDone = child.stderr ? forwardCodexStderr(child.stderr) : Promise.resolve();
+child.on("exit", (code, signal) => {
+  const status = code ?? (signal === "SIGTERM" ? 0 : 1);
+  // Forward Codex's last lines; a descendant holding the pipe cannot delay exit
+  // by more than 2 s. The unref'd timer never keeps an otherwise idle wrapper alive.
+  setTimeout(() => process.exit(status), 2000).unref();
+  codexStderrDone.then(() => process.exit(status));
+});
 (async () => {
   try {
     if (pluginRuntime !== undefined) {

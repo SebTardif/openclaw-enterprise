@@ -222,7 +222,7 @@ func upK3d(ctx context.Context, opts Options, sandboxDriver string) (result erro
 		clusterArgs = append(clusterArgs, "--volume", admissionPath+":"+openShellAdmissionContainerPath+":ro@server:0", "--k3s-arg", "--kube-apiserver-arg=admission-control-config-file="+openShellAdmissionContainerPath+"@server:0")
 	}
 	clusterAttempted = true
-	if err := r.run(ctx, "k3d", clusterArgs...); err != nil {
+	if err := r.createK3dCluster(ctx, clusterArgs...); err != nil {
 		clusterCreationFailed = true
 		return err
 	}
@@ -291,7 +291,11 @@ func upK3d(ctx context.Context, opts Options, sandboxDriver string) (result erro
 	} else {
 		fmt.Fprintf(r.opts.Out, "Installing OCE in Namespace %s...\n", state.PlatformNamespace)
 	}
-	if err := writeInstallation(state, runtimeImage, assets, codexSeccompProfile); err != nil {
+	statusProxySource, err := r.developmentStatusProxySource(ctx, state)
+	if err != nil {
+		return err
+	}
+	if err := writeInstallation(state, runtimeImage, assets, codexSeccompProfile, statusProxySource); err != nil {
 		return err
 	}
 	if routingPodCIDR != "" {

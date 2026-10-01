@@ -286,6 +286,26 @@ test(
           keyHash: `limitkey${fixture.suffix}`,
           ...payload,
         }),
+        JSON.stringify({
+          event: "authentication.provider-unavailable-warning",
+          severity: "WARN",
+          provider: "oidc",
+          providerId: `oidc:providerkey${fixture.suffix}`,
+          step: "token",
+          cause: "connect_refused",
+          code: "ECONNREFUSED",
+          ...payload,
+        }),
+        JSON.stringify({
+          event: "authentication.provider-unavailable-warning",
+          severity: "WARN",
+          provider: "github",
+          providerId: `github:providerkey${fixture.suffix}`,
+          step: "profile",
+          cause: "http_status",
+          status: 503,
+          ...payload,
+        }),
       ],
       [],
       ["com.docker.compose.service=controller"],
@@ -301,10 +321,14 @@ test(
       "{invalid json",
       JSON.stringify({ level: "info", subsystem: "gateway", message: "x".repeat(33_000) }),
     ]);
-    await waitFor(async () => (await records()).length >= 5);
+    await waitFor(async () => (await records()).length >= 7);
     const initial = await records();
-    assert.equal(initial.length, 5, "only reviewed JSON classes and Codex stderr pass");
-    const warningEvents = ["compute.preflight-warning", "authentication.sign-in-limited"];
+    assert.equal(initial.length, 7, "only reviewed JSON classes and Codex stderr pass");
+    const warningEvents = [
+      "compute.preflight-warning",
+      "authentication.sign-in-limited",
+      "authentication.provider-unavailable-warning",
+    ];
     for (const { resource, record } of initial) {
       assert.ok(record.timeUnixNano, "OTLP record has an Engine timestamp");
       assert.equal(
@@ -319,6 +343,8 @@ test(
     }
     assert.deepEqual(initial.map(({ resource }) => resource["service.name"]).sort(), [
       "codex-app-server",
+      "occ-api",
+      "occ-api",
       "occ-api",
       "occ-api",
       "occ-worker",
@@ -351,9 +377,41 @@ test(
       "log.iostream": "stdout",
       "occ.sign_in.lane": "email",
     });
+    // A provider outage keeps the provider, step, bounded cause, and transport code or
+    // HTTP status; the provider instance ID stays in local logs.
+    const outages = initial
+      .filter(
+        ({ record }) => record.body.stringValue === "authentication.provider-unavailable-warning",
+      )
+      .map(({ record }) => {
+        assert.equal(record.severityText, "WARN");
+        return attributes(record.attributes);
+      })
+      .sort((left, right) =>
+        left["occ.sign_in.provider"].localeCompare(right["occ.sign_in.provider"]),
+      );
+    assert.deepEqual(outages, [
+      {
+        "event.name": "authentication.provider-unavailable-warning",
+        "log.iostream": "stdout",
+        "occ.sign_in.provider": "github",
+        "occ.sign_in.step": "profile",
+        "occ.sign_in.cause": "http_status",
+        "occ.sign_in.status": "503",
+      },
+      {
+        "event.name": "authentication.provider-unavailable-warning",
+        "log.iostream": "stdout",
+        "occ.code": "ECONNREFUSED",
+        "occ.sign_in.provider": "oidc",
+        "occ.sign_in.step": "token",
+        "occ.sign_in.cause": "connect_refused",
+      },
+    ]);
     const serialized = JSON.stringify(initial);
     assert.equal(serialized.includes("compute.preflight-warning-unreviewed"), false);
     assert.equal(serialized.includes(`limitkey${fixture.suffix}`), false);
+    assert.equal(serialized.includes(`providerkey${fixture.suffix}`), false);
     for (const value of [...canaries, "forged-service", "forged-agent"]) {
       assert.equal(serialized.includes(value), false);
     }
@@ -800,6 +858,168 @@ test(
         codex("WARN", { "event.name": "codex.model_probe", "occ.code": "AUTHENTICATION_FAILED" }),
         codex("INFO", { ...phaseEvent, "occ.startup.phase": "codex-login" }),
       ]),
+    );
+    assert.doesNotMatch(JSON.stringify(exported), /CANARY_/);
+  },
+);
+
+test(
+  "native Collector exports Codex turns, tool calls and plain app-server messages, not span noise",
+  {
+    skip: selected
+      ? false
+      : "Set OCC_TEST_LOGGING_COLLECTOR=1 for pinned Collector Codex record proof.",
+    timeout: 180_000,
+  },
+  async (t) => {
+    const fixture = await collectorFixture(t, "codex");
+    const receiverAddress = await startKubernetesProcessors(fixture);
+    const canary = `CANARY_${fixture.suffix}`;
+    const resource = {
+      attributes: Object.entries({
+        "occ.managed_by": "openclaw-enterprise",
+        "occ.role": "agent",
+        "openclaw.namespace.id": `ns_${randomUUID()}`,
+        "openclaw.agent.id": `agt_${randomUUID()}`,
+        "openclaw.revision.id": `rev_${randomUUID()}`,
+        "k8s.pod.uid": `pod-${randomUUID()}`,
+        "container.id": `containerd://${randomUUID()}`,
+      }).map(([key, value]) => ({ key, value: { stringValue: value } })),
+    };
+    // Codex 0.158 tracing JSON, as `LOG_FORMAT=json` prints it.
+    const tracing = (level, target, fields, span) => ({
+      timeUnixNano: String(BigInt(Date.now()) * 1000000n),
+      body: {
+        stringValue: JSON.stringify({
+          timestamp: new Date().toISOString(),
+          level,
+          fields,
+          target,
+          ...(span === undefined ? {} : { span, spans: [] }),
+        }),
+      },
+      attributes: [{ key: "log.iostream", value: { stringValue: "stderr" } }],
+    });
+    const turn = { name: "turn", model: canary, "turn.id": canary, "thread.id": canary };
+    await postLogs(receiverAddress, [
+      {
+        resource,
+        scopeLogs: [
+          {
+            logRecords: [
+              tracing("INFO", "codex_core::tasks", { message: "new" }, turn),
+              tracing("INFO", "codex_core::tasks", { message: "enter" }, turn),
+              tracing("INFO", "codex_core::tasks", { message: "exit" }, turn),
+              tracing("INFO", "codex_core::tasks", { message: "close", "time.busy": canary }, turn),
+              tracing(
+                "INFO",
+                "codex_app_server::app_server_tracing",
+                { message: "enter" },
+                {
+                  name: "app_server.request",
+                },
+              ),
+              tracing(
+                "INFO",
+                "codex_app_server::app_server_tracing",
+                { message: "new" },
+                {
+                  name: "app_server.request",
+                },
+              ),
+              tracing("INFO", "codex_core::tools::parallel", {
+                message: "tool call completed",
+                tool_name: "shell",
+                call_id: canary,
+                turn_id: canary,
+              }),
+              tracing("INFO", "codex_core::tools::parallel", {
+                message: "tool call completed",
+                tool_name: `${canary} "x"`,
+              }),
+              tracing("INFO", "codex_app_server", {
+                message:
+                  "received shutdown signal; entering graceful restart drain (connections=0, runningAssistantTurns=0, new client turns rejected)",
+              }),
+              // Transport records below warn are not reviewed operational output.
+              tracing("INFO", "codex_app_server_transport::transport::websocket", {
+                message: "websocket client connected",
+                peer_addr: "127.0.0.1:41000",
+              }),
+              tracing("INFO", "codex_app_server", {
+                message: "outbound router task exited (channel closed)",
+              }),
+              // Unreviewed message text keeps the event name as its body.
+              tracing("ERROR", "codex_app_server", {
+                message: `Failed to deserialize JSONRPCMessage: invalid type: string "${canary}"`,
+              }),
+              tracing("WARN", "codex_app_server", { message: `failed to refresh token ${canary}` }),
+              tracing("WARN", "codex_app_server", { message: `${"x".repeat(30)}${canary}` }),
+              // Model failures from any Codex target, never the codex_otel content targets.
+              // Only app-server and the fixed codex_core retry messages keep their text.
+              tracing("WARN", "codex_core::responses_retry", {
+                message: "stream connection failed; waiting to retry",
+                error: canary,
+                prompt: canary,
+              }),
+              tracing("WARN", "codex_otel::log_only", {
+                message: "stream connection failed; waiting to retry",
+              }),
+              // codex_core can interpolate chat text into a warning; plain prose
+              // that passes the plain-text pattern still keeps the event name.
+              tracing("WARN", "codex_core::event_mapping", {
+                message: "Output text in user message: deploy the payroll service now",
+              }),
+              tracing("ERROR", "codex_core::session::handlers", {
+                message: "Failed to apply execpolicy amendment: rm allowed",
+              }),
+              tracing("INFO", "codex_core::client", { message: "using model" }),
+            ],
+          },
+        ],
+      },
+    ]);
+    const records = async () =>
+      exportedRecords(fixture.out, (_resource, record) => ({
+        attributes: attributes(record.attributes),
+        record,
+      }));
+    await waitFor(async () => (await records()).length >= 12);
+    await delay(1_000);
+    const exported = await records();
+    const summary = exported
+      .map(({ attributes: kept, record }) =>
+        JSON.stringify([
+          record.severityText,
+          kept["event.name"],
+          record.body.stringValue,
+          kept["occ.codex.tool_name"] ?? null,
+        ]),
+      )
+      .sort();
+    assert.deepEqual(
+      summary,
+      [
+        ["INFO", "codex.turn", "turn started", null],
+        ["INFO", "codex.turn", "turn completed", null],
+        ["INFO", "codex.tool_call", "tool call completed", "shell"],
+        ["INFO", "codex.tool_call", "tool call completed", null],
+        [
+          "INFO",
+          "codex.operational",
+          "received shutdown signal; entering graceful restart drain (connections=0, runningAssistantTurns=0, new client turns rejected)",
+          null,
+        ],
+        ["INFO", "codex.operational", "outbound router task exited (channel closed)", null],
+        ["ERROR", "codex.operational", "codex.operational", null],
+        ["WARN", "codex.operational", "codex.operational", null],
+        ["WARN", "codex.operational", "codex.operational", null],
+        ["WARN", "codex.operational", "stream connection failed; waiting to retry", null],
+        ["WARN", "codex.operational", "codex.operational", null],
+        ["ERROR", "codex.operational", "codex.operational", null],
+      ]
+        .map((entry) => JSON.stringify(entry))
+        .sort(),
     );
     assert.doesNotMatch(JSON.stringify(exported), /CANARY_/);
   },

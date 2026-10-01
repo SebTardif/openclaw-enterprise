@@ -21,13 +21,13 @@ import type {
   AuthorizationDecision,
   AuthorizationRequest,
   ComputeDriver,
-  ComputeLifecycleHooks,
   Configuration,
   ConfigurationDriver,
   CredentialGatewayDriver,
   CredentialSource,
   CredentialSourceMetadata,
   CredentialSourceStatus,
+  CredentialWithdrawal,
   CredentialSourceType,
   AuditEvent,
   Driver,
@@ -91,10 +91,8 @@ import type {
 import {
   normalizeInitialWorkspaceFiles,
   normalizeWorkspaceDefaultsId,
-  DRIVER_CAPABILITIES,
   PERMISSION_ACTIONS,
   RESOURCE_KINDS,
-  SANDBOX_FACETS,
   admitLoggingConfiguration,
   normalizeLoggingLevel,
   normalizePluginDesiredState,
@@ -107,6 +105,12 @@ import {
   freezeAgentRevision,
 } from "@openclaw-enterprise/contracts";
 import { asRecord, immutableCopy, isNonEmptyString } from "@openclaw-enterprise/utils";
+import { resolveConfiguredHarnessId } from "./configured-harness.ts";
+import {
+  capability,
+  driverHasCapabilityContract,
+  driverHasValidLifecycleHooks,
+} from "./driver-contract.ts";
 import {
   AgentDeletingError,
   AgentPrincipalAuthorizationError,
@@ -117,7 +121,6 @@ import {
   PluginDiscoveryError,
   ChannelDirectoryError,
   ChannelCredentialError,
-  ConfigurationHarnessError,
   NamespaceNotEmptyError,
   NamespaceNotReadyError,
   NativeWorkerSupportError,
@@ -133,6 +136,7 @@ import {
 import {
   readRuntimeLogPage,
   readSandboxLogPage,
+  runtimeLogPageAtLevel,
   RuntimeLogReadError,
   SANDBOX_LOG_RETENTION,
   validRuntimeDescription,
@@ -280,6 +284,7 @@ export {
   type ServiceAccountRepository,
   type TransactionalAuditWriter,
 } from "./state/platform-state.ts";
+export { resolveConfiguredHarnessId } from "./configured-harness.ts";
 export { PostgresCommitOutcomeUnknownError };
 export {
   PostgresHumanAuthentication,
@@ -301,6 +306,7 @@ export type {
   HumanAuthenticationAttemptKey,
   HumanAuthenticationAttempt,
   HumanAuthenticationDenial,
+  PostgresHumanAuthenticationOptions,
 } from "./state/human-authentication.ts";
 export {
   HumanAuthenticationMaintenanceRefusedError,
@@ -351,6 +357,9 @@ export {
   type WorkResult,
 } from "./state/postgres-work-queue.ts";
 export {
+  CREDENTIAL_WITHDRAWAL_TARGET,
+  credentialWithdrawalWorkKey,
+  isCredentialWithdrawalWork,
   validateRuntimeFailureEvidence,
   type DeploymentStatus,
   type DeploymentStatusError,
@@ -487,6 +496,19 @@ export interface CreateCredentialSourceInput {
   readonly secrets?: Readonly<Record<string, SecretReference>>;
 }
 
+export interface AgentCredentialSourceInput {
+  readonly namespaceId: string;
+  readonly agentId: string;
+  readonly credentialSourceId: string;
+}
+
+export interface UpdateCredentialSourceInput {
+  readonly namespaceId: string;
+  readonly credentialSourceId: string;
+  /** Replacement references for the same fields; omit to re-send the current Secret values. */
+  readonly secrets?: Readonly<Record<string, SecretReference>>;
+}
+
 export interface UpdateSecretInput {
   readonly namespaceId: string;
   readonly secretId: string;
@@ -584,13 +606,6 @@ const RUNTIME_LOG_REQUEST_TIMEOUT_MS = 10_000;
  */
 const CREDENTIAL_REGISTRATION_FENCE_MS = 2 * CREDENTIAL_GATEWAY_TIMEOUT_MS + 10_000;
 
-const COMPUTE_LIFECYCLE_PHASES = [
-  "afterNamespacePrepared",
-  "beforeWorkloadStart",
-  "beforeWorkloadStop",
-  "beforeNamespaceDelete",
-] as const satisfies readonly (keyof ComputeLifecycleHooks)[];
-
 const RUNTIME_DIAGNOSTIC_IDENTIFIER = /^[A-Za-z0-9._~:@-]{1,64}$/u;
 const RUNTIME_DIAGNOSTIC_TIMESTAMP =
   /^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[.][0-9]{3}Z$/u;
@@ -640,377 +655,11 @@ type PluginDiscoveryCredential = {
   readonly oauthLogin?: SecretReference;
 };
 
-function capability(value: unknown): value is DriverCapability {
-  return typeof value === "string" && DRIVER_CAPABILITIES.some((candidate) => candidate === value);
-}
-
-function driverHasCapabilityContract(driver: Driver): boolean {
-  const candidate = driver as unknown as Record<string, unknown>;
-  if (driver.capability === "iam") {
-    return (
-      typeof candidate.lookupIdentity === "function" &&
-      typeof candidate.authorize === "function" &&
-      [
-        "listNamespaceRoles",
-        "getNamespaceRole",
-        "createNamespaceRole",
-        "deleteNamespaceRole",
-        "listNamespaceAccessBindings",
-        "getNamespaceAccessBinding",
-        "createNamespaceAccessBinding",
-        "deleteNamespaceAccessBinding",
-      ].every(
-        (operation) =>
-          candidate[operation] === undefined || typeof candidate[operation] === "function",
-      )
-    );
-  }
-  if (driver.capability === "configuration") {
-    return ["create", "read", "update", "delete", "validate"].every(
-      (operation) => typeof candidate[operation] === "function",
-    );
-  }
-  if (driver.capability === "secret") {
-    return (
-      ["create", "update", "delete", "resolve"].every(
-        (operation) => typeof candidate[operation] === "function",
-      ) &&
-      (candidate.withValue === undefined || typeof candidate.withValue === "function")
-    );
-  }
-  if (driver.capability === "credential_gateway") {
-    return [
-      "listSourceTypes",
-      "registerSource",
-      "updateSource",
-      "rotateSource",
-      "sourceStatus",
-      "removeSource",
-      "attachForRevision",
-      "attachmentStatus",
-      "withdraw",
-    ].every((operation) => typeof candidate[operation] === "function");
-  }
-  if (driver.capability === "service_account") {
-    return ["create", "createCredential", "delete"].every(
-      (operation) => typeof candidate[operation] === "function",
-    );
-  }
-  if (driver.capability === "sandbox") {
-    return (
-      sandboxFacets(candidate.facets) &&
-      (candidate.configureAgent === undefined || typeof candidate.configureAgent === "function") &&
-      (candidate.ensureNamespace === undefined ||
-        typeof candidate.ensureNamespace === "function") &&
-      (candidate.provisionHarness === undefined ||
-        typeof candidate.provisionHarness === "function") &&
-      (candidate.readSandboxLogs === undefined ||
-        typeof candidate.readSandboxLogs === "function") &&
-      typeof candidate.cleanup === "function"
-    );
-  }
-  if (driver.capability === "plugin") {
-    return typeof candidate.listCatalog === "function";
-  }
-  if (driver.capability === "channel") {
-    return (
-      typeof candidate.lookupDirectory === "function" &&
-      (candidate.validateCredentials === undefined ||
-        typeof candidate.validateCredentials === "function")
-    );
-  }
-  if (driver.capability === "repo") {
-    return (
-      ["listOptions", "resolve", "open", "status", "close"].every(
-        (operation) => typeof candidate[operation] === "function",
-      ) &&
-      typeof candidate.maintenanceIntervalMs === "number" &&
-      Number.isFinite(candidate.maintenanceIntervalMs) &&
-      candidate.maintenanceIntervalMs > 0
-    );
-  }
-  return (
-    typeof candidate.ensureNamespace === "function" &&
-    typeof candidate.deleteNamespace === "function" &&
-    typeof candidate.prepareRevision === "function" &&
-    typeof candidate.retireRevision === "function" &&
-    (candidate.getRuntimeImages === undefined ||
-      typeof candidate.getRuntimeImages === "function") &&
-    (candidate.resolveSandboxNamespace === undefined ||
-      typeof candidate.resolveSandboxNamespace === "function") &&
-    (candidate.getAgentRuntimeCredentialStatus === undefined ||
-      typeof candidate.getAgentRuntimeCredentialStatus === "function") &&
-    (candidate.provisionAgentRuntimeCredentials === undefined ||
-      typeof candidate.provisionAgentRuntimeCredentials === "function") &&
-    (candidate.diagnoseAgentDeployment === undefined ||
-      typeof candidate.diagnoseAgentDeployment === "function") &&
-    (candidate.describeAgentRuntime === undefined ||
-      typeof candidate.describeAgentRuntime === "function") &&
-    (candidate.readAgentRuntimeLogs === undefined ||
-      typeof candidate.readAgentRuntimeLogs === "function") &&
-    (candidate.deleteAgentRuntimeCredentials === undefined ||
-      typeof candidate.deleteAgentRuntimeCredentials === "function")
-  );
-}
-
-function sandboxFacets(value: unknown): value is readonly SandboxFacet[] {
-  if (!Array.isArray(value) || value.length === 0) {
-    return false;
-  }
-  const seen = new Set<string>();
-  const allowed = new Set<string>(SANDBOX_FACETS);
-  for (const facet of value) {
-    if (typeof facet !== "string" || !allowed.has(facet) || seen.has(facet)) {
-      return false;
-    }
-    seen.add(facet);
-  }
-  return true;
-}
-
-function driverHasValidLifecycleHooks(driver: Driver): boolean {
-  const hooks: unknown = driver.computeLifecycleHooks;
-  if (hooks === undefined) {
-    return true;
-  }
-  if (typeof hooks !== "object" || hooks === null || Array.isArray(hooks)) {
-    return false;
-  }
-
-  const candidate = hooks as Record<string, unknown>;
-  const phases: readonly string[] = COMPUTE_LIFECYCLE_PHASES;
-  const keys = Object.keys(candidate);
-  return (
-    keys.length > 0 &&
-    keys.every((key) => phases.includes(key) && typeof candidate[key] === "function")
-  );
-}
-
 function frozenValues(value: unknown): Readonly<OpenClawConfigurationDocument> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     throw new ScopeViolationError("Configuration values must be a JSON object.");
   }
   return immutableCopy(value as OpenClawConfigurationDocument);
-}
-
-function configuredRuntime(value: unknown): string | undefined {
-  const runtimeValue = asRecord(value)?.agentRuntime;
-  if (runtimeValue === undefined) {
-    return undefined;
-  }
-  const runtime = asRecord(runtimeValue);
-  if (runtime === undefined || (runtime.id !== "openclaw" && runtime.id !== "codex")) {
-    throw new ConfigurationHarnessError(
-      "The configured model Harness runtime identity is unsupported.",
-    );
-  }
-  return runtime.id;
-}
-
-function configuredModels(value: unknown): readonly string[] {
-  if (value === undefined) {
-    return [];
-  }
-  const configured = asRecord(value);
-  const fallbacks = configured?.fallbacks;
-  if (fallbacks !== undefined && !Array.isArray(fallbacks)) {
-    throw new ConfigurationHarnessError("Configured Agent model fallbacks must be an array.");
-  }
-  const model = typeof value === "string" ? value : configured?.primary;
-  const models = [model, ...(fallbacks ?? [])].map((selected) => {
-    if (
-      !isNonEmptyString(selected) ||
-      !selected.includes("/") ||
-      selected.startsWith("/") ||
-      selected.endsWith("/")
-    ) {
-      throw new ConfigurationHarnessError(
-        "The configured Agent model must identify its provider and model.",
-      );
-    }
-    return selected;
-  });
-  if (models.some((selected) => selected.split("/", 2)[0] !== models[0]!.split("/", 2)[0])) {
-    throw new ConfigurationHarnessError(
-      "Configured model fallbacks must retain the primary provider.",
-    );
-  }
-  return models;
-}
-
-function matchingSelectableModels(
-  value: Readonly<Record<string, unknown>> | undefined,
-  selectedModel: string | undefined,
-): boolean {
-  if (value === undefined || selectedModel === undefined) {
-    return false;
-  }
-  const selectedRuntime = configuredRuntime(value[selectedModel]);
-  return Object.entries(value).every(
-    ([model, policy]) =>
-      model === selectedModel ||
-      (selectedRuntime !== undefined &&
-        model.split("/", 2)[0] === selectedModel.split("/", 2)[0] &&
-        configuredRuntime(policy) === selectedRuntime),
-  );
-}
-
-function providerModelEntry(
-  provider: Readonly<Record<string, unknown>>,
-  model: string,
-): Readonly<Record<string, unknown>> | undefined {
-  const configured = provider.models;
-  if (configured === undefined) {
-    return undefined;
-  }
-  if (!Array.isArray(configured)) {
-    throw new ConfigurationHarnessError("Configured provider models must be a native model array.");
-  }
-  const matches = configured.filter((candidate) => {
-    const value = asRecord(candidate);
-    return value?.id === model || value?.id === model.split("/", 2)[1];
-  });
-  if (matches.length > 1) {
-    throw new ConfigurationHarnessError("The selected provider model Harness policy is ambiguous.");
-  }
-  return asRecord(matches[0]);
-}
-
-/** Resolve native model policy without treating ignored whole-agent runtime pins as authoritative. */
-export function resolveConfiguredHarnessId(
-  values: Readonly<OpenClawConfigurationDocument>,
-): string {
-  const agents = asRecord(values.agents);
-  const defaults = asRecord(agents?.defaults);
-  const entries = asRecord(agents?.entries);
-  if (agents?.list !== undefined && (!Array.isArray(agents.list) || agents.list.length > 0)) {
-    throw new ConfigurationHarnessError("Configured Agent lists are unsupported.");
-  }
-  const providerConfigurations = asRecord(asRecord(values.models)?.providers);
-  const defaultSelection = configuredModels(defaults?.model);
-  const defaultModels = asRecord(defaults?.models);
-  const candidates: Array<{ model: string; entry?: Readonly<Record<string, unknown>> }> =
-    defaultSelection.map((model) => ({ model }));
-
-  for (const value of Object.values(entries ?? {})) {
-    const entry = asRecord(value);
-    if (entry === undefined) {
-      throw new ConfigurationHarnessError("The configured Agent runtime entry is invalid.");
-    }
-    const selection = entry.model === undefined ? defaultSelection : configuredModels(entry.model);
-    const model = selection[0];
-    if (model === undefined) {
-      throw new ConfigurationHarnessError("The configured Agent runtime model cannot be resolved.");
-    }
-    if (candidates[0] !== undefined && model !== candidates[0].model) {
-      throw new ConfigurationHarnessError("Configured Agent entries must match the primary model.");
-    }
-    const models = asRecord(entry.models);
-    if (entry.models !== undefined && !matchingSelectableModels(models, model)) {
-      throw new ConfigurationHarnessError(
-        "Configured selectable models must match the primary model.",
-      );
-    }
-    candidates.push(...selection.map((model) => ({ model, entry })));
-  }
-
-  if (
-    defaults?.models !== undefined &&
-    !matchingSelectableModels(defaultModels, candidates[0]?.model)
-  ) {
-    throw new ConfigurationHarnessError(
-      "Configured selectable models must match the primary model.",
-    );
-  }
-
-  for (const [providerId, value] of Object.entries(providerConfigurations ?? {})) {
-    const provider = asRecord(value);
-    if (provider === undefined) {
-      throw new ConfigurationHarnessError("The configured Agent model provider is invalid.");
-    }
-    if (provider.models === undefined) {
-      continue;
-    }
-    if (!Array.isArray(provider.models)) {
-      throw new ConfigurationHarnessError(
-        "Configured provider models must be a native model array.",
-      );
-    }
-    if (
-      provider.models.some((value) => {
-        const model = asRecord(value)?.id;
-        return !candidates.some(
-          (candidate) =>
-            candidate.model.split("/", 2)[0] === providerId &&
-            (model === candidate.model || model === candidate.model.split("/", 2)[1]),
-        );
-      })
-    ) {
-      throw new ConfigurationHarnessError(
-        "Configured selectable provider models must match the primary model.",
-      );
-    }
-  }
-
-  if (candidates.length === 0) {
-    return "openclaw";
-  }
-  const resolved = new Set<string>();
-  const plugins = asRecord(asRecord(values.plugins)?.entries);
-
-  for (const candidate of candidates) {
-    const providerId = candidate.model.split("/", 2)[0]!;
-    const provider = asRecord(providerConfigurations?.[providerId]);
-    const providerModel =
-      provider === undefined ? undefined : providerModelEntry(provider, candidate.model);
-    const entryModels = asRecord(candidate.entry?.models);
-    const policies = new Set(
-      [entryModels?.[candidate.model], defaultModels?.[candidate.model], providerModel, provider]
-        .map(configuredRuntime)
-        .filter((runtime): runtime is string => runtime !== undefined),
-    );
-    if (policies.size > 1) {
-      throw new ConfigurationHarnessError(
-        "The selected model has conflicting Harness runtime policies.",
-      );
-    }
-    const selected = [...policies][0];
-    if (
-      selected === undefined &&
-      (providerId === "openai" ||
-        providerId === "codex" ||
-        provider !== undefined ||
-        plugins?.[providerId] !== undefined)
-    ) {
-      throw new ConfigurationHarnessError(
-        "The configured Agent model requires an explicit supported Harness runtime.",
-      );
-    }
-    const codexPlugin = asRecord(plugins?.codex);
-    const codexPluginConfiguration = asRecord(codexPlugin?.config);
-    const codexAppServer = asRecord(codexPluginConfiguration?.appServer);
-    if (
-      selected === "codex" &&
-      providerId !== "codex" &&
-      !(
-        providerId === "openai" &&
-        codexPlugin?.enabled === true &&
-        codexAppServer?.transport === "websocket"
-      )
-    ) {
-      throw new ConfigurationHarnessError(
-        "The Codex Harness requires the native codex model provider.",
-      );
-    }
-    resolved.add(selected ?? "openclaw");
-  }
-
-  if (resolved.size !== 1) {
-    throw new ConfigurationHarnessError(
-      "The configured Agent models select conflicting Harness runtimes.",
-    );
-  }
-  return [...resolved][0]!;
 }
 
 function validExecutionMode(value: unknown): value is HarnessExecutionMode {
@@ -1339,7 +988,9 @@ export class OpenClawController {
     return this.read(async (state) => {
       const deploymentsInProgress = new Set<string>();
       for (const operation of await state.operations.list()) {
-        if (operation.kind !== "agent_revision") {
+        // Credential withdrawal work (CREDENTIAL_WITHDRAWAL_TARGET) targets an active revision
+        // without deploying it; PlatformOperation types the literal.
+        if (operation.kind !== "agent_revision" || operation.target === "credentials_withdrawn") {
           continue;
         }
         const work = await state.operations.findWork(
@@ -2491,7 +2142,10 @@ export class OpenClawController {
     };
     const source = query.source;
     if (source === "sandbox") {
-      return this.readSandboxLogs(principalId, agentId, driver, binding, query, options);
+      return runtimeLogPageAtLevel(
+        await this.readSandboxLogs(principalId, agentId, driver, binding, query, options),
+        query.minLevel,
+      );
     }
     if (typeof driver.readAgentRuntimeLogs !== "function") {
       throw new NotImplementedError(
@@ -2507,7 +2161,7 @@ export class OpenClawController {
         events: false,
       });
       try {
-        return await readRuntimeLogPage({
+        const page = await readRuntimeLogPage({
           description,
           query,
           codec: options.codec,
@@ -2528,6 +2182,7 @@ export class OpenClawController {
             }
           },
         });
+        return runtimeLogPageAtLevel(page, query.minLevel);
       } catch (error) {
         if (error instanceof RuntimeLogReadError) {
           throw new RuntimeLogsError(
@@ -3520,25 +3175,7 @@ export class OpenClawController {
       const type = await this.credentialSourceType(selected, input.type);
       credentialSourceFieldsMatch("config", type.config, config);
       credentialSourceFieldsMatch("secrets", type.secrets, secretRefs);
-      const read: Record<string, string> = {};
-      for (const [field, reference] of Object.entries(secretRefs)) {
-        if (reference.namespaceId !== locked.id) {
-          throw new ScopeViolationError("Credential source Secrets cannot cross Namespaces.");
-        }
-        await this.authorize(principalId, "operate", reference);
-        const secret = await state.secrets.lockSecret(locked.id, reference.id);
-        if (secret === undefined) {
-          throw new ScopeViolationError("The credential source Secret is unavailable.");
-        }
-        const secretDriver = this.secretDriver(secret.driverId);
-        if (secretDriver.withValue === undefined) {
-          throw new DependencyUnavailableError(
-            "The selected Secret Driver cannot supply values to a Credential Gateway.",
-          );
-        }
-        const withValue = secretDriver.withValue.bind(secretDriver);
-        read[field] = await this.secretOperation(() => withValue(secret, async (value) => value));
-      }
+      const read = await this.readCredentialSourceSecrets(state, principalId, locked, secretRefs);
       const registering = await state.credentialSources.createCredentialSource(
         Object.freeze({
           id: this.nextIdentifier("credential_source"),
@@ -3595,6 +3232,109 @@ export class OpenClawController {
       throw new ResourceConflictError("The credential source changed during registration.");
     }
     return this.credentialSourceMetadata(ready, status);
+  }
+
+  /**
+   * Authorizes `operate` on each referenced same-Namespace Secret and reads its current value
+   * for a Credential Gateway call. Values stay in memory for that call only.
+   */
+  private async readCredentialSourceSecrets(
+    state: PlatformUnitOfWork,
+    principalId: string,
+    namespace: Readonly<Namespace>,
+    references: Readonly<Record<string, SecretReference>>,
+  ): Promise<Record<string, string>> {
+    const values: Record<string, string> = {};
+    for (const [field, reference] of Object.entries(references)) {
+      if (reference.namespaceId !== namespace.id) {
+        throw new ScopeViolationError("Credential source Secrets cannot cross Namespaces.");
+      }
+      await this.authorize(principalId, "operate", reference);
+      const secret = await state.secrets.lockSecret(namespace.id, reference.id);
+      if (secret === undefined) {
+        throw new ScopeViolationError("The credential source Secret is unavailable.");
+      }
+      const secretDriver = this.secretDriver(secret.driverId);
+      if (secretDriver.withValue === undefined) {
+        throw new DependencyUnavailableError(
+          "The selected Secret Driver cannot supply values to a Credential Gateway.",
+        );
+      }
+      const withValue = secretDriver.withValue.bind(secretDriver);
+      values[field] = await this.secretOperation(() => withValue(secret, async (value) => value));
+    }
+    return values;
+  }
+
+  /**
+   * Pushes current, or replacement, Secret values to the gateway copy. The gateway call runs
+   * under the source lock, like a Secret update; a failed commit leaves the gateway newer, and
+   * repeating the same request converges. Running Harness processes keep the previous value.
+   */
+  async updateCredentialSource(
+    principalId: string,
+    input: UpdateCredentialSourceInput,
+  ): Promise<Readonly<CredentialSourceMetadata & { readonly status?: CredentialSourceStatus }>> {
+    return this.mutate(async (state) => {
+      const namespace = await this.lockNamespace(state, input.namespaceId);
+      await this.authorize(principalId, "update", {
+        kind: "credential_source",
+        id: input.credentialSourceId,
+        namespaceId: namespace.id,
+      });
+      if (namespace.status !== "ready") {
+        throw new NamespaceNotReadyError();
+      }
+      const source = await state.credentialSources.lockCredentialSource(
+        namespace.id,
+        input.credentialSourceId,
+      );
+      if (!source) {
+        throw new ScopeViolationError(
+          "The credential source does not belong to the exact Namespace.",
+        );
+      }
+      if (source.state !== "ready") {
+        throw new ResourceConflictError("Only a ready credential source can be updated.");
+      }
+      const gateway = this.credentialGatewayDriver(source.driverId);
+      const type = await this.credentialSourceType(gateway, source.type);
+      const secretRefs = Object.freeze({ ...(input.secrets ?? source.secrets) });
+      credentialSourceFieldsMatch("secrets", type.secrets, secretRefs);
+      const values = await this.readCredentialSourceSecrets(
+        state,
+        principalId,
+        namespace,
+        secretRefs,
+      );
+      // The gateway sees Compute's runtime placement, the same Workspace as the paired Sandbox.
+      const placed = await this.credentialNamespace(namespace);
+      const status = await this.credentialGatewayOperation(() =>
+        gateway.updateSource(
+          {
+            namespace: placed,
+            source,
+            signal: AbortSignal.timeout(CREDENTIAL_GATEWAY_TIMEOUT_MS),
+          },
+          { type: source.type, config: source.config, secrets: values },
+        ),
+      );
+      if (status.state === "failed" || status.state === "absent") {
+        throw new DependencyUnavailableError("The Credential Gateway did not update the source.");
+      }
+      const updated =
+        input.secrets === undefined
+          ? source
+          : await state.credentialSources.replaceCredentialSourceSecrets(
+              namespace.id,
+              source.id,
+              secretRefs,
+            );
+      if (updated === undefined) {
+        throw new ResourceConflictError("The credential source changed during the update.");
+      }
+      return this.credentialSourceMetadata(updated, status);
+    });
   }
 
   /**
@@ -5448,6 +5188,116 @@ export class OpenClawController {
       }
       return result;
     });
+  }
+
+  /**
+   * Records a withdrawal of `credentialSourceId` from the Agent's active revision and queues
+   * worker work to revoke it. A replay of a pending withdrawal queues another attempt only when
+   * no earlier attempt is still queued or running; a revoked withdrawal is returned unchanged.
+   */
+  async withdrawAgentCredentialSource(
+    principalId: string,
+    input: AgentCredentialSourceInput,
+  ): Promise<Readonly<CredentialWithdrawal>> {
+    return this.mutate(async (state) => {
+      await this.lockNamespace(state, input.namespaceId);
+      const agent = await state.agents.lockAgent(input.namespaceId, input.agentId);
+      if (agent === undefined) {
+        throw new ScopeViolationError(
+          "The Agent does not belong to the exact Installation and Namespace.",
+        );
+      }
+      await this.authorize(principalId, "operate", {
+        kind: "agent",
+        id: agent.id,
+        namespaceId: agent.namespaceId,
+      });
+      const revision = await this.activeCredentialSourceRevision(state, agent, input);
+      const withdrawal = await state.credentialSources.requestCredentialWithdrawal(
+        Object.freeze({
+          namespaceId: agent.namespaceId,
+          agentId: agent.id,
+          revisionId: revision.id,
+          credentialSourceId: input.credentialSourceId,
+          state: "pending",
+          requestedBy: principalId,
+          requestedAt: this.timestamp(),
+        }),
+      );
+      if (
+        withdrawal.state === "pending" &&
+        !(await state.operations.hasOutstandingCredentialWithdrawalWork(
+          agent.namespaceId,
+          revision.id,
+        ))
+      ) {
+        await this.record(state, {
+          kind: "agent_revision",
+          action: "reconcile",
+          target: "credentials_withdrawn",
+          namespaceId: agent.namespaceId,
+          resourceId: revision.id,
+          actorId: principalId,
+          operationId: crypto.randomUUID(),
+        });
+      }
+      return withdrawal;
+    });
+  }
+
+  async readAgentCredentialWithdrawal(
+    principalId: string,
+    input: AgentCredentialSourceInput,
+  ): Promise<Readonly<CredentialWithdrawal>> {
+    await this.authorize(principalId, "read", {
+      kind: "agent",
+      id: input.agentId,
+      namespaceId: input.namespaceId,
+    });
+    return this.read(async (state) => {
+      await this.exactNamespace(state, input.namespaceId);
+      const agent = await state.agents.findAgent(input.namespaceId, input.agentId);
+      if (agent === undefined || agent.activeRevisionId === undefined) {
+        throw new ScopeViolationError("The Agent has no active revision.");
+      }
+      const withdrawal = await state.credentialSources.findCredentialWithdrawal(
+        agent.namespaceId,
+        agent.activeRevisionId,
+        input.credentialSourceId,
+      );
+      if (withdrawal === undefined) {
+        throw new ScopeViolationError(
+          "The credential source was not withdrawn from the Agent's active revision.",
+        );
+      }
+      return withdrawal;
+    });
+  }
+
+  /** The active revision must hold the source as its frozen Harness authentication. */
+  private async activeCredentialSourceRevision(
+    state: PlatformUnitOfWork,
+    agent: Readonly<Agent>,
+    input: AgentCredentialSourceInput,
+  ): Promise<Readonly<AgentRevision>> {
+    if (agent.status !== "active" || agent.activeRevisionId === undefined) {
+      throw new ResourceConflictError("The Agent has no active revision to withdraw from.");
+    }
+    const revision = await state.revisions.findRevision(
+      agent.namespaceId,
+      agent.id,
+      agent.activeRevisionId,
+    );
+    if (
+      revision === undefined ||
+      revision.harnessAuth.method !== "credential_source" ||
+      revision.harnessAuth.sourceId !== input.credentialSourceId
+    ) {
+      throw new ScopeViolationError(
+        "The Agent's active revision does not use this credential source.",
+      );
+    }
+    return revision;
   }
 
   async stopAgent(

@@ -69,6 +69,49 @@ func TestResourceRequestStopsWhenCommandContextIsCanceled(t *testing.T) {
 	}
 }
 
+func TestCredentialSourceUpdateAndWithdrawalCommandsReachTheirRoutes(t *testing.T) {
+	type call struct{ method, path, body string }
+	var calls []call
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		body, _ := io.ReadAll(request.Body)
+		calls = append(calls, call{request.Method, request.URL.Path, string(body)})
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = writer.Write([]byte(`{"data":{"id":"cs_1","state":"pending","requestedBy":"admin","reason":"CREDENTIAL_WITHDRAWAL_PENDING"},"meta":{"requestId":"req_1"}}`))
+	}))
+	defer server.Close()
+
+	directory := t.TempDir()
+	keyFile := filepath.Join(directory, "service-key.json")
+	if err := os.WriteFile(keyFile, []byte(`{"data":{"key":"test-key"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	replacement := filepath.Join(directory, "replacement.json")
+	secrets := `{"secrets":{"api_key":{"kind":"secret","namespaceId":"ns_1","id":"sec_2"}}}`
+	if err := os.WriteFile(replacement, []byte(secrets), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, test := range []struct {
+		args []string
+		want call
+	}{
+		{[]string{"credential-source", "update", "cs_1"}, call{http.MethodPatch, "/namespaces/ns_1/credential-sources/cs_1", "{}"}},
+		{[]string{"credential-source", "update", "cs_1", "--file", replacement}, call{http.MethodPatch, "/namespaces/ns_1/credential-sources/cs_1", secrets}},
+		{[]string{"agent", "credential-withdrawal", "request", "agt_1", "cs_1"}, call{http.MethodPost, "/namespaces/ns_1/agents/agt_1/credential-sources/cs_1/withdraw", ""}},
+		{[]string{"agent", "credential-withdrawal", "get", "agt_1", "cs_1"}, call{http.MethodGet, "/namespaces/ns_1/agents/agt_1/credential-sources/cs_1/withdrawal", ""}},
+	} {
+		calls = nil
+		command := New(io.Discard, io.Discard)
+		command.SetArgs(append(test.args, "--url", server.URL, "--service-key-file", keyFile, "--namespace", "ns_1"))
+		if err := command.Execute(); err != nil {
+			t.Fatalf("%v: %v", test.args, err)
+		}
+		if len(calls) != 1 || calls[0] != test.want {
+			t.Fatalf("%v: got %+v, want %+v", test.args, calls, test.want)
+		}
+	}
+}
+
 type runtimeLogStub struct {
 	beforeLogPage func(*http.Request)
 	t             *testing.T
@@ -192,19 +235,49 @@ func TestAgentLogsBuildsTheQueryAndDefaultsToTheActiveRevision(t *testing.T) {
 		logPage("v1.a.b", logLine(1, "warn", "slow start")),
 	}}
 	out, _, err := runLogsCommand(t, context.Background(), stub,
-		"agent", "logs", "agt_1", "--source", "gateway", "--pod", "gw-0", "--previous", "--tail", "50", "--since", "10m")
+		"agent", "logs", "agt_1", "--source", "gateway", "--pod", "gw-0", "--previous", "--tail", "50", "--since", "10m", "--level", "warn")
 	if err != nil {
 		t.Fatal(err)
 	}
 	want := url.Values{
 		"source": {"gateway"}, "pod": {"gw-0"}, "previous": {"true"},
-		"tailLines": {"50"}, "sinceSeconds": {"600"},
+		"tailLines": {"50"}, "sinceSeconds": {"600"}, "minLevel": {"warn"},
 	}
 	if !reflect.DeepEqual(stub.queries[0], want) {
 		t.Fatalf("query = %v, want %v", stub.queries[0], want)
 	}
 	if got := strings.TrimSpace(out); got != `2026-09-30T12:00:01.000000001Z WARN openclaw [gateway] slow start method="GET /x" status=503` {
 		t.Fatalf("text output = %q", got)
+	}
+}
+
+func TestAgentLogsFollowKeepsTheLevelOnCursorPolls(t *testing.T) {
+	recordSleeps(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	stub := &runtimeLogStub{t: t, activeID: "rev_1", pages: []func(http.ResponseWriter, url.Values){
+		logPage("v1.first.sig", logLine(1, "info", "ready")),
+		logPage("v1.second.sig", logLine(2, "warn", "slow")),
+	}}
+	stub.beforeLogPage = func(*http.Request) {
+		if len(stub.queries) == 2 {
+			cancel()
+		}
+	}
+	if _, _, err := runLogsCommand(t, ctx, stub,
+		"agent", "logs", "agt_1", "--source", "agent", "--follow", "--level", "info"); err != nil {
+		t.Fatal(err)
+	}
+	if len(stub.queries) != 2 {
+		t.Fatalf("queries = %v", stub.queries)
+	}
+	for index, query := range stub.queries {
+		if got := query.Get("minLevel"); got != "info" {
+			t.Fatalf("query %d minLevel = %q, want info", index, got)
+		}
+	}
+	if got := stub.queries[1].Get("cursor"); got != "v1.first.sig" {
+		t.Fatalf("poll cursor = %q", got)
 	}
 }
 
@@ -235,6 +308,7 @@ func TestAgentLogsRejectsInvalidFlagsBeforeAnyRequest(t *testing.T) {
 		{"agent", "logs", "agt_1", "--source", "gateway", "--tail", "1001"},
 		{"agent", "logs", "agt_1", "--source", "gateway", "--since", "25h"},
 		{"agent", "logs", "agt_1", "--source", "gateway", "--follow", "--previous"},
+		{"agent", "logs", "agt_1", "--source", "gateway", "--level", "unknown"},
 		{"agent", "logs", "agt_1", "--source", "gateway", "-o", "yaml"},
 		{"agent", "runtime", "agt_1", "-o", "text"},
 	} {

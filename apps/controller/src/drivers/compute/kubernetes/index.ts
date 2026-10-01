@@ -48,6 +48,7 @@ import type {
   ComputeReadiness,
   ComputePreflightResult,
   ComputeRevisionContext,
+  CredentialAttachmentStatus,
   CredentialGatewayDriver,
   CredentialSource,
   CredentialSourceAttachment,
@@ -698,6 +699,20 @@ const HARNESS_WORKSPACE_CATEGORIES = Object.freeze([
   ["workspace", "/home/node/workspace"],
   ["generated-images", "/home/node/.codex/generated_images"],
 ] as const);
+// Codex thread rollouts. The Gateway resumes its bound thread by ID after a
+// restart; without its rollout the Harness starts a new thread. The rest of
+// CODEX_HOME (login, config) stays Pod-local. OAuth keeps all of CODEX_HOME,
+// sessions included, in `codex-home`, which a new OAuth source empties.
+const HARNESS_CODEX_SESSIONS_CATEGORY = Object.freeze([
+  "codex-sessions",
+  "/home/node/.codex/sessions",
+] as const);
+
+function harnessWorkspaceCategories(oauth: boolean) {
+  return oauth
+    ? HARNESS_WORKSPACE_CATEGORIES
+    : [...HARNESS_WORKSPACE_CATEGORIES, HARNESS_CODEX_SESSIONS_CATEGORY];
+}
 const GATEWAY_SESSION_DIRECTORY = "/home/node/.openclaw/agents/main/sessions";
 const RESOURCE_REQUIREMENTS_SCHEMA = Object.freeze({
   type: "object",
@@ -4491,6 +4506,56 @@ export class KubernetesComputeDriver implements ComputeDriver {
     );
   }
 
+  /**
+   * Revokes one credential source from the revision's paired Sandbox. The Sandbox identity is
+   * derived exactly as provisioning created it; a missing Namespace or Sandbox has nothing left
+   * to revoke.
+   */
+  async withdrawCredentialSource(
+    revision: Readonly<AgentRevision>,
+    source: Readonly<CredentialSource>,
+    signal: AbortSignal,
+  ): Promise<CredentialAttachmentStatus> {
+    if (
+      revision.compute.id !== this.id ||
+      revision.compute.implementation !== this.implementation
+    ) {
+      throw new Error(
+        "Refusing to withdraw from an AgentRevision pinned to another Compute Driver.",
+      );
+    }
+    const sandboxDriver = this.sandboxDriverForRevision(revision);
+    if (sandboxDriver?.harnessResource === undefined) {
+      throw new ConfigurationFailure(
+        "Credential withdrawal requires a SandboxDriver that identifies the revision's Harness.",
+      );
+    }
+    const { name: namespace, external } = await this.resolveNamespace(revision.namespaceId);
+    const existingNamespace = await this.getNamespace(namespace);
+    if (existingNamespace === undefined) {
+      return Object.freeze({ sourceId: source.id, state: "absent" });
+    }
+    this.verifyNamespaceOwnership(
+      existingNamespace,
+      { namespaceId: revision.namespaceId },
+      external,
+    );
+    const sandboxNamespace = this.sandboxNamespaceForRevision(revision, namespace);
+    const sandbox = sandboxDriver.harnessResource({ namespace: sandboxNamespace, revision });
+    this.verifySandboxResourceRef(sandbox, revision, namespace);
+    const status = await this.requireCredentialGateway().withdraw({
+      namespace: sandboxNamespace,
+      revision,
+      sandbox,
+      sourceId: source.id,
+      signal,
+    });
+    if (status.sourceId !== source.id) {
+      throw new OwnershipFailure("The Credential Gateway withdrew another credential source.");
+    }
+    return status;
+  }
+
   async stopRevision(revision: AgentRevision): Promise<void> {
     this.lifecycleStarted = true;
     if (
@@ -6639,7 +6704,11 @@ export class KubernetesComputeDriver implements ComputeDriver {
       );
     }
     const environment = this.sandboxEnvironmentVariables(container?.env);
-    const workspaceMounts = this.sandboxWorkspaceMounts(spec?.volumes, container?.volumeMounts);
+    const workspaceMounts = this.sandboxWorkspaceMounts(
+      spec?.volumes,
+      container?.volumeMounts,
+      loginMode === "oauth",
+    );
     const serviceAccountToken = this.sandboxServiceAccountToken(
       spec?.volumes,
       container?.volumeMounts,
@@ -7468,6 +7537,7 @@ chmodSync(${JSON.stringify(nodeStatePath)}, 0o700);`;
   private sandboxWorkspaceMounts(
     volumes: unknown,
     volumeMounts: unknown,
+    oauth: boolean,
   ): readonly SandboxWorkspaceMount[] {
     const observedVolumes = Array.isArray(volumes) ? volumes : [];
     const workspaceVolume = observedVolumes.find(
@@ -7489,7 +7559,7 @@ chmodSync(${JSON.stringify(nodeStatePath)}, 0o700);`;
           readOnly: mount?.readOnly === true,
         };
       });
-    const expected = this.harnessWorkspaceVolumeMounts();
+    const expected = this.harnessWorkspaceVolumeMounts(oauth);
     if (workspaceMounts.length !== expected.length) {
       throw new ConfigurationFailure("Dedicated Harness must mount every approved workspace path.");
     }
@@ -8892,8 +8962,8 @@ chmodSync(${JSON.stringify(nodeStatePath)}, 0o700);`;
     }
   }
 
-  private harnessWorkspaceVolumeMounts(): V1VolumeMount[] {
-    return HARNESS_WORKSPACE_CATEGORIES.map(([subPath, mountPath]) => ({
+  private harnessWorkspaceVolumeMounts(oauth: boolean): V1VolumeMount[] {
+    return harnessWorkspaceCategories(oauth).map(([subPath, mountPath]) => ({
       name: HARNESS_WORKSPACE_VOLUME,
       mountPath,
       subPath,
@@ -9952,6 +10022,36 @@ chmodSync(${JSON.stringify(nodeStatePath)}, 0o700);`;
               },
               { name: "seed", secret: { secretName: name, defaultMode: 0o440 } },
             ],
+            // The writer holding the seed sees only codex-home, as the runtime does.
+            // Create that directory as uid 1000 first: a kubelet-created subPath is
+            // root-owned and group- and world-writable, and uid 1000 cannot tighten it.
+            initContainers: [
+              {
+                name: "prepare-oauth-home",
+                image: this.options.images.agent,
+                imagePullPolicy: "IfNotPresent",
+                command: ["node", "-e"],
+                args: [
+                  [
+                    'const { chmodSync, lstatSync, mkdirSync, rmSync } = require("node:fs");',
+                    'const path = "/harness-workspace-state/codex-home";',
+                    // Never let kubelet follow a planted link or mount a file as the home.
+                    "if (lstatSync(path, { throwIfNoEntry: false })?.isDirectory() === false) {",
+                    "  rmSync(path, { force: true });",
+                    "}",
+                    "mkdirSync(path, { recursive: true, mode: 0o700 });",
+                    "chmodSync(path, 0o700);",
+                  ].join("\n"),
+                ],
+                volumeMounts: [{ name: "auth", mountPath: "/harness-workspace-state" }],
+                resources: this.options.resources.agent,
+                securityContext: {
+                  allowPrivilegeEscalation: false,
+                  readOnlyRootFilesystem: true,
+                  capabilities: { drop: ["ALL"] },
+                },
+              },
+            ],
             containers: [
               {
                 name: "oauth-bootstrap",
@@ -9960,13 +10060,13 @@ chmodSync(${JSON.stringify(nodeStatePath)}, 0o700);`;
                 command: ["node", "-e"],
                 args: [CODEX_OAUTH_BOOTSTRAP_ENTRYPOINT + "\nsetInterval(() => {}, 60000);"],
                 env: [
-                  { name: "CODEX_HOME", value: "/auth/codex-home" },
+                  { name: "CODEX_HOME", value: "/auth" },
                   { name: "OCE_CODEX_OAUTH_SOURCE_UID", value: sourceUid },
                   { name: "OCE_CODEX_OAUTH_VOLUME_UID", value: volumeUid },
                   { name: "OCE_CODEX_OAUTH_SEED_PATH", value: "/seed/auth.json" },
                 ],
                 volumeMounts: [
-                  { name: "auth", mountPath: "/auth" },
+                  { name: "auth", mountPath: "/auth", subPath: "codex-home" },
                   { name: "seed", mountPath: "/seed", readOnly: true },
                 ],
                 readinessProbe: {
@@ -9974,7 +10074,7 @@ chmodSync(${JSON.stringify(nodeStatePath)}, 0o700);`;
                     command: [
                       "node",
                       "-e",
-                      'const fs=require("node:fs"); const r=JSON.parse(fs.readFileSync("/auth/codex-home/.oce-oauth.json","utf8")); process.exit(r.sourceUid===process.env.OCE_CODEX_OAUTH_SOURCE_UID && r.volumeUid===process.env.OCE_CODEX_OAUTH_VOLUME_UID ? 0 : 1);',
+                      'const fs=require("node:fs"); const r=JSON.parse(fs.readFileSync("/auth/.oce-oauth.json","utf8")); process.exit(r.sourceUid===process.env.OCE_CODEX_OAUTH_SOURCE_UID && r.volumeUid===process.env.OCE_CODEX_OAUTH_VOLUME_UID ? 0 : 1);',
                     ],
                   },
                   periodSeconds: 2,
@@ -10560,8 +10660,9 @@ chmodSync(${JSON.stringify(nodeStatePath)}, 0o700);`;
         name: HARNESS_WORKSPACE_VOLUME,
         persistentVolumeClaim: { claimName: this.harnessWorkspaceClaimName(agentId) },
       });
-      volumeMounts.push(...this.harnessWorkspaceVolumeMounts());
-      if (harnessAuth?.loginMode === "oauth") {
+      const oauth = harnessAuth?.loginMode === "oauth";
+      volumeMounts.push(...this.harnessWorkspaceVolumeMounts(oauth));
+      if (oauth) {
         // Deliberate P0 scope: native Codex owns refresh on this private disk;
         // OCE cannot refresh, recover a lost bundle, or share it after handoff.
         // TODO(token-broker): Replace this handoff with broker-managed custody.
@@ -10583,12 +10684,16 @@ chmodSync(${JSON.stringify(nodeStatePath)}, 0o700);`;
       });
       (initialization.args as string[])[0] += `
 for (const path of ${JSON.stringify(
-        HARNESS_WORKSPACE_CATEGORIES.map(([subPath]) => `/harness-workspace-state/${subPath}`),
+        harnessWorkspaceCategories(oauth).map(([subPath]) => `/harness-workspace-state/${subPath}`),
       )}) {
   mkdirSync(path, { recursive: true, mode: 0o700 });
   chmodSync(path, 0o700);
 }`;
-      if (harnessAuth?.loginMode !== "oauth") {
+      if (oauth) {
+        // An OAuth home starts without earlier history, as a new OAuth source does.
+        (initialization.args as string[])[0] += `
+require("node:fs").rmSync("/harness-workspace-state/codex-sessions", { recursive: true, force: true });`;
+      } else {
         // A revision without OAuth must not leave a personal login refreshing on the volume.
         (initialization.args as string[])[0] += `
 require("node:fs").rmSync("/harness-workspace-state/codex-home", { recursive: true, force: true });`;
