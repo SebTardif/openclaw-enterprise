@@ -104,6 +104,8 @@ Dedicated Codex preparation and the operator's offline profile generator share
 `scripts/lib/codex-seccomp-profile.mjs:deriveCodexBwrapProfile`. Preparation
 requires an actual workspace write and denied write to a container-writable
 outside path before publishing the selected Localhost profile to the live suite.
+The installed repository credential lanes prepare this profile for Dedicated
+cases; the embedded case does not need it.
 Native runtime-image tests trust a dynamic Codex Docker seccomp profile only when
 `OPENCLAW_ENTERPRISE_CI_STATE` records the exact prepared
 `cluster.codexDockerSeccompProfile` path and SHA. A self-hashed profile without
@@ -166,6 +168,8 @@ Per-file cleanup releases its disposable database; job cleanup removes only stat
 [keep this for the user to add notes. do not change between edits]
 
 ## Changelog
+
+- 2026-10-01 13:58: Limit installed repository Codex profile preparation to Dedicated cases. (01a0b0e4-839a-71b3-9ec1-3b1000b5d06a - 2a51e7c1cbcf6094cc721c183eaa5d7d25f1670a)
 
 - 2026-10-01 13:46: Reconcile the CI impact and installed qualification documentation. (01a0b0e4-839a-71b3-9ec1-3b1000b5d06a - e7297981ed96079d21034af8e38443ff9d7d7705)
 
