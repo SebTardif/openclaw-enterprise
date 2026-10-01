@@ -1481,23 +1481,25 @@ test("installed repository aggregate cannot claim qualification from case result
       ],
     });
   }
-  const result = run(root, [
-    "aggregate",
-    "repository-credentials-installed",
-    "--root",
-    repositoryRoot,
-    "--results-dir",
-    join(root, "results"),
-  ]);
-  assert.equal(result.status, 1);
-  const summary = JSON.parse(result.stdout);
-  assert.equal(summary.status, "incomplete");
-  assert.equal(summary.caseResultsStatus, "passed");
-  assert.equal(summary.qualificationStatus, "not-evaluated");
-  assert.deepEqual(summary.qualificationGaps, [
-    "source-and-image-provenance",
-    "outer-resource-cleanup",
-  ]);
+  for (const target of ["repository-credentials-installed", ...lanes]) {
+    const result = run(root, [
+      "aggregate",
+      target,
+      "--root",
+      repositoryRoot,
+      "--results-dir",
+      join(root, "results"),
+    ]);
+    assert.equal(result.status, 1);
+    const summary = JSON.parse(result.stdout);
+    assert.equal(summary.status, "incomplete");
+    assert.equal(summary.caseResultsStatus, "passed");
+    assert.equal(summary.qualificationStatus, "not-evaluated");
+    assert.deepEqual(summary.qualificationGaps, [
+      "source-and-image-provenance",
+      "outer-resource-cleanup",
+    ]);
+  }
 });
 
 test("installed repository aggregate rejects malformed case and cleanup evidence", async (t) => {
@@ -1561,13 +1563,14 @@ test("installed repository aggregate rejects malformed case and cleanup evidence
       "--results-dir",
       "results",
     ]);
-    assert.equal(result.status, expectedStatus);
+    assert.equal(result.status, 1);
+    assert.equal(JSON.parse(result.stdout).status, expectedStatus);
   };
-  await check(good, 0);
+  await check(good, "incomplete");
   for (const change of variants) {
     const altered = structuredClone(good);
     change(altered);
-    await check(altered, 1);
+    await check(altered, "failed");
   }
 });
 

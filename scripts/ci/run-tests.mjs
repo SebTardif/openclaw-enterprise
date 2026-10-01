@@ -997,7 +997,9 @@ async function aggregateGroup(root, manifest, groupName, resultsDir, needsPath) 
   }
 
   const caseResultsStatus = issues.length === 0 ? "passed" : "failed";
-  const installedRepositorySummary = groupName === "repository-credentials-installed";
+  const installedRepositorySummary =
+    groupName === "repository-credentials-installed" ||
+    (laneNames ?? []).some((name) => name.startsWith("repository-credentials-installed-"));
   return {
     version: 1,
     command: "aggregate",
