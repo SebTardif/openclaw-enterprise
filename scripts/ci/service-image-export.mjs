@@ -32,13 +32,28 @@ const ociJsonLimit = 4 * 1024 * 1024;
 const ociLayerLimit = 512 * 1024 * 1024;
 const ociExpandedLayerLimit = 1024 * 1024 * 1024;
 const ociArchiveLimit = 2 * 1024 * 1024 * 1024;
+const ociTimestampPattern = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/;
 
 function sha256(bytes) {
   return createHash("sha256").update(bytes).digest("hex");
 }
 
+function canonicalize(value) {
+  if (Array.isArray(value)) {
+    return value.map(canonicalize);
+  }
+  if (value && typeof value === "object" && Object.getPrototypeOf(value) === Object.prototype) {
+    return Object.fromEntries(
+      Object.keys(value)
+        .sort()
+        .map((key) => [key, canonicalize(value[key])]),
+    );
+  }
+  return value;
+}
+
 function canonicalHash(value) {
-  return sha256(`${JSON.stringify(value)}\n`);
+  return sha256(`${JSON.stringify(canonicalize(value))}\n`);
 }
 
 function contained(root, path) {
@@ -83,9 +98,8 @@ async function writeJsonAtomic(path, value, { exclusive = false } = {}) {
 export function validateExportRequest(lane, requested) {
   assert.ok(requested === "true" || requested === "false", "Service export must be true or false.");
   if (requested === "true") {
-    assert.equal(
-      lane,
-      exportLane,
+    assert.ok(
+      lane === exportLane,
       "Service export is restricted to repository-credentials-container.",
     );
   }
@@ -93,45 +107,53 @@ export function validateExportRequest(lane, requested) {
 }
 
 export function validateHostedContext(env, repo) {
-  assert.equal(env.GITHUB_REPOSITORY, repository);
-  assert.equal(repo.full_name, repository);
-  assert.equal(repo.default_branch, "main");
-  assert.equal(typeof repo.private, "boolean");
-  assert.equal(env.GITHUB_EVENT_NAME, "workflow_dispatch");
-  assert.equal(env.GITHUB_REF, "refs/heads/main");
-  assert.equal(env.GITHUB_WORKFLOW_REF, `${repository}/${exportWorkflow}@refs/heads/main`);
+  assert.ok(env.GITHUB_REPOSITORY === repository, "Hosted repository identity changed.");
+  assert.ok(repo.full_name === repository, "Repository API identity changed.");
+  assert.ok(repo.default_branch === "main", "Repository default branch changed.");
+  assert.ok(typeof repo.private === "boolean", "Repository visibility is unavailable.");
+  assert.ok(env.GITHUB_EVENT_NAME === "workflow_dispatch", "Hosted event is unsupported.");
+  assert.ok(env.GITHUB_REF === "refs/heads/main", "Hosted branch is unsupported.");
+  assert.ok(
+    env.GITHUB_WORKFLOW_REF === `${repository}/${exportWorkflow}@refs/heads/main`,
+    "Hosted workflow identity changed.",
+  );
   for (const name of ["GITHUB_WORKFLOW_SHA", "GITHUB_SHA", "SOURCE_SHA"]) {
     assert.match(env[name] ?? "", shaPattern, `${name} must be a full commit SHA.`);
   }
-  assert.equal(env.GITHUB_SHA, env.GITHUB_WORKFLOW_SHA);
-  assert.equal(env.SOURCE_SHA, env.GITHUB_WORKFLOW_SHA);
+  assert.ok(env.GITHUB_SHA === env.GITHUB_WORKFLOW_SHA, "Hosted checkout identity changed.");
+  assert.ok(env.SOURCE_SHA === env.GITHUB_WORKFLOW_SHA, "Requested source identity changed.");
   assert.match(env.CI_RUN_ID ?? "", integerPattern);
   assert.match(env.CI_ATTEMPT ?? "", integerPattern);
 }
 
 export function validateLaneIdentity(state, receipt, env) {
-  assert.equal(state.version, 1);
-  assert.equal(state.repositoryRoot, repositoryRoot);
-  assert.equal(state.lane, exportLane);
-  assert.match(state.prefix ?? "", /^openclaw-ci-[a-z0-9-]+$/);
-  assert.ok(Array.isArray(state.resources));
-  assert.equal(receipt.version, 1);
-  assert.equal(receipt.lane, exportLane);
-  assert.equal(receipt.sourceCommit, env.SOURCE_SHA);
-  assert.equal(receipt.sourceTree, env.SOURCE_TREE);
-  assert.equal(receipt.ghVersion, "2.100.0");
-  assert.deepEqual(Object.keys(receipt.images ?? {}).sort(), [...exportRoles].sort());
-  assert.equal(state.resources.length, exportRoles.length);
+  assert.ok(state.version === 1, "Lane state version is unsupported.");
+  assert.ok(state.repositoryRoot === repositoryRoot, "Lane state repository root changed.");
+  assert.ok(state.lane === exportLane, "Lane state name changed.");
+  assert.match(state.prefix ?? "", /^openclaw-ci-[a-z0-9-]+$/, "Lane owner is invalid.");
+  assert.ok(Array.isArray(state.resources), "Lane resources are missing.");
+  assert.ok(receipt.version === 1, "Lane receipt version is unsupported.");
+  assert.ok(receipt.lane === exportLane, "Lane receipt name changed.");
+  assert.ok(receipt.sourceCommit === env.SOURCE_SHA, "Lane receipt source commit changed.");
+  assert.ok(receipt.sourceTree === env.SOURCE_TREE, "Lane receipt source tree changed.");
+  assert.ok(receipt.ghVersion === "2.100.0", "Lane receipt GitHub CLI version changed.");
+  assert.ok(
+    canonicalHash(Object.keys(receipt.images ?? {}).sort()) ===
+      canonicalHash([...exportRoles].sort()),
+    "Lane receipt image roles changed.",
+  );
+  assert.ok(state.resources.length === exportRoles.length, "Lane resource count changed.");
   const resources = new Map();
   for (const resource of state.resources) {
-    assert.equal(resource.kind, "image-tag");
-    assert.equal(resource.owner, state.prefix);
-    assert.equal(resource.status, "ready");
-    assert.match(resource.id ?? "", /^image-tag-[a-f0-9]{12}$/);
-    assert.match(resource.imageId ?? "", digestPattern);
+    assert.ok(resource.kind === "image-tag", "Lane resource kind is unsupported.");
+    assert.ok(resource.owner === state.prefix, "Lane resource ownership changed.");
+    assert.ok(resource.status === "ready", "Lane resource is not ready.");
+    assert.match(resource.id ?? "", /^image-tag-[a-f0-9]{12}$/, "Lane resource ID is invalid.");
+    assert.match(resource.imageId ?? "", digestPattern, "Lane image identity is invalid.");
     assert.match(
       resource.name ?? "",
       /^localhost\/openclaw-ci-image-[a-z0-9-]+\/(service|client|qualification):local$/,
+      "Lane image tag is invalid.",
     );
     const role = /\/(service|client|qualification):local$/.exec(resource.name)?.[1];
     assert.ok(role && !resources.has(role), "Each owned image role must be unique.");
@@ -141,40 +163,67 @@ export function validateLaneIdentity(state, receipt, env) {
     const image = receipt.images[role];
     const resource = resources.get(role);
     assert.ok(resource, `Missing ${role} cleanup resource.`);
-    assert.deepEqual(image, { tag: resource.name, id: resource.imageId });
+    assert.ok(
+      canonicalHash(image) === canonicalHash({ tag: resource.name, id: resource.imageId }),
+      "Lane receipt image does not match its owned cleanup resource.",
+    );
   }
   return resources;
 }
 
 export function validateServiceRecipe(source, baseReference) {
+  assert.ok(
+    !/^[ \t]*#[ \t]*(?:syntax|escape|check)[ \t]*=/imu.test(source),
+    "Service Dockerfile parser directives are not allowed.",
+  );
   const instructions = source
     .split("\n")
     .map((line) => line.trim())
     .filter((line) => line && !line.startsWith("#"));
-  assert.deepEqual(instructions, [
-    `FROM ${baseReference}`,
-    "WORKDIR /app",
-    "COPY package.json ./package.json",
-    "COPY dist ./dist",
-    "RUN chmod -R a=rX /app",
-    "USER node",
-    'ENTRYPOINT ["node", "/app/dist/repository-credentials.js"]',
-  ]);
+  assert.ok(
+    canonicalHash(instructions) ===
+      canonicalHash([
+        `FROM ${baseReference}`,
+        "WORKDIR /app",
+        "COPY package.json ./package.json",
+        "COPY dist ./dist",
+        "RUN chmod -R a=rX /app",
+        "USER node",
+        'ENTRYPOINT ["node", "/app/dist/repository-credentials.js"]',
+      ]),
+    "Service Dockerfile instructions changed.",
+  );
 }
 
-export function validateStagedServiceContext(records, dockerignoreSha256) {
-  assert.ok(records.some(({ path }) => path === "dist/"));
-  assert.ok(records.some(({ path, type }) => path.startsWith("dist/") && type === "file"));
-  assert.ok(records.some(({ path }) => path === "package.json"));
+export function validateStagedServiceContext(records, dockerignoreSha256, servicePackage) {
+  assert.ok(
+    records.some(({ path }) => path === "dist/"),
+    "Staged service output is missing.",
+  );
+  assert.ok(
+    records.some(({ path, type }) => path.startsWith("dist/") && type === "file"),
+    "Staged service output contains no files.",
+  );
+  assert.ok(
+    records.some(({ path }) => path === "package.json"),
+    "Staged service package metadata is missing.",
+  );
   const ignore = records.find(({ path }) => path === ".dockerignore");
-  assert.equal(ignore?.sha256, dockerignoreSha256);
+  assert.ok(ignore?.sha256 === dockerignoreSha256, "Staged service ignore policy changed.");
   for (const record of records) {
     assert.ok(
       record.path === ".dockerignore" ||
         record.path === "package.json" ||
         record.path === "dist/" ||
         record.path.startsWith("dist/"),
-      `Unexpected staged service context path: ${record.path}`,
+      "Staged service context contains an unapproved path.",
+    );
+  }
+  if (servicePackage !== undefined) {
+    assert.ok(
+      canonicalHash(servicePackage) ===
+        canonicalHash({ name: "repository-credentials-service", type: "module" }),
+      "Staged service package metadata changed.",
     );
   }
 }
@@ -189,7 +238,7 @@ async function inventory(root, { normalizeModes = false, omit = new Set() } = {}
       }
       const path = join(directory, entry.name);
       const metadata = await lstat(path);
-      assert.ok(!metadata.isSymbolicLink(), `Artifact closure contains a symlink: ${relativePath}`);
+      assert.ok(!metadata.isSymbolicLink(), "Artifact closure contains a symlink.");
       if (metadata.isDirectory()) {
         records.push({
           path: `${relativePath}/`,
@@ -198,7 +247,7 @@ async function inventory(root, { normalizeModes = false, omit = new Set() } = {}
         });
         await visit(path, relativePath);
       } else {
-        assert.ok(metadata.isFile(), `Artifact closure contains a special file: ${relativePath}`);
+        assert.ok(metadata.isFile(), "Artifact closure contains a special file.");
         const bytes = await readFile(path);
         const executable = (metadata.mode & 0o111) !== 0;
         records.push({
@@ -219,7 +268,32 @@ async function inventory(root, { normalizeModes = false, omit = new Set() } = {}
   return records.sort((left, right) => left.path.localeCompare(right.path));
 }
 
+function normalizeHistory(history, label) {
+  assert.ok(Array.isArray(history) && history.length > 0, `${label} history is missing.`);
+  return history.map((entry) => {
+    if (typeof entry === "string") {
+      return { createdBy: entry, comment: "" };
+    }
+    assert.ok(
+      entry &&
+        typeof entry === "object" &&
+        typeof entry.createdBy === "string" &&
+        typeof (entry.comment ?? "") === "string",
+      `${label} history entry is invalid.`,
+    );
+    return { createdBy: entry.createdBy, comment: entry.comment ?? "" };
+  });
+}
+
 export function validateServiceConfiguration(service, base, serviceHistory, baseHistory) {
+  assert.ok(
+    service.Config && typeof service.Config === "object",
+    "The service image configuration is missing.",
+  );
+  assert.ok(
+    base.Config && typeof base.Config === "object",
+    "The pinned base image configuration is missing.",
+  );
   assert.ok(service.Config?.User === "node", "The service image must use the node user.");
   assert.ok(service.Config?.WorkingDir === "/app", "The service image working directory changed.");
   assert.ok(
@@ -227,14 +301,35 @@ export function validateServiceConfiguration(service, base, serviceHistory, base
       canonicalHash(["node", "/app/dist/repository-credentials.js"]),
     "The service image entrypoint changed.",
   );
-  assert.ok(
-    canonicalHash(service.Config?.Cmd) === canonicalHash(base.Config?.Cmd),
-    "The service image must retain the pinned base command.",
-  );
-  assert.ok(
-    canonicalHash(service.Config?.Env) === canonicalHash(base.Config?.Env),
-    "The service image must not add environment values.",
-  );
+  const approvedConfig = {
+    ...base.Config,
+    User: "node",
+    WorkingDir: "/app",
+    Entrypoint: ["node", "/app/dist/repository-credentials.js"],
+  };
+  const intendedOverrides = new Set(["User", "WorkingDir", "Entrypoint"]);
+  for (const key of Object.keys(base.Config)) {
+    if (!intendedOverrides.has(key)) {
+      assert.ok(
+        canonicalHash(service.Config[key] ?? null) === canonicalHash(approvedConfig[key] ?? null),
+        "The service image changed inherited base configuration.",
+      );
+    }
+  }
+  for (const key of [
+    "Labels",
+    "Healthcheck",
+    "Volumes",
+    "StopSignal",
+    "Shell",
+    "ExposedPorts",
+    "OnBuild",
+  ]) {
+    assert.ok(
+      canonicalHash(service.Config[key] ?? null) === canonicalHash(approvedConfig[key] ?? null),
+      "The service image contains unapproved runtime metadata.",
+    );
+  }
   const baseLayers = base.RootFS?.Layers;
   const serviceLayers = service.RootFS?.Layers;
   assert.ok(Array.isArray(baseLayers) && baseLayers.length > 0);
@@ -243,20 +338,31 @@ export function validateServiceConfiguration(service, base, serviceHistory, base
     canonicalHash(serviceLayers.slice(0, baseLayers.length)) === canonicalHash(baseLayers),
     "The service image must retain the ordered base layers.",
   );
-  assert.ok(Array.isArray(baseHistory) && baseHistory.length > 0);
-  assert.ok(serviceHistory.length > baseHistory.length);
+  const normalizedBaseHistory = normalizeHistory(baseHistory, "Pinned base image");
+  const normalizedServiceHistory = normalizeHistory(serviceHistory, "Service image");
   assert.ok(
-    canonicalHash(serviceHistory.slice(-baseHistory.length)) === canonicalHash(baseHistory),
+    normalizedServiceHistory.length > normalizedBaseHistory.length,
+    "Service-owned image history is missing.",
+  );
+  assert.ok(
+    canonicalHash(normalizedServiceHistory.slice(-normalizedBaseHistory.length)) ===
+      canonicalHash(normalizedBaseHistory),
     "The service image history must retain the pinned base suffix.",
   );
-  const serviceOwnedHistory = serviceHistory.slice(0, -baseHistory.length);
+  const serviceOwnedHistory = normalizedServiceHistory.slice(0, -normalizedBaseHistory.length);
   assert.ok(
     !/(?:authorization|bearer|password|private[ _-]?key|secret|token)[=:][^ ,]+/i.test(
-      serviceOwnedHistory.join("\n"),
+      JSON.stringify(serviceOwnedHistory),
     ),
     "Service-owned image history must not carry credential values.",
   );
-  return { baseLayers, serviceLayers, serviceOwnedHistory };
+  assert.ok(
+    serviceOwnedHistory.every(
+      ({ comment }) => comment === "" || comment === "buildkit.dockerfile.v0",
+    ),
+    "Service-owned image history contains an unapproved comment.",
+  );
+  return { approvedConfig, baseLayers, serviceLayers, serviceOwnedHistory };
 }
 
 function checkedJson(bytes, label) {
@@ -267,7 +373,26 @@ function checkedJson(bytes, label) {
   }
 }
 
-function expectedOci(service) {
+function selectedServiceConfig(service) {
+  return Object.fromEntries(
+    [
+      ["User", service.Config?.User],
+      ["WorkingDir", service.Config?.WorkingDir],
+      ["Entrypoint", service.Config?.Entrypoint],
+      ["Cmd", service.Config?.Cmd],
+      ["Env", service.Config?.Env],
+      ["Labels", service.Config?.Labels],
+      ["Healthcheck", service.Config?.Healthcheck],
+      ["Volumes", service.Config?.Volumes],
+      ["StopSignal", service.Config?.StopSignal],
+      ["Shell", service.Config?.Shell],
+      ["ExposedPorts", service.Config?.ExposedPorts],
+      ["OnBuild", service.Config?.OnBuild],
+    ].filter(([, value]) => value !== undefined),
+  );
+}
+
+function expectedOci(service, approval = {}) {
   return {
     configId: service.Id,
     diffIds: service.RootFS?.Layers,
@@ -276,6 +401,9 @@ function expectedOci(service) {
     entrypoint: service.Config?.Entrypoint,
     command: service.Config?.Cmd ?? null,
     environmentSha256: canonicalHash(service.Config?.Env),
+    approvedConfig: approval.approvedConfig ?? selectedServiceConfig(service),
+    baseConfig: approval.baseConfig,
+    serviceOwnedHistory: approval.serviceOwnedHistory,
   };
 }
 
@@ -308,20 +436,35 @@ async function validateOci(readRoot, readBlob, listBlobNames, expected) {
   );
   const indexBytes = await readRoot("index.json", ociJsonLimit);
   const index = checkedJson(indexBytes, "OCI index");
+  assert.ok(
+    canonicalHash(Object.keys(index).sort()) === canonicalHash(["manifests", "schemaVersion"]),
+    "OCI index contains unapproved metadata.",
+  );
   assert.ok(index.schemaVersion === 2, "OCI index schema is unsupported.");
   assert.ok(index.manifests?.length === 1, "OCI index must name exactly one manifest.");
   const descriptor = index.manifests[0];
+  assert.ok(
+    canonicalHash(Object.keys(descriptor ?? {}).sort()) ===
+      canonicalHash(["annotations", "digest", "mediaType", "size"]),
+    "OCI index descriptor contains unapproved metadata.",
+  );
   assert.ok(
     descriptor.mediaType === "application/vnd.oci.image.manifest.v1+json",
     "OCI manifest media type is unsupported.",
   );
   assert.ok(
-    descriptor.annotations?.["org.opencontainers.image.ref.name"] === "service",
-    "OCI service reference is missing.",
+    canonicalHash(descriptor.annotations) ===
+      canonicalHash({ "org.opencontainers.image.ref.name": "service" }),
+    "OCI service reference metadata changed.",
   );
   const manifestBytes = await readBlob(descriptor.digest, ociJsonLimit);
   assert.ok(descriptor.size === manifestBytes.length, "OCI manifest descriptor size changed.");
   const manifest = checkedJson(manifestBytes, "OCI manifest");
+  assert.ok(
+    canonicalHash(Object.keys(manifest).sort()) ===
+      canonicalHash(["config", "layers", "mediaType", "schemaVersion"]),
+    "OCI manifest contains unapproved metadata.",
+  );
   assert.ok(manifest.schemaVersion === 2, "OCI manifest schema is unsupported.");
   assert.ok(
     manifest.mediaType === "application/vnd.oci.image.manifest.v1+json",
@@ -331,10 +474,26 @@ async function validateOci(readRoot, readBlob, listBlobNames, expected) {
     manifest.config?.mediaType === "application/vnd.oci.image.config.v1+json",
     "OCI config media type is unsupported.",
   );
+  assert.ok(
+    canonicalHash(Object.keys(manifest.config ?? {}).sort()) ===
+      canonicalHash(["digest", "mediaType", "size"]),
+    "OCI config descriptor contains unapproved metadata.",
+  );
   assert.ok(manifest.config?.digest === expected.configId, "OCI config identity changed.");
   const configBytes = await readBlob(manifest.config.digest, ociJsonLimit);
   assert.ok(manifest.config.size === configBytes.length, "OCI config descriptor size changed.");
   const config = checkedJson(configBytes, "OCI config");
+  if (expected.approvedConfig !== undefined) {
+    assert.ok(
+      canonicalHash(config.config) === canonicalHash(expected.approvedConfig),
+      "OCI runtime configuration contains unapproved metadata.",
+    );
+  }
+  assert.ok(
+    canonicalHash(Object.keys(config.rootfs ?? {}).sort()) === canonicalHash(["diff_ids", "type"]),
+    "OCI root filesystem metadata is invalid.",
+  );
+  assert.ok(config.rootfs?.type === "layers", "OCI root filesystem type is unsupported.");
   assert.ok(
     Array.isArray(config.rootfs?.diff_ids) &&
       config.rootfs.diff_ids.length > 0 &&
@@ -359,6 +518,77 @@ async function validateOci(readRoot, readBlob, listBlobNames, expected) {
     canonicalHash(config.config?.Env) === expected.environmentSha256,
     "OCI environment changed.",
   );
+  if (expected.baseConfig) {
+    const mutableTopLevel = new Set(["config", "created", "history", "rootfs"]);
+    const allowedTopLevel = new Set([...Object.keys(expected.baseConfig), ...mutableTopLevel]);
+    assert.ok(
+      Object.keys(config).every((key) => allowedTopLevel.has(key)),
+      "OCI config contains an unapproved top-level field.",
+    );
+    for (const key of Object.keys(expected.baseConfig)) {
+      if (!mutableTopLevel.has(key)) {
+        assert.ok(
+          canonicalHash(config[key]) === canonicalHash(expected.baseConfig[key]),
+          "OCI config changed inherited base metadata.",
+        );
+      }
+    }
+    if (config.created !== undefined) {
+      assert.ok(
+        typeof config.created === "string" &&
+          ociTimestampPattern.test(config.created) &&
+          !Number.isNaN(Date.parse(config.created)),
+        "OCI config creation time is invalid.",
+      );
+    }
+    const baseOciHistory = expected.baseConfig.history ?? [];
+    assert.ok(
+      Array.isArray(config.history) &&
+        config.history.length === baseOciHistory.length + expected.serviceOwnedHistory.length,
+      "OCI config history length changed.",
+    );
+    assert.ok(
+      canonicalHash(config.history.slice(0, baseOciHistory.length)) ===
+        canonicalHash(baseOciHistory),
+      "OCI config changed inherited base history.",
+    );
+    const serviceOciHistory = config.history.slice(baseOciHistory.length);
+    const approvedHistory = [...expected.serviceOwnedHistory].reverse();
+    for (const [index, entry] of serviceOciHistory.entries()) {
+      assert.ok(
+        entry && typeof entry === "object" && !Array.isArray(entry),
+        "OCI service history entry is invalid.",
+      );
+      assert.ok(
+        Object.keys(entry).every((key) =>
+          ["comment", "created", "created_by", "empty_layer"].includes(key),
+        ),
+        "OCI service history contains unapproved metadata.",
+      );
+      if (entry.created !== undefined) {
+        assert.ok(
+          typeof entry.created === "string" &&
+            ociTimestampPattern.test(entry.created) &&
+            !Number.isNaN(Date.parse(entry.created)),
+          "OCI service history creation time is invalid.",
+        );
+      }
+      if (entry.empty_layer !== undefined) {
+        assert.ok(
+          typeof entry.empty_layer === "boolean",
+          "OCI service history layer flag is invalid.",
+        );
+      }
+      assert.ok(
+        entry.created_by === approvedHistory[index].createdBy,
+        "OCI service history instruction changed.",
+      );
+      assert.ok(
+        (entry.comment ?? "") === approvedHistory[index].comment,
+        "OCI service history comment changed.",
+      );
+    }
+  }
   assert.ok(
     Array.isArray(manifest.layers) && manifest.layers.length > 0,
     "OCI layers are missing.",
@@ -368,6 +598,11 @@ async function validateOci(readRoot, readBlob, listBlobNames, expected) {
     "OCI manifest and config layer counts differ.",
   );
   for (const [index, layer] of manifest.layers.entries()) {
+    assert.ok(
+      canonicalHash(Object.keys(layer ?? {}).sort()) ===
+        canonicalHash(["digest", "mediaType", "size"]),
+      "OCI layer descriptor contains unapproved metadata.",
+    );
     assert.ok(
       layer.mediaType === "application/vnd.oci.image.layer.v1.tar+gzip" ||
         layer.mediaType === "application/vnd.oci.image.layer.v1.tar",
@@ -414,7 +649,7 @@ async function verifyBlob(layout, digest, limit) {
   return bytes;
 }
 
-export async function validateOciLayout(layout, service) {
+export async function validateOciLayout(layout, service, approval) {
   assert.ok(
     canonicalHash((await readdir(layout)).sort()) ===
       canonicalHash(["blobs", "index.json", "oci-layout"]),
@@ -444,11 +679,11 @@ export async function validateOciLayout(layout, service) {
     (name, limit) => verifyLayoutFile(join(layout, name), limit, `OCI ${name}`),
     (digest, limit) => verifyBlob(layout, digest, limit),
     () => readdir(join(layout, "blobs", "sha256")),
-    expectedOci(service),
+    expectedOci(service, approval),
   );
 }
 
-export async function validateOciArchive(archive, serviceOrExpected) {
+export async function validateOciArchive(archive, serviceOrExpected, approval) {
   const archiveMetadata = await lstat(archive);
   assert.ok(
     archiveMetadata.isFile() && archiveMetadata.nlink === 1,
@@ -484,7 +719,9 @@ export async function validateOciArchive(archive, serviceOrExpected) {
       canonicalHash({ imageLayoutVersion: "1.0.0" }),
     "OCI layout version is unsupported.",
   );
-  const expected = serviceOrExpected.Id ? expectedOci(serviceOrExpected) : serviceOrExpected;
+  const expected = serviceOrExpected.Id
+    ? expectedOci(serviceOrExpected, approval)
+    : serviceOrExpected;
   const readArchiveBlob = async (digest, limit) => {
     assert.ok(digestPattern.test(digest ?? ""), "OCI blob digest is invalid.");
     const bytes = await readMember(`blobs/sha256/${digest.slice("sha256:".length)}`, limit);
@@ -505,7 +742,7 @@ export async function validateOciArchive(archive, serviceOrExpected) {
 async function inspectImage(reference) {
   const result = command(process.env.OCC_DOCKER_BIN ?? "docker", ["image", "inspect", reference]);
   const parsed = checkedJson(result.stdout, "Image inspection");
-  assert.equal(parsed.length, 1);
+  assert.ok(parsed.length === 1, "Image inspection returned an unexpected result count.");
   return parsed[0];
 }
 
@@ -514,7 +751,7 @@ function imageHistory(reference) {
     "history",
     "--no-trunc",
     "--format",
-    "{{json .CreatedBy}}",
+    '{"createdBy":{{json .CreatedBy}},"comment":{{json .Comment}}}',
     reference,
   ])
     .stdout.split("\n")
@@ -525,9 +762,9 @@ function imageHistory(reference) {
 async function requireCheckout(env) {
   const head = command("git", ["rev-parse", "--verify", "HEAD^{commit}"]).stdout.trim();
   const tree = command("git", ["rev-parse", "--verify", "HEAD^{tree}"]).stdout.trim();
-  assert.equal(head, env.SOURCE_SHA);
-  assert.equal(tree, env.SOURCE_TREE);
-  assert.equal(env.GITHUB_WORKFLOW_SHA, env.SOURCE_SHA);
+  assert.ok(head === env.SOURCE_SHA, "Checkout commit changed.");
+  assert.ok(tree === env.SOURCE_TREE, "Checkout tree changed.");
+  assert.ok(env.GITHUB_WORKFLOW_SHA === env.SOURCE_SHA, "Workflow source changed.");
   return { head, tree };
 }
 
@@ -559,11 +796,11 @@ async function exportImage(statePath, receiptPath, outputArgument, env = process
   const dockerignore = await readFile(
     join(repositoryRoot, "deploy/runtime/repository-credentials/.dockerignore"),
   );
-  validateStagedServiceContext(stagedContext, sha256(dockerignore));
-  assert.deepEqual(await readJson(join(stagedRoot, "package.json")), {
-    name: "repository-credentials-service",
-    type: "module",
-  });
+  validateStagedServiceContext(
+    stagedContext,
+    sha256(dockerignore),
+    await readJson(join(stagedRoot, "package.json")),
+  );
   const expectedClosure = await inventory(stagedRoot, {
     normalizeModes: true,
     omit: new Set([".dockerignore"]),
@@ -571,7 +808,7 @@ async function exportImage(statePath, receiptPath, outputArgument, env = process
   const inspected = {};
   for (const role of exportRoles) {
     inspected[role] = await inspectImage(receipt.images[role].tag);
-    assert.equal(inspected[role].Id, receipt.images[role].id);
+    assert.ok(inspected[role].Id === receipt.images[role].id, "Tested image identity changed.");
   }
   const work = await mkdtemp(join(env.RUNNER_TEMP ?? tmpdir(), "repository-service-export-"));
   const container = `openclaw-service-export-${env.GITHUB_RUN_ID}-${env.GITHUB_RUN_ATTEMPT}`;
@@ -579,21 +816,26 @@ async function exportImage(statePath, receiptPath, outputArgument, env = process
     const observedExporter = command(process.env.OCC_SKOPEO_BIN ?? "skopeo", [
       "--version",
     ]).stdout.trim();
-    assert.equal(observedExporter, exporterVersion);
+    assert.ok(observedExporter === exporterVersion, "OCI exporter version changed.");
     const baseConfigOutput = command(process.env.OCC_SKOPEO_BIN ?? "skopeo", [
       "inspect",
       "--config",
       `docker://${baseReference}`,
     ]).stdout;
     const baseConfig = checkedJson(baseConfigOutput, "Base image configuration");
-    assert.equal(baseConfig.os, inspected.service.Os);
-    assert.equal(baseConfig.architecture, inspected.service.Architecture);
+    assert.ok(baseConfig.os === inspected.service.Os, "Pinned base operating system changed.");
+    assert.ok(
+      baseConfig.architecture === inspected.service.Architecture,
+      "Pinned base architecture changed.",
+    );
     const base = {
       Config: baseConfig.config,
       RootFS: { Layers: baseConfig.rootfs?.diff_ids },
     };
     const serviceHistory = imageHistory(receipt.images.service.tag);
-    const baseHistory = (baseConfig.history ?? []).map((entry) => entry.created_by ?? "").reverse();
+    const baseHistory = (baseConfig.history ?? [])
+      .map((entry) => ({ createdBy: entry.created_by ?? "", comment: entry.comment ?? "" }))
+      .reverse();
     const configuration = validateServiceConfiguration(
       inspected.service,
       base,
@@ -609,9 +851,8 @@ async function exportImage(statePath, receiptPath, outputArgument, env = process
     const app = join(work, "app");
     command(process.env.OCC_DOCKER_BIN ?? "docker", ["cp", `${container}:/app`, app]);
     const actualClosure = await inventory(app);
-    assert.deepEqual(
-      actualClosure,
-      expectedClosure,
+    assert.ok(
+      canonicalHash(actualClosure) === canonicalHash(expectedClosure),
       "Final /app bytes and normalized modes must match the staged service closure.",
     );
     command(process.env.OCC_DOCKER_BIN ?? "docker", ["rm", "-f", container]);
@@ -633,7 +874,12 @@ async function exportImage(statePath, receiptPath, outputArgument, env = process
       `docker-daemon:${receipt.images.service.tag}`,
       `oci:${oci}:service`,
     ]);
-    await validateOciLayout(oci, inspected.service);
+    const ociApproval = {
+      approvedConfig: configuration.approvedConfig,
+      baseConfig,
+      serviceOwnedHistory: configuration.serviceOwnedHistory,
+    };
+    await validateOciLayout(oci, inspected.service, ociApproval);
     const archive = join(output, "repository-credentials-service.oci.tar");
     command("tar", [
       "--sort=name",
@@ -649,7 +895,7 @@ async function exportImage(statePath, receiptPath, outputArgument, env = process
       "index.json",
       "oci-layout",
     ]);
-    const ociIdentity = await validateOciArchive(archive, inspected.service);
+    const ociIdentity = await validateOciArchive(archive, inspected.service, ociApproval);
     const archiveBytes = await readFile(archive);
     const metadata = {
       version: 1,
@@ -726,15 +972,22 @@ async function reconcileCleanup(statePath, receiptPath, outputArgument) {
   const output = resolve(outputArgument);
   const metadataPath = join(output, "export.json");
   const metadata = await readJson(metadataPath);
-  assert.equal(metadata.version, 1);
-  assert.equal(metadata.kind, "repository-credentials-service-oci-preparation");
-  assert.equal(metadata.cleanup?.status, "pending");
+  assert.ok(metadata.version === 1, "Service export metadata version is unsupported.");
+  assert.ok(
+    metadata.kind === "repository-credentials-service-oci-preparation",
+    "Service export metadata kind changed.",
+  );
+  assert.ok(metadata.cleanup?.status === "pending", "Service export cleanup is not pending.");
   const receiptBytes = await readFile(resolve(receiptPath));
-  assert.equal(sha256(receiptBytes), metadata.lane?.receiptSha256);
+  assert.ok(
+    sha256(receiptBytes) === metadata.lane?.receiptSha256,
+    "Lane receipt bytes changed before reconciliation.",
+  );
   const receipt = checkedJson(receiptBytes, "Lane receipt");
-  assert.deepEqual(
-    metadata.cleanup.ownedTags,
-    exportRoles.map((role) => receipt.images[role].tag),
+  assert.ok(
+    canonicalHash(metadata.cleanup.ownedTags) ===
+      canonicalHash(exportRoles.map((role) => receipt.images[role].tag)),
+    "Cleanup metadata does not match the lane receipt.",
   );
   await assert.rejects(stat(resolve(statePath)), { code: "ENOENT" });
   for (const tag of metadata.cleanup.ownedTags) {
@@ -758,7 +1011,7 @@ async function reconcileCleanup(statePath, receiptPath, outputArgument) {
     "Inspection container absence could not be verified.",
   );
   const archive = await readFile(join(output, metadata.archive.path));
-  assert.equal(sha256(archive), metadata.archive.sha256);
+  assert.ok(sha256(archive) === metadata.archive.sha256, "OCI archive bytes changed.");
   const archiveIdentity = await validateOciArchive(join(output, metadata.archive.path), {
     configId: metadata.tested.configId,
     diffIds: metadata.oci.diffIds,
@@ -772,7 +1025,11 @@ async function reconcileCleanup(statePath, receiptPath, outputArgument) {
     canonicalHash(archiveIdentity) === canonicalHash(metadata.oci),
     "OCI archive identity changed before upload.",
   );
-  assert.deepEqual((await readdir(output)).sort(), ["export.json", metadata.archive.path].sort());
+  assert.ok(
+    canonicalHash((await readdir(output)).sort()) ===
+      canonicalHash(["export.json", metadata.archive.path].sort()),
+    "Service export output contains an unexpected file.",
+  );
   metadata.cleanup = {
     status: "verified",
     scope: "owned service, client and qualification tags plus the export inspection container",
@@ -784,9 +1041,13 @@ async function reconcileCleanup(statePath, receiptPath, outputArgument) {
 }
 
 async function writeArtifactReceipt(outputArgument, artifactId, artifactDigest, artifactName) {
-  assert.match(artifactId ?? "", integerPattern);
-  assert.match(artifactDigest ?? "", /^(?:sha256:)?[a-f0-9]{64}$/);
-  assert.match(artifactName ?? "", /^repository-service-oci-[1-9][0-9]*-[1-9][0-9]*$/);
+  assert.match(artifactId ?? "", integerPattern, "Artifact ID is invalid.");
+  assert.match(artifactDigest ?? "", /^(?:sha256:)?[a-f0-9]{64}$/, "Artifact digest is invalid.");
+  assert.match(
+    artifactName ?? "",
+    /^repository-service-oci-[1-9][0-9]*-[1-9][0-9]*$/,
+    "Artifact name is invalid.",
+  );
   const output = resolve(outputArgument);
   await mkdir(output, { recursive: false, mode: 0o700 });
   await writeJsonAtomic(
@@ -806,7 +1067,7 @@ async function preflight(env = process.env) {
   const repo = await github(`repos/${repository}`);
   validateHostedContext(env, repo);
   const comparison = await github(`repos/${repository}/compare/${env.SOURCE_SHA}...main`);
-  assert.equal(comparison.status, "identical", "The requested source must equal current main.");
+  assert.ok(comparison.status === "identical", "The requested source must equal current main.");
   await requireCheckout(env);
   const workflow = await github(`repos/${repository}/actions/workflows/ci.yml`);
   const run = await github(`repos/${repository}/actions/runs/${env.CI_RUN_ID}`);

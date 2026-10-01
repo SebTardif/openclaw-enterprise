@@ -196,6 +196,16 @@ test("service recipe and staged context reject any file outside the emitted clos
   assert.throws(() =>
     validateServiceRecipe(`${dockerfile}\nCOPY credentials /root/credentials\n`, base),
   );
+  for (const directive of [
+    "# syntax=docker/dockerfile:1",
+    "# escape=`",
+    "# check=skip=JSONArgsRecommended",
+  ]) {
+    assert.throws(
+      () => validateServiceRecipe(`${directive}\n${dockerfile}`, base),
+      /parser directives are not allowed/,
+    );
+  }
   const ignoreSha = hash(Buffer.from("dist\n"));
   const records = [
     { path: ".dockerignore", type: "file", sha256: ignoreSha },
@@ -203,18 +213,32 @@ test("service recipe and staged context reject any file outside the emitted clos
     { path: "dist/", type: "directory" },
     { path: "dist/service.js", type: "file", sha256: hash(Buffer.from("export {};")) },
   ];
-  validateStagedServiceContext(records, ignoreSha);
+  validateStagedServiceContext(records, ignoreSha, {
+    name: "repository-credentials-service",
+    type: "module",
+  });
   assert.throws(() =>
     validateStagedServiceContext(
       [...records, { path: "provider-token", type: "file", sha256: hash(Buffer.from("x")) }],
       ignoreSha,
     ),
   );
+  assert.throws(() =>
+    validateStagedServiceContext(records, ignoreSha, {
+      name: "repository-credentials-service",
+      type: "module",
+      scripts: { postinstall: "unexpected" },
+    }),
+  );
 });
 
 test("service configuration binds the pinned base and excludes added environment or history credentials", () => {
   const base = {
-    Config: { Env: ["PATH=/usr/local/bin", "NODE_VERSION=24"], Cmd: ["node"] },
+    Config: {
+      Env: ["PATH=/usr/local/bin", "NODE_VERSION=24"],
+      Cmd: ["node"],
+      Labels: { "org.opencontainers.image.base.name": "node" },
+    },
     RootFS: { Layers: [imageId("1")] },
   };
   const service = {
@@ -224,6 +248,7 @@ test("service configuration binds the pinned base and excludes added environment
       Entrypoint: ["node", "/app/dist/repository-credentials.js"],
       Cmd: ["node"],
       Env: [...base.Config.Env],
+      Labels: { ...base.Config.Labels },
     },
     RootFS: { Layers: [...base.RootFS.Layers, imageId("2"), imageId("3")] },
   };
@@ -257,6 +282,27 @@ test("service configuration binds the pinned base and excludes added environment
       baseHistory,
     ),
   );
+  for (const Config of [
+    {
+      ...service.Config,
+      Labels: { ...service.Config.Labels, "org.opencontainers.image.title": "unexpected" },
+    },
+    { ...service.Config, Healthcheck: { Test: ["CMD", "unexpected"] } },
+    { ...service.Config, Volumes: { "/unexpected": {} } },
+    { ...service.Config, StopSignal: "SIGKILL" },
+  ]) {
+    assert.throws(() =>
+      validateServiceConfiguration({ ...service, Config }, base, serviceHistory, baseHistory),
+    );
+  }
+  assert.throws(() =>
+    validateServiceConfiguration(
+      service,
+      base,
+      [{ createdBy: "COPY closure", comment: "unexpected" }, ...baseHistory],
+      baseHistory,
+    ),
+  );
 });
 
 async function ociFixture(
@@ -274,6 +320,10 @@ async function ociFixture(
     diffIds = expandedLayers.map((bytes) => `sha256:${hash(bytes)}`),
     configEnvironment = ["PATH=/usr/bin"],
     serviceEnvironment = configEnvironment,
+    configFields = {},
+    serviceHistoryComment = "buildkit.dockerfile.v0",
+    descriptorAnnotations = {},
+    manifestFields = {},
   } = {},
 ) {
   const directory = await mkdtemp(join(tmpdir(), "service-oci-layout-"));
@@ -285,15 +335,41 @@ async function ociFixture(
     expandedLayers.map((bytes, index) =>
       mediaTypes[index] === "application/vnd.oci.image.layer.v1.tar+gzip" ? gzipSync(bytes) : bytes,
     );
+  const baseHistory = [{ created_by: "FROM pinned node" }];
+  const serviceOwnedHistory = [{ createdBy: "COPY closure", comment: "buildkit.dockerfile.v0" }];
+  const approvedConfig = {
+    Env: configEnvironment,
+    Cmd: ["node"],
+    Labels: { "org.opencontainers.image.base.name": "node" },
+    User: "node",
+    WorkingDir: "/app",
+    Entrypoint: ["node", "/app/dist/repository-credentials.js"],
+  };
+  const baseConfig = {
+    architecture: "amd64",
+    os: "linux",
+    config: {
+      Env: configEnvironment,
+      Cmd: ["node"],
+      Labels: { "org.opencontainers.image.base.name": "node" },
+    },
+    rootfs: { type: "layers", diff_ids: diffIds.slice(0, 1) },
+    history: baseHistory,
+  };
   const config = Buffer.from(
     JSON.stringify({
-      config: {
-        User: "node",
-        WorkingDir: "/app",
-        Entrypoint: ["node", "/app/dist/repository-credentials.js"],
-        Env: configEnvironment,
-      },
+      architecture: "amd64",
+      os: "linux",
+      config: { ...approvedConfig, ...configFields },
       rootfs: { type: "layers", diff_ids: diffIds },
+      history: [
+        ...baseHistory,
+        {
+          created_by: "COPY closure",
+          comment: serviceHistoryComment,
+          empty_layer: true,
+        },
+      ],
     }),
   );
   const configDigest = `sha256:${hash(config)}`;
@@ -314,6 +390,7 @@ async function ociFixture(
         size: config.length,
       },
       layers: layerDescriptors,
+      ...manifestFields,
     }),
   );
   const manifestDigest = `sha256:${hash(manifest)}`;
@@ -328,7 +405,10 @@ async function ociFixture(
           mediaType: "application/vnd.oci.image.manifest.v1+json",
           digest: manifestDigest,
           size: manifest.length,
-          annotations: { "org.opencontainers.image.ref.name": "service" },
+          annotations: {
+            "org.opencontainers.image.ref.name": "service",
+            ...descriptorAnnotations,
+          },
         },
       ],
     }),
@@ -339,11 +419,20 @@ async function ociFixture(
       User: "node",
       WorkingDir: "/app",
       Entrypoint: ["node", "/app/dist/repository-credentials.js"],
+      Cmd: ["node"],
       Env: serviceEnvironment,
+      Labels: { "org.opencontainers.image.base.name": "node" },
     },
     RootFS: { Layers: diffIds },
   };
-  return { blobs, configDigest, directory, layerDescriptors, service };
+  return {
+    approval: { approvedConfig, baseConfig, serviceOwnedHistory },
+    blobs,
+    configDigest,
+    directory,
+    layerDescriptors,
+    service,
+  };
 }
 
 function archiveLayout(layout, archive, extra = []) {
@@ -412,6 +501,45 @@ test("OCI layers bind ordered gzip and plain payloads to every tested diff ID", 
   }
 });
 
+test("OCI export admits only approved runtime, history, manifest, and descriptor metadata", async (t) => {
+  const valid = await ociFixture(t);
+  await validateOciLayout(valid.directory, valid.service, valid.approval);
+
+  for (const [invalid, expectedFailure] of [
+    [
+      await ociFixture(t, {
+        configFields: {
+          Labels: {
+            "org.opencontainers.image.base.name": "node",
+            "org.opencontainers.image.title": "unexpected",
+          },
+        },
+      }),
+      /runtime configuration contains unapproved metadata/,
+    ],
+    [await ociFixture(t, { serviceHistoryComment: "unexpected" }), /history comment changed/],
+    [
+      await ociFixture(t, {
+        descriptorAnnotations: { "org.opencontainers.image.description": "unexpected" },
+      }),
+      /service reference metadata changed/,
+    ],
+    [
+      await ociFixture(t, {
+        manifestFields: {
+          annotations: { "org.opencontainers.image.description": "unexpected" },
+        },
+      }),
+      /manifest contains unapproved metadata/,
+    ],
+  ]) {
+    await assert.rejects(
+      () => validateOciLayout(invalid.directory, invalid.service, invalid.approval),
+      expectedFailure,
+    );
+  }
+});
+
 test("completed OCI archive rejects duplicates, links, and special members", async (t) => {
   const valid = await ociFixture(t);
   const archive = join(valid.directory, "valid.tar");
@@ -471,7 +599,7 @@ test("completed OCI archive rejects duplicates, links, and special members", asy
   }
 });
 
-test("rejected configuration and history values stay out of failure messages", async (t) => {
+test("rejected recipe, receipt, staged, configuration and OCI values stay out of failures", async (t) => {
   const sentinel = "SAFE_REJECTED_SECRET_SENTINEL";
   const fixture = await ociFixture(t, {
     configEnvironment: ["PATH=/usr/bin", `TOKEN=${sentinel}`],
@@ -481,6 +609,20 @@ test("rejected configuration and history values stay out of failure messages", a
     () => validateOciLayout(fixture.directory, fixture.service),
     (error) => !error.message.includes(sentinel),
   );
+  for (const rejected of [
+    await ociFixture(t, {
+      configFields: {
+        Labels: { "org.opencontainers.image.base.name": "node", credential: sentinel },
+      },
+    }),
+    await ociFixture(t, { serviceHistoryComment: sentinel }),
+    await ociFixture(t, { descriptorAnnotations: { unexpected: sentinel } }),
+  ]) {
+    await assert.rejects(
+      () => validateOciLayout(rejected.directory, rejected.service, rejected.approval),
+      (error) => !error.message.includes(sentinel),
+    );
+  }
   const base = {
     Config: { Env: ["PATH=/usr/bin"], Cmd: ["node"] },
     RootFS: { Layers: [imageId("1")] },
@@ -504,6 +646,32 @@ test("rejected configuration and history values stay out of failure messages", a
         [`TOKEN=${sentinel}`, "base"],
         ["base"],
       ),
+  ]) {
+    assert.throws(invocation, (error) => !error.message.includes(sentinel));
+  }
+
+  const dockerfile = await readFile(
+    join(root, "deploy/runtime/repository-credentials/Dockerfile"),
+    "utf8",
+  );
+  const baseReference = /^FROM ([^\s]+)$/m.exec(dockerfile)[1];
+  const stagedRecords = [
+    { path: ".dockerignore", type: "file", sha256: hash(Buffer.from("dist\n")) },
+    { path: "package.json", type: "file", sha256: hash(Buffer.from("{}")) },
+    { path: "dist/", type: "directory" },
+    { path: "dist/service.js", type: "file", sha256: hash(Buffer.from("export {};")) },
+  ];
+  const lane = laneFixture();
+  lane.receipt.images.service = { ...lane.receipt.images.service, credential: sentinel };
+  for (const invocation of [
+    () => validateServiceRecipe(`${dockerfile}\nLABEL credential=${sentinel}\n`, baseReference),
+    () =>
+      validateStagedServiceContext(stagedRecords, stagedRecords[0].sha256, {
+        name: "repository-credentials-service",
+        type: "module",
+        credential: sentinel,
+      }),
+    () => validateLaneIdentity(lane.state, lane.receipt, lane.env),
   ]) {
     assert.throws(invocation, (error) => !error.message.includes(sentinel));
   }

@@ -136,43 +136,23 @@ source, checkout, current `main`, and successful `CI Required` job to describe
 the same source. The workflow has read-only repository and Actions permissions,
 bounded concurrency, and no registry write permission.
 
-The shared lane action defaults `export-service-image` to the exact string
-`"false"`. Any other request is validated before dependency or lane preparation;
-only `"true"` with `repository-credentials-container` is accepted. Normal CI
-callers omit the input and retain their existing setup, execution, cleanup, and
-result upload.
+The shared lane action defaults `export-service-image` to `"false"`; only an
+explicit `"true"` for `repository-credentials-container` enables export. After
+all selected cases pass, the exporter binds the lane receipt to the three
+state-owned image tags and their current configuration identities. It verifies
+the pinned base, service configuration, staged `/app` closure, OCI descriptors,
+ordered filesystem layer identities, and the archive that the workflow would
+upload. Unsupported compression or unsafe archive topology fails the export.
 
-After every selected container case passes, the exporter checks the lane receipt
-against all three ready, state-owned service, client, and qualification tags and
-their current Docker config IDs. It binds the service image to the pinned and
-observed base, checks that the service adds no environment values or credential
-history, and compares the final `/app` inventory, bytes, and normalized modes to
-the staged service closure. It then converts that exact tested tag to an OCI
-layout with the pinned exporter and verifies every descriptor and blob. The OCI
-config digest must equal the tested Docker config ID. Every manifest layer must
-match the config's ordered `diff_ids`: plain layers are hashed directly and gzip
-layers are decompressed under an explicit size bound before hashing. Other
-compression, including zstd, fails closed until this preparation route has
-separate compatibility proof.
-
-After writing the tar, the exporter reopens the exact archive bytes that the
-workflow will upload. It rejects duplicate, unexpected, linked, or special
-members and follows the archived index, manifest, config, and ordered layer
-chain. The archive, OCI manifest, and config identities remain separate in
-`export.json`. Configuration and subprocess rejection messages omit rejected
-values and command output so malformed images cannot copy credential-shaped
-values into workflow logs.
-
-Ordinary lane cleanup runs unconditionally after local export. A separate
-reconciliation step requires the private lane state, all three owned tags, and
-the export inspection container to be absent. It also rehashes and revalidates
-the still-local archive topology and descriptor-to-layer chain before changing
-cleanup status to `verified`. The workflow can upload
-the archive only after the action, including reconciliation, succeeds. It records
-the returned artifact ID and digest in a separate one-day receipt. Both artifacts
-are available to repository readers and state that the output is preparation
-only. A failed test, export, cleanup, absence readback, or archive check leaves no
-service archive upload.
+Ordinary lane cleanup then runs unconditionally. Reconciliation requires the
+private lane state, all three owned tags, and the export inspection container to
+be absent, and it revalidates the local archive before marking cleanup verified.
+Only then can the workflow upload the one-day preparation archive and its
+separate identity receipt. A failed test, export, cleanup, absence readback, or
+archive check leaves no service archive upload. The [CI testing guide](../testing/ci.md#github-actions)
+owns the detailed artifact checks and proof limits; the artifact is not a
+registry reference, installed-lane input, hosted-execution result, or live
+qualification.
 
 ### 5. Clean up and publish the bounded result
 
