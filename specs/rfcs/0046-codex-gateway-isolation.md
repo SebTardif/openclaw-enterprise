@@ -9,7 +9,7 @@ status_note: "Retroactive record. #808, #814 and #824 landed on 2026-10-01 and i
 - **Owner:** freeqaz (implementation PRs). Decision review: maintainers of the Kubernetes Compute Driver and the Harness runtime.
 - **Created:** 2026-10-01
 - **Last updated:** 2026-10-01
-- **RFC PR:** this PR
+- **RFC PR:** [#853](https://github.com/openclaw/openclaw-enterprise/pull/853)
 - **Implementation:** landed [#808][pr-808], [#814][pr-814], [#824][pr-824]; open [#830][pr-830]. Related Harness hardening: [#765][pr-765], [#796][pr-796].
 - **Related:** [Gateway–Harness storage split](28-gateway-harness-storage-split.md), [Harness authentication bindings](30-harness-auth-binding.md), [Dedicated Harness RWO workspace plan](../plans/38-harness-rwo-workspace-plan.md), [Workspace files flow](../../docs/flows/workspace-files.md).
 - **Source baseline:** `main` at `521549dff`; OpenClaw runtime pin `9d9c8568c` (`deploy/runtime/Dockerfile`).
@@ -75,13 +75,16 @@ only when `APP_SERVER_URL` names a remote Codex Harness.
    Gateway process. Timed automations still run Codex turns in the Harness.
 3. **Give the built-in runtime no model (#824).** `pinCodexProviderTransport`
    rewrites every `codex` and `openai` provider row (keys matched after trim and
-   lowercase). Only model-naming fields survive (`CODEX_PROVIDER_KEPT_KEYS`,
-   `CODEX_MODEL_KEPT_KEYS`); `request`, `headers`, `params`, `localService`,
+   lowercase). Only model-naming, limit/cost and `agentRuntime` fields survive
+   (`CODEX_PROVIDER_KEPT_KEYS`, `CODEX_MODEL_KEPT_KEYS`); `request`, `headers`, `params`, `localService`,
    credentials and per-model transport fields are dropped. An authored transport,
    and always the `codex` row, becomes `CODEX_PROVIDER_STUB_URL`
    (`http://127.0.0.1:9`, `api: openai-responses`). A missing `codex` row is
    added because `codex` is a bundled provider. An `openai` row with no authored
-   transport keeps OpenClaw's default, which has no credential in the Gateway.
+   transport keeps OpenClaw's default, which has no credential in the Gateway
+   unless the Configuration's `env`/`env.vars` supplies one (that provider reads
+   `CODEX_API_KEY` or `OPENAI_API_KEY`); a literal `CODEX_API_KEY` is admitted
+   today.
    With transport overrides gone, those rows no longer make Codex declare
    `fallbackRuntime: "openclaw"`. A malformed block fails the Gateway start.
 4. **Persist Codex threads on the Harness volume (#808).** In
@@ -90,8 +93,9 @@ only when `APP_SERVER_URL` names a remote Codex Harness.
    Harness claim at `/home/node/.codex/sessions` for non-OAuth logins
    (`harnessWorkspaceCategories`). OAuth logins already keep all of
    `CODEX_HOME` in `codex-home`; the init step removes `codex-sessions` for an
-   OAuth revision and `codex-home` for a non-OAuth one. Existing Harness Pods
-   roll once when the controller upgrades.
+   OAuth revision and `codex-home` for a non-OAuth one. The changed Deployment
+   template is expected to roll existing Harness Pods once on a controller
+   upgrade; a stop/start on a controller built from #808 was not verified.
 
 Related Harness-side hardening landed in the same window:
 
@@ -123,7 +127,8 @@ flowchart LR
   Model -.->|excluded| Tools
   Operator -->|"/model ... --runtime openclaw"| Builtin
   Builtin -.->|"127.0.0.1:9"| Stub["no model"]
-  Operator -->|"screen terminal_show"| PTY
+  Operator -->|"Control UI terminal panel"| PTY
+  Model -->|"screen terminal_show (no input)"| PTY
   Codex --> Sessions
 ```
 
@@ -137,7 +142,7 @@ injection in any file or web page reaches them. After #808 and #814:
 
 - The model has no Gateway-local file, shell or terminal tool, and cannot edit
   the Gateway config: the `openclaw` delegate is excluded, and the `gateway`
-  tool offers `config.get`, `config.schema.lookup` and owner-only `update.run`.
+  tool offers `config.get`, `config.schema.lookup` and `update.run` on an owner request or operator schedule.
 - It cannot start a non-Codex run. `sessions_spawn` and `subagents` stay
   callable, but every spawn resolved to `codex/<model>`; other refs fail
   `model not allowed` against the allowlist seeded from configured provider rows.
@@ -153,10 +158,13 @@ already admin-level on that Agent:
   `resolveCompatibleAgentRuntimeForProvider` accepts `openclaw` for any
   provider, so no config can forbid it. #824 makes that run fail against the
   stub for `codex` and `openai` rows (live: the model proxy logged no request).
-- `screen terminal_show` opens an operator terminal, a `bash -l` child of the
-  Gateway process. OCE sets nothing under `gateway.terminal`, and OpenClaw
-  enables it unless `gateway.terminal.enabled` is `false`. Codex can no longer
-  type into it (#814), but the operator has a Gateway shell.
+- The operator can open a terminal from the Control UI panel, a `bash -l` child
+  of the Gateway process. OCE sets nothing under `gateway.terminal`, and OpenClaw
+  enables it unless `gateway.terminal.enabled` is `false`
+  (`isTerminalConfigEnabled`). The model-callable `screen` tool is not excluded,
+  so `screen terminal_show` can still make the operator's browser open that
+  panel and its PTY. Codex cannot type into it (`terminal` is withheld, #814),
+  but the operator has a Gateway shell.
 - The rewrite runs only at Gateway start. A later config change, which
   OpenClaw hot-reloads (seen live with `config.set` in D86), is not re-checked
   until the next start. The model can no longer make such a change; an
@@ -211,7 +219,13 @@ The `openai` default-transport case was not run live.
   model `params` make `hasAuthoredProviderRequestParams` true, so Codex declares
   the fallback and every normal turn fails closed in the Gateway. The workspace
   files flow says "Codex never hands that runtime a turn", which is true only
-  for provider rows.
+  for provider rows. The default `openai` row can also pick up a credential
+  from Configuration `env`/`env.vars`: admission forces only `OPENAI_API_KEY`,
+  `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN` and `CODEX_ACCESS_TOKEN` to be
+  `${VAR}` references, so a literal `CODEX_API_KEY` passes, and an
+  `OPENAI_API_KEY` reference can resolve from a Secret binding. #830 strips
+  `OPENAI_*`, `CODEX_*` and `ANTHROPIC_*` names from `env` and rejects every
+  `CODEX_*` name at admission.
 - **#830 is open-ended.** It stubs every provider row, forces an explicit
   `modelPolicy.allow`, strips params and model-credential env names, drops
   `channels.modelByChannel`, and stubs providers named by image, PDF, utility
@@ -220,7 +234,9 @@ The `openai` default-transport case was not run live.
   selected model); that is still true at head `4916f264c`. Keys
   such as `mediaModels`, `voiceModel`, heartbeat or compaction models and cron
   job models are still uncovered. Each new OpenClaw model key is another rule.
-- **Operator terminal.** `screen terminal_show` still opens a Gateway shell.
+- **Operator terminal.** The Control UI terminal panel still opens a Gateway
+  shell, and the model can still open it in the operator's browser through
+  `screen terminal_show` (without input).
 - **Memory flush.** Per #808, upstream memory-flush runs use OpenClaw
   `read`/`write` regardless of `codexDynamicToolsExclude`. Not checked on
   dedicated Codex.
