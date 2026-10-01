@@ -1251,6 +1251,69 @@ test("a workspace-node Gateway keeps owner Codex tool excludes, pins every model
   assert.deepEqual(localConfig.models, localBase.models);
 });
 
+test("a workspace-node Codex Gateway drops channel model overrides and stubs tool, utility and hook model providers", async () => {
+  const config = codexGatewayConfig();
+  // OpenClaw applies a channel override to the turn's primary without the agent
+  // allowlist; the image, PDF, utility and hook models skip it too.
+  config.channels = {
+    slack: { enabled: true },
+    modelByChannel: { slack: { "*": "google/gemini-test" } },
+  };
+  config.agents = {
+    defaults: {
+      model: "openai/gpt-5",
+      imageModel: { primary: "Mistral/pixtral-test", fallbacks: ["xai/grok-vision-test"] },
+      pdfModel: "deepseek/pdf-test",
+      utilityModel: "groq/llama-test",
+    },
+    list: [
+      {
+        id: "main",
+        utilityModel: "cerebras/utility-test",
+        imageModel: { primary: "together/vision-test" },
+        pdfModel: { fallbacks: ["fireworks/pdf-test"] },
+      },
+    ],
+  };
+  config.hooks = {
+    gmail: { model: "openrouter/hook-test" },
+    mappings: [{ match: { path: "inbox" }, model: "perplexity/hook-test" }, null],
+  };
+  const run = await runOpenClawRuntimeHelper(undefined, [], {
+    baseConfig: config,
+    env: { APP_SERVER_URL: "ws://harness.example.test:18790" },
+    workspaceNodeId: "enrolled-node",
+  });
+  const effective = JSON.parse(run.files.get("/home/node/.openclaw/openclaw.json"));
+  assert.deepEqual(effective.channels, { slack: { enabled: true } });
+  const stub = { baseUrl: "http://127.0.0.1:9", api: "openai-responses", models: [] };
+  assert.deepEqual(effective.models.providers, {
+    codex: { baseUrl: "http://127.0.0.1:9", api: "openai-responses" },
+    mistral: stub,
+    xai: stub,
+    deepseek: stub,
+    groq: stub,
+    cerebras: stub,
+    together: stub,
+    fireworks: stub,
+    openrouter: stub,
+    perplexity: stub,
+  });
+  // These models stay out of the session allowlist; only the selection is in it.
+  assert.deepEqual(effective.agents.defaults.modelPolicy, { allow: ["openai/gpt-5"] });
+  assert.deepEqual(effective.agents.defaults.imageModel, config.agents.defaults.imageModel);
+  // A Gateway without a workspace node keeps its channel overrides.
+  const local = await runOpenClawRuntimeHelper(undefined, [], {
+    baseConfig: config,
+    env: { APP_SERVER_URL: "ws://harness.example.test:18790" },
+  });
+  const localConfig = JSON.parse(
+    local.files.get("/home/node/.openclaw/openclaw.json") ??
+      local.files.get("/etc/openclaw/openclaw.json"),
+  );
+  assert.deepEqual(localConfig.channels, config.channels);
+});
+
 test("Gateway launch binds the enrolled node without expanding owner writes or changing its snapshot", async () => {
   const baseConfig = {
     gateway: { nodes: { commands: { allow: ["existing.command"] } } },

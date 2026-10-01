@@ -223,10 +223,12 @@ Other Harnesses are replaced, restarting their Gateway.
   default; `OPENAI_*`, `CODEX_*` and `ANTHROPIC_*` names leave `env` and
   `env.vars`, so it has no credential. Agents get an explicit allowlist of
   provider-qualified refs (other selectors such as `openrouter:auto` are
-  dropped), built from every agent's selections when none applies, and each
-  provider it names gets a stub row. Agent and model `params` are dropped,
-  except recognized `thinking` and fast-mode values. A session switched with
-  `/model <ref> --runtime openclaw` runs in the Gateway with no reachable model.
+  dropped), built from every agent's selections when none applies. Each
+  provider it, an image, PDF or utility model, or a hook model names gets a stub
+  row; `channels.modelByChannel` is removed. Agent and model `params` are
+  dropped, except recognized `thinking` and fast-mode values. A session switched
+  with `/model <ref> --runtime openclaw` runs in the Gateway with no reachable
+  model.
 - Default reads cover the enrolled Agent's Harness workspace and managed skill
   roots. Symlinks are not followed; explicit policies remain authoritative. This
   serves previews, browsing, bootstrap and outputs.

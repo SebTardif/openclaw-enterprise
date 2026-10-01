@@ -2200,19 +2200,36 @@ function dropModelCredentialEnv(config) {
   }
 }
 
-// Every provider a model selection or model allowlist names.
+// Every provider a model selection, model allowlist, tool or utility model, or
+// hook model names. OpenClaw calls the image, PDF and utility models and the
+// hook models without the agent allowlist, so each of their providers needs a
+// stub row too, or its default transport would use a credential from the
+// environment.
+const AGENT_TOOL_MODEL_KEYS = ["utilityModel", "imageModel", "pdfModel"];
+
 function selectedModelProviders(config) {
   const providers = new Set();
+  const refs = [];
   for (const scope of agentModelScopes(config)) {
-    const refs = selectionRefs(scope.model);
+    refs.push(...selectionRefs(scope.model));
+    for (const key of AGENT_TOOL_MODEL_KEYS) refs.push(...selectionRefs(scope[key]));
     if (isPlainObject(scope.models)) refs.push(...Object.keys(scope.models));
     if (hasModelPolicyAllow(scope) && Array.isArray(scope.modelPolicy.allow)) {
       refs.push(...scope.modelPolicy.allow);
     }
-    for (const ref of refs) {
-      const provider = modelRefProvider(ref);
-      if (provider !== undefined) providers.add(provider);
+  }
+  const hooks = config.hooks;
+  if (isPlainObject(hooks)) {
+    if (isPlainObject(hooks.gmail)) refs.push(...selectionRefs(hooks.gmail.model));
+    if (Array.isArray(hooks.mappings)) {
+      for (const mapping of hooks.mappings) {
+        if (isPlainObject(mapping)) refs.push(...selectionRefs(mapping.model));
+      }
     }
+  }
+  for (const ref of refs) {
+    const provider = modelRefProvider(ref);
+    if (provider !== undefined) providers.add(provider);
   }
   return providers;
 }
@@ -2235,7 +2252,15 @@ function stripProviderRequestParams(config) {
   }
 }
 
+// OpenClaw applies a channel's model override to a turn's primary model without
+// the agent allowlist, so it could pick a provider with a credential. On these
+// Gateways the Harness owns the model, so the overrides go.
+function dropChannelModelOverrides(config) {
+  if (isPlainObject(config.channels)) delete config.channels.modelByChannel;
+}
+
 function pinGatewayModelProviders(config) {
+  dropChannelModelOverrides(config);
   const models = config.models ??= {};
   if (!isPlainObject(models)) {
     throw new Error("The models setting must be an object.");

@@ -1777,6 +1777,13 @@ test(
         },
         "google/gemini-test": {},
       },
+      // A tool model's provider skips the allowlist, so it gets a stub row too.
+      imageModel: { primary: "mistral/pixtral-test" },
+    };
+    // A channel model override skips the allowlist as well, so it is removed.
+    configuration.channels = {
+      ...configuration.channels,
+      modelByChannel: { slack: { "*": "google/gemini-test" } },
     };
     const directory = await mkdtemp(join(tmpdir(), "oce-runtime-image-config-"));
     t.after(() => rm(directory, { recursive: true, force: true }));
@@ -1868,6 +1875,8 @@ process.stdout.write(JSON.stringify({
   openaiProvider: config.models.providers.openai,
   anthropicProvider: config.models.providers.anthropic,
   googleProvider: config.models.providers.google,
+  mistralProvider: config.models.providers.mistral,
+  modelByChannel: config.channels?.modelByChannel ?? null,
   defaultParams: config.agents.defaults.params ?? null,
   modelPolicy: config.agents.defaults.modelPolicy,
   modelParams: config.agents.defaults.models[${JSON.stringify(codexModel)}].params,
@@ -1905,6 +1914,8 @@ process.stdout.write(JSON.stringify({
         api: "openai-responses",
       },
       googleProvider: { baseUrl: "http://127.0.0.1:9", api: "openai-responses", models: [] },
+      mistralProvider: { baseUrl: "http://127.0.0.1:9", api: "openai-responses", models: [] },
+      modelByChannel: null,
       defaultParams: null,
       modelPolicy: { allow: Object.keys(configuration.agents.defaults.models) },
       modelParams: { thinking: "high" },
