@@ -220,13 +220,13 @@ Other Harnesses are replaced, restarting their Gateway.
   its models: credentials and overrides (`apiKey`, `request`, `headers`,
   `params`, `localService`) are dropped, and its transport becomes the
   `http://127.0.0.1:9` stub. An `openai` row without one keeps OpenClaw's
-  default, which has no credential in the Gateway. A provider a model selection
-  names gets a stub row. Agent and model `params` are dropped too, except
-  `thinking` and fast-mode controls. A session an operator switches to
-  OpenClaw's built-in runtime with `/model <ref> --runtime openclaw` runs in the
-  Gateway with no reachable model. Codex hands that runtime a turn only for a
-  `thinking` or fast-mode value OpenClaw does not recognize, and it fails the
-  same way.
+  default, which has no credential in the Gateway. Agents get an explicit model
+  allowlist, and every provider it or a model selection names gets a stub row.
+  Agent and model `params` are dropped, except `thinking` and fast mode. A
+  session an operator switches to OpenClaw's built-in runtime with
+  `/model <ref> --runtime openclaw` runs in the Gateway with no reachable model.
+  Codex hands that runtime a turn only for a `thinking` or fast-mode value
+  OpenClaw does not recognize, and it fails the same way.
 - Default reads cover the enrolled Agent's Harness workspace and managed skill
   roots. Symlinks are not followed; explicit policies remain authoritative. This
   serves previews, browsing, bootstrap and outputs.
