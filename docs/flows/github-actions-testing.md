@@ -165,7 +165,7 @@ Per-file cleanup releases its disposable database; job cleanup removes only stat
 
 ## Changelog
 
-- 2026-10-01 06:41: Clarify aggregate case checks and their source-provenance limit. (01a0b0e4-839a-71b3-9ec1-3b1000b5d06a)
+- 2026-10-01 06:41: Clarify aggregate case checks and their source-provenance limit. (01a0b0e4-839a-71b3-9ec1-3b1000b5d06a - 1c02ada5fd0c32ddf46384dd710f83ee385f4458)
 
 - 2026-09-29 22:55: Split browser, PostgreSQL authentication, and image model-probe lanes; cache hosted controller/runtime builds while retaining required result accounting. (01a0f0d0-002a-7dc3-af73-e7d25dfe92e2 - b8d7e48f5837d11e54e04dce40650f7ccc5100f0)
 
