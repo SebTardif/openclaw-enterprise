@@ -88,9 +88,11 @@ A `false` decision is returned as data and is not appended to the audit log.
 **Console.** Agent detail starts the Agent summary read alongside its other reads. Stop and
 deletion panels take a promise of their flag; on `false` they disable the button and show
 "Your access does not include stopping/deleting this Agent." Deploy treats `deploy === false`
-as a disabling reason with its own status text. Both Create new version buttons are disabled
-and a note is shown on `update === false`. The Agent list does the same for Create Agent.
-Any failure of the summary read is ignored.
+as a disabling reason with its own status text. On `update === false` the header Create new
+version button is disabled with a note, and the version list's draft entry is relabelled
+View draft, because a reader can still inspect the draft. The Agent list does the same for
+Create Agent. Any failure of the summary read is ignored. The summary is read with the page,
+so a grant or revocation applies after the next load; the API decides in the meantime.
 
 **Trust and disclosure.** The Agent summary requires Agent read and the Namespace summary
 requires Namespace read, so a caller learns only their own access to a resource they can
@@ -133,9 +135,10 @@ Evidence in the PR:
   Namespace read plus exact Agent read and deploy gets only `deploy`; no denial is audited for
   those answers; an unshared Agent returns an audited 403; a missing Agent returns 404.
 - `tests/browser/console-agent-detail.test.mjs`: a read-only principal sees Create Agent,
-  both Create new version buttons, Stop, Delete and Deploy disabled with reasons, sends no
-  write and records no denial for them; the existing Stop and Delete denial tests withhold the
-  summary and still show the 403 feedback.
+  Create new version, Stop, Delete and Deploy disabled with reasons and a View draft entry,
+  sends no write and records no denial for them; the existing Stop and Delete denial tests
+  withhold the summary and still show the 403 feedback; the sharing test reloads after a new
+  operate grant before stopping.
 
 Not verified: behaviour against an external (non-native) IAM Driver.
 
