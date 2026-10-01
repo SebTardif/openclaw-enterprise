@@ -126,6 +126,13 @@ test("hosted export accepts only the selected main workflow and exact source", (
   ]) {
     assert.throws(() => validateHostedContext({ ...env, ...patch }, repository));
   }
+  const sentinel = "SAFE_REJECTED_SECRET_SENTINEL";
+  for (const key of ["CI_RUN_ID", "CI_ATTEMPT"]) {
+    assert.throws(
+      () => validateHostedContext({ ...env, [key]: sentinel }, repository),
+      (error) => !error.message.includes(sentinel),
+    );
+  }
 });
 
 test("lane receipt must equal all three owned ready cleanup resources", () => {

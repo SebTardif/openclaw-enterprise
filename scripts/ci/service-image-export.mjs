@@ -122,8 +122,8 @@ export function validateHostedContext(env, repo) {
   }
   assert.ok(env.GITHUB_SHA === env.GITHUB_WORKFLOW_SHA, "Hosted checkout identity changed.");
   assert.ok(env.SOURCE_SHA === env.GITHUB_WORKFLOW_SHA, "Requested source identity changed.");
-  assert.match(env.CI_RUN_ID ?? "", integerPattern);
-  assert.match(env.CI_ATTEMPT ?? "", integerPattern);
+  assert.match(env.CI_RUN_ID ?? "", integerPattern, "CI run ID is invalid.");
+  assert.match(env.CI_ATTEMPT ?? "", integerPattern, "CI run attempt is invalid.");
 }
 
 export function validateLaneIdentity(state, receipt, env) {
