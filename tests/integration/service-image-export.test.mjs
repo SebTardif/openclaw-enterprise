@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import {
   chmod,
   link,
@@ -13,6 +14,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
+import { createRequire } from "node:module";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
@@ -836,11 +838,10 @@ test("cleanup reconciliation accepts only absent state, tags and inspection cont
 });
 
 function parseYaml(path) {
-  return JSON.parse(
-    execFileSync(process.env.OCC_YQ_BIN ?? "yq", ["-o=json", ".", path], {
-      encoding: "utf8",
-    }),
-  );
+  // The baseline lane installs the docs site's pinned dependencies before its tests.
+  const requireDocsDependency = createRequire(join(root, "scripts/docs-site/package.json"));
+  const { parse } = requireDocsDependency("yaml");
+  return parse(readFileSync(path, "utf8"));
 }
 
 function assertServiceExportGates(action, workflow) {
