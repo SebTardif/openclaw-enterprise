@@ -1,7 +1,7 @@
 ---
 created: 2026-09-04
 updated: 2026-10-01
-last_updated_session: authoring-run/4b1fd6a0-325c-4f93-892c-94df8fb1f7b0
+last_updated_session: authoring-run/e7e06497-f2b7-4f1c-ab16-75ad3de69b1a
 ---
 
 # GitHub Actions testing flow
@@ -65,7 +65,9 @@ test inventory, environment, required inputs, and preparation settings.
 
 CI uses the event checkout without external service credentials. Impact and Suite Audit start independently. In docs mode, `docs-checks` verifies checkout identity and formatting, then installs, checks, and builds documentation; it runs no conformance, integration, browser, Go, or other product tests. Full mode runs `checks-baseline`, the thirteen-lane matrix, and `runtime-image-fixture`. Kubernetes fixture and observability lanes use `ubuntu-22.04` for bridge netfilter support; `runtime-image-fixture` also uses it. The repository credential platform lane uses `blacksmith-16vcpu-ubuntu-2404`; remaining lanes and audit use `blacksmith-8vcpu-ubuntu-2404`.
 
-For a PR, the selector verifies the tested checkout and merge parents against the event base and head, then compares the base and tested trees. API reference outputs and Markdown under `docs/reference/api/` select full for `openapi:check`. Only nonempty changes to allowlisted regular Markdown files select docs mode; code, configuration, workflow, mixed or unknown changes and non-PR events select full. Missing or unverifiable policy or source evidence selects full or fails closed. Policy comes from the verified PR base; a base without it selects full. `CI Required` independently verifies mode and job outcomes: docs requires successful impact, audit and documentation jobs and skipped full test jobs; full requires successful impact, audit and all fifteen lanes and a skipped documentation job. Missing, failed, cancelled, or unexpectedly skipped selected jobs fail the gate. Full mode aggregates same-source test results; docs mode does not aggregate or invent test artifacts.
+For a PR, the selector verifies the tested checkout and merge parents against the event base and head, then compares the base and tested trees. Git path decoding preserves a leading UTF-8 BOM as filename data; paths outside the allowlist select full. API reference outputs and Markdown under `docs/reference/api/` select full for `openapi:check`. Only nonempty changes to allowlisted regular Markdown files select docs mode; code, configuration, workflow, mixed or unknown changes and non-PR events select full. Missing or unverifiable policy or source evidence selects full or fails closed. Policy comes from the verified PR base; a base without it selects full. `CI Required` independently verifies mode and job outcomes: docs requires successful impact, audit and documentation jobs and skipped full test jobs; full requires successful impact, audit and all fifteen lanes and a skipped documentation job. Missing, failed, cancelled, or unexpectedly skipped selected jobs fail the gate. Full mode aggregates same-source test results; docs mode does not aggregate or invent test artifacts.
+
+The impact job adds an advisory run summary with the selected mode and a fixed reason category. Categories distinguish non-PR events, unavailable event inspection, malformed event JSON, invalid base, head or tested commit identities, checkout or parent mismatch, unavailable base policy, Git inspection failure, empty or malformed diffs, unsupported type changes, non-UTF-8 filenames, ineligible changes and verified documentation selection. Bootstrap guard categories identify their source; selector execution failures fail the impact job. If selection fails or its reason is missing, malformed, or from an older base selector, the summary reports the affected information as unavailable. It includes no changed paths or arbitrary selector output.
 
 The PR can change the `pull_request` workflow definition loaded from its merge checkout, bypassing or replacing these steps despite base-loaded policy. A separately trusted required workflow or equivalent external enforcement is a deployment decision, not an established source property. Hosted behavior, including fork and required-check enforcement, remains unverified.
 
@@ -130,29 +132,22 @@ Required named cases must pass; every skip or TODO fails the lane. There are no 
 `.github/actions/run-ci-lane/action.yml:runs`, and
 `scripts/ci/service-image-export.mjs:validateLaneIdentity`
 
-The manual service export route accepts a full source SHA, CI run ID, and exact
-attempt. Its preflight requires the selected workflow, event SHA, requested
-source, checkout, current `main`, and successful `CI Required` job to describe
-the same source. The workflow has read-only repository and Actions permissions,
-bounded concurrency, and no registry write permission.
+The manual route binds the workflow, event, requested source, checkout, current
+`main`, and a successful `CI Required` run and attempt. It has read-only
+repository and Actions permissions and bounded concurrency.
 
-The shared lane action defaults `export-service-image` to `"false"`; only an
-explicit `"true"` for `repository-credentials-container` enables export. After
-all selected cases pass, the exporter binds the lane receipt to the three
-state-owned image tags and their current configuration identities. It verifies
-the pinned base, service configuration, staged `/app` closure, OCI descriptors,
-ordered filesystem layer identities, and the archive that the workflow would
-upload. Unsupported compression or unsafe archive topology fails the export.
+The shared action defaults `export-service-image` to `"false"`; only explicit
+`"true"` for `repository-credentials-container` enables export. After tests
+pass, the exporter verifies the lane's three owned image tags, configuration,
+pinned base, `/app` closure, OCI descriptors, ordered layers and archive.
+Unsupported compression or unsafe topology fails the export.
 
-Ordinary lane cleanup then runs unconditionally. Reconciliation requires the
-private lane state, all three owned tags, and the export inspection container to
-be absent, and it revalidates the local archive before marking cleanup verified.
-Only then can the workflow upload the one-day preparation archive and its
-separate identity receipt. A failed test, export, cleanup, absence readback, or
-archive check leaves no service archive upload. The [CI testing guide](../testing/ci.md#github-actions)
-owns the detailed artifact checks and proof limits; the artifact is not a
-registry reference, installed-lane input, hosted-execution result, or live
-qualification.
+Cleanup runs unconditionally. Reconciliation requires the lane state, owned
+tags and inspection container to be absent, then revalidates the archive. Only
+success permits a one-day artifact and identity receipt. Any test, export,
+cleanup or readback failure prevents upload. The [CI testing guide](../testing/ci.md#github-actions)
+details the checks and limits; the artifact is preparation material, not a
+registry reference or installed or live qualification.
 
 ### 5. Clean up and publish the bounded result
 
@@ -203,9 +198,15 @@ Per-file cleanup releases its disposable database; job cleanup removes only stat
 
 ## Changelog
 
+- 2026-10-01 10:33: Reconcile CI impact reporting with service artifact preparation. (authoring-run/e7e06497-f2b7-4f1c-ab16-75ad3de69b1a - 6147743b58387eeeec0cf715717e15890afc8a29)
+
 - 2026-10-01 07:46: Bind archived layer payloads to ordered tested diff IDs, reject unsupported compression and unsafe archive topology, and keep rejection output value-free in the accompanying changes. (authoring-run/4b1fd6a0-325c-4f93-892c-94df8fb1f7b0 - 684764243655b81b4835328a84d4c9cf565a1230)
 
 - 2026-10-01 07:32: Describe the opt-in repository credential service image preparation, identity checks, cleanup readback, and restricted artifact handoff in the accompanying changes. (authoring-run/184eda00-e4b4-4887-9730-5feae93ce020 - 93502fd1987502a337fec6ab60b0acb26d920c57)
+
+- 2026-10-01 02:34: Document the advisory impact summary in the accompanying changes. (authoring-run/0f81a0c3-327f-4389-ae2e-89431878a2d7 - c61836797191a0924671eaaec074863fe2d80cfe)
+
+- 2026-10-01 01:06: Preserve Git path byte identity in the selector and document its coverage decision in the accompanying changes. (authoring-run/2403db12-cdf4-4070-aece-2f4b45ff0234 - 5e0906ccd42473596c2006474adf199d42ab74df)
 
 - 2026-09-29 22:55: Split browser, PostgreSQL authentication, and image model-probe lanes; cache hosted controller/runtime builds while retaining required result accounting. (01a0f0d0-002a-7dc3-af73-e7d25dfe92e2 - b8d7e48f5837d11e54e04dce40650f7ccc5100f0)
 
