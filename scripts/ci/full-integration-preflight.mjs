@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 export const fullIntegrationLanes = Object.freeze([
+  "qa-matrix",
   "docker-model",
   "k3d-model",
   "gateway-routing",
@@ -17,6 +18,7 @@ export const fullIntegrationLanes = Object.freeze([
 const lanes = new Set(fullIntegrationLanes);
 const providerAccountEnvironment = "integration-provider-account";
 const laneEnvironments = Object.freeze({
+  "qa-matrix": "integration-qa",
   "docker-model": "integration-model",
   "k3d-model": "integration-model",
   "production-tui": "integration-model",
