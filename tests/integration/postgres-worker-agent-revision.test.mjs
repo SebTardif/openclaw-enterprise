@@ -148,8 +148,29 @@ async function setup(
     grantHarnessSecret = true,
     runtimeAuth = false,
     credentialSource = false,
+    nonModelSources = 0,
   ) {
     const id = `agt_${randomUUID()}`;
+    // Non-model sources, such as API tokens, bind through the Agent's credentialSources list.
+    const credentialSources = [];
+    for (let index = 0; index < nonModelSources; index += 1) {
+      const source = {
+        id: `cs_${randomUUID()}`,
+        namespaceId: namespace.id,
+        name: `${label}-tool-${index}-${randomUUID()}`,
+        type: "bearer-token",
+        config: { host: `api-${index}.example.com`, env_var: `TOOL_TOKEN_${index}` },
+        secrets: {},
+        driverId: CREDENTIAL_GATEWAY_FIXTURE_ID,
+        state: "registering",
+        createdAt: new Date().toISOString(),
+      };
+      await state.transact(async (unit) => {
+        await unit.credentialSources.createCredentialSource(source);
+        await unit.credentialSources.markCredentialSourceReady(namespace.id, source.id);
+      });
+      credentialSources.push({ sourceId: source.id });
+    }
     const configurationId = `cfg_${randomUUID()}`;
     let harnessAuth;
     if (runtimeAuth) {
@@ -209,12 +230,17 @@ async function setup(
         configurationId,
         backendId,
         harnessAuth,
+        ...(credentialSources.length === 0 ? {} : { credentialSources }),
         executionMode,
         servicePrincipalId: `service-agent-${id}`,
         createdAt: new Date().toISOString(),
       });
     });
-    if (harnessAuth.method === "credential_source") {
+    const operatedSources = [
+      ...(harnessAuth.method === "credential_source" ? [harnessAuth.sourceId] : []),
+      ...credentialSources.map(({ sourceId }) => sourceId),
+    ];
+    if (operatedSources.length > 0) {
       // Deployment requires the Agent, like the deploying actor, to operate its source.
       const sourceRoleId = `role-${randomUUID()}`;
       await observerPool.query(
@@ -227,18 +253,20 @@ async function setup(
           JSON.stringify([{ action: "operate", resourceKind: "credential_source" }]),
         ],
       );
-      await observerPool.query(
-        `INSERT INTO occ.iam_access_bindings
-          (id, namespace_id, identity_subject_id, group_subject_id, role_id, resource_kind, resource_id)
-         VALUES ($1, $2, $3, NULL, $4, 'credential_source', $5)`,
-        [
-          `binding-${randomUUID()}`,
-          namespace.id,
-          owner.servicePrincipalId,
-          sourceRoleId,
-          harnessAuth.sourceId,
-        ],
-      );
+      for (const sourceId of operatedSources) {
+        await observerPool.query(
+          `INSERT INTO occ.iam_access_bindings
+            (id, namespace_id, identity_subject_id, group_subject_id, role_id, resource_kind, resource_id)
+           VALUES ($1, $2, $3, NULL, $4, 'credential_source', $5)`,
+          [
+            `binding-${randomUUID()}`,
+            namespace.id,
+            owner.servicePrincipalId,
+            sourceRoleId,
+            sourceId,
+          ],
+        );
+      }
     }
     if (
       (harnessAuth.method === "api_key" || harnessAuth.method === "codex_pat") &&
@@ -293,6 +321,17 @@ async function setup(
     } else {
       harnessAuth = { ...owner.harnessAuth, secretDriverId: secretDriver.id };
     }
+    const credentialSources = [];
+    for (const { sourceId } of owner.credentialSources ?? []) {
+      const source = await state.read((view) =>
+        view.credentialSources.findCredentialSource(namespace.id, sourceId),
+      );
+      credentialSources.push({
+        sourceId,
+        credentialGatewayId: source.driverId,
+        sourceType: source.type,
+      });
+    }
     const approvedHarness =
       harness ??
       (owner.executionMode === "dedicated"
@@ -312,6 +351,7 @@ async function setup(
       compute: { id: compute.id, implementation: compute.implementation },
       ...(plugins === undefined ? {} : { plugins }),
       harnessAuth,
+      ...(credentialSources.length === 0 ? {} : { credentialSources }),
       servicePrincipalId: owner.servicePrincipalId,
       ...(repositoryCredentials === undefined ? {} : { repositoryCredentials }),
       createdAt: new Date().toISOString(),
@@ -3435,6 +3475,96 @@ test(
        WHERE idempotency_key = $1 AND state = 'queued'`,
       [active.idempotencyKey],
     );
+  },
+);
+
+test(
+  "non-model sources reach Compute at dispatch and a retry omits the ones withdrawn meanwhile",
+  requiresPostgres,
+  async (context) => {
+    const fixture = await setup(context);
+    const owner = await fixture.agent(
+      "withdraw-tool-sources",
+      "embedded",
+      undefined,
+      null,
+      true,
+      false,
+      true,
+      2,
+    );
+    const active = await fixture.revision(owner, 1);
+    const [first, second] = owner.credentialSources.map(({ sourceId }) => sourceId);
+    const dispatched = [];
+    const withdrawn = [];
+    let interruptActivation = true;
+    await fixture.start(
+      {
+        ...fixture.compute,
+        // Compute attaches the model source and each resolved non-model source.
+        async prepareRevision(revision, revisionContext) {
+          if (revision.namespaceId === fixture.namespace.id) {
+            dispatched.push((revisionContext?.credentialSources ?? []).map(({ id }) => id));
+          }
+          return fixture.compute.prepareRevision(revision, revisionContext);
+        },
+        async activateRevision(revision) {
+          if (revision.id === active.id && interruptActivation) {
+            interruptActivation = false;
+            // Withdraw both non-model sources while this deployment must still be retried. The
+            // second request queues no work while the first attempt is outstanding.
+            for (const credentialSourceId of [first, second]) {
+              await fixture.controller.withdrawAgentCredentialSource(fixture.actor.id, {
+                namespaceId: fixture.namespace.id,
+                agentId: owner.id,
+                credentialSourceId,
+              });
+            }
+            throw new Error("activation interrupted");
+          }
+        },
+        async withdrawCredentialSource(revision, source) {
+          withdrawn.push([revision.id, source.id]);
+          return { sourceId: source.id, state: "revoked" };
+        },
+      },
+      () => {},
+      undefined,
+      undefined,
+      undefined,
+      withCredentialGateway,
+    );
+    await fixture.work(active, "succeeded", 30_000);
+    await waitFor(
+      "both withdrawals to be revoked",
+      async () => {
+        const found = await fixture.state.read((view) =>
+          view.credentialSources.listCredentialWithdrawals(fixture.namespace.id, active.id),
+        );
+        return found.length === 2 && found.every(({ state }) => state === "revoked")
+          ? found
+          : undefined;
+      },
+      30_000,
+    );
+    await fixture.stop();
+
+    // Unlike a withdrawn model source, withdrawn tool sources do not stop the revision: the
+    // retry prepares it again without them and the deployment succeeds.
+    assert.deepEqual(dispatched, [[first, second], []]);
+    // One withdrawal pass revoked every pending source, in admission order.
+    assert.deepEqual(withdrawn, [
+      [active.id, first],
+      [active.id, second],
+    ]);
+    const audit = await fixture.observerPool.query(
+      `SELECT details->'credentialSourceIds' AS sources
+       FROM occ.audit_events
+       WHERE namespace_id = $1 AND action = 'openclaw.agents.lifecycle.credentials_withdraw'
+         AND outcome = 'success'`,
+      [fixture.namespace.id],
+    );
+    assert.deepEqual(audit.rows, [{ sources: [first, second] }]);
   },
 );
 
