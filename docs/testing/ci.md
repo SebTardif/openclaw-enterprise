@@ -112,7 +112,7 @@ main-only protected hosted execution of every selected lane. See the
 [delivery status](../../specs/plans/19-github-actions-test-coverage/delivery-status.md#delivery-status)
 for proof boundaries and live gaps.
 
-Each lane runs whole test files. The runner validates Node case results and required names; skips, TODOs, missing results, zero cases, failures and cleanup errors fail the selected lane. The aggregate checks required job and lane results at the same source commit without repeating case validation. Ordinary `pull_request` jobs may save pnpm-store caches within the PR merge-ref scope; protected jobs use the approved event commit and do not promote PR build artifacts.
+Each lane runs whole test files. The runner validates Node case results and required names; skips, TODOs, missing results, zero cases, failures and cleanup errors fail the selected lane. The aggregate checks required job and lane results at the same recorded source commit, including expected case names, dispositions and counts. A commit ID alone does not prove working-tree or image identity. Ordinary `pull_request` jobs may save pnpm-store caches within the PR merge-ref scope; protected jobs use the approved event commit and do not promote PR build artifacts.
 
 Prepare infrastructure only on a disposable host or through reviewed CI helpers.
 Each run owns its Compose project, databases, cluster and temp files. CI writes
