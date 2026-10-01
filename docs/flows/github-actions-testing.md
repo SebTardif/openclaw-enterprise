@@ -1,20 +1,20 @@
 ---
 created: 2026-09-04
-updated: 2026-09-30
-last_updated_session: 01a0f0d0-002a-7dc3-af73-e7d25dfe92e2
+updated: 2026-10-01
+last_updated_session: authoring-run/184eda00-e4b4-4887-9730-5feae93ce020
 ---
 
 # GitHub Actions testing flow
 
 ## Overview
 
-GitHub Actions selects coverage for each event and ends at `CI Required` and resource cleanup. Full CI runs fifteen noncredentialed test lanes, prepares disposable resources, and rejects missing or skipped required coverage. A verified documentation-only PR runs Suite Audit and documentation checks without product tests. Neither route establishes protected model or service integrations.
+GitHub Actions selects coverage for each event and ends at `CI Required` and resource cleanup. Full CI runs fifteen noncredentialed test lanes, prepares disposable resources, and rejects missing or skipped required coverage. A verified documentation-only PR runs Suite Audit and documentation checks without product tests. An independent manual route can rerun the repository credential container lane, export its tested service image, verify cleanup, and retain a one-day preparation artifact. None of these routes establishes protected model or service integrations.
 
 ## Entry Points
 
 - `.github/workflows/ci.yml:jobs`: PR, main push, merge-group and manual checks on ephemeral runners.
 - `.github/workflows/full-integration.yml:jobs`: manual integration from main or an explicitly approved Kubernetes model branch, bound to the dispatched commit.
-- `scripts/ci/run-tests.mjs:main`: local or workflow `audit`, `run` and `aggregate` commands; the suite map is the coverage owner.
+- `.github/workflows/repository-service-export.yml:jobs`: manual, preparation-only service image export from an exact successful `main` CI source and attempt.
 
 ## Flow
 
@@ -41,6 +41,13 @@ graph TD
   P -->|approved| E["Protected test jobs"]
   P -->|missing protection| X["Failed check"]
   E --> T["Owned preparation, tests, cleanup and aggregation"]
+  Q["Manual service export dispatch"] --> V["Verify exact main source and CI attempt"]
+  V --> W["Run repository credential container lane"]
+  W -->|tests pass| O["Export tested config as OCI and verify service closure"]
+  W -->|failure| U["Ordinary owned cleanup; no OCI upload"]
+  O --> U
+  U -->|owned tags, state and inspection container absent| Z["Upload one-day preparation archive and identity receipt"]
+  U -->|unknown or remaining resource| Y["Fail closed; no OCI upload"]
 ```
 
 ## Execution Trace
@@ -117,7 +124,45 @@ The runner discovers active test files and verifies one lane assignment per file
 
 Required named cases must pass; every skip or TODO fails the lane. There are no counterpart-skip lists or CI name filters. Synthetic file-wrapper success, missing output, zero cases, or interruption without final reporter output cannot establish coverage. Lane results retain failure, timeout and cleanup outcomes.
 
-### 4. Clean up and publish the bounded result
+### 4. Export one tested service image only on explicit preparation runs
+
+`.github/workflows/repository-service-export.yml:jobs`,
+`.github/actions/run-ci-lane/action.yml:runs`, and
+`scripts/ci/service-image-export.mjs:validateLaneIdentity`
+
+The manual service export route accepts a full source SHA, CI run ID, and exact
+attempt. Its preflight requires the selected workflow, event SHA, requested
+source, checkout, current `main`, and successful `CI Required` job to describe
+the same source. The workflow has read-only repository and Actions permissions,
+bounded concurrency, and no registry write permission.
+
+The shared lane action defaults `export-service-image` to the exact string
+`"false"`. Any other request is validated before dependency or lane preparation;
+only `"true"` with `repository-credentials-container` is accepted. Normal CI
+callers omit the input and retain their existing setup, execution, cleanup, and
+result upload.
+
+After every selected container case passes, the exporter checks the lane receipt
+against all three ready, state-owned service, client, and qualification tags and
+their current Docker config IDs. It binds the service image to the pinned and
+observed base, checks that the service adds no environment values or credential
+history, and compares the final `/app` inventory, bytes, and normalized modes to
+the staged service closure. It then converts that exact tested tag to an OCI
+layout with the pinned exporter and verifies every descriptor and blob. The OCI
+config digest must equal the tested Docker config ID; the archive, OCI manifest,
+and config identities remain separate in `export.json`.
+
+Ordinary lane cleanup runs unconditionally after local export. A separate
+reconciliation step requires the private lane state, all three owned tags, and
+the export inspection container to be absent. It also rehashes the still-local
+archive before changing cleanup status to `verified`. The workflow can upload
+the archive only after the action, including reconciliation, succeeds. It records
+the returned artifact ID and digest in a separate one-day receipt. Both artifacts
+are available to repository readers and state that the output is preparation
+only. A failed test, export, cleanup, absence readback, or archive check leaves no
+service archive upload.
+
+### 5. Clean up and publish the bounded result
 
 `scripts/ci/cleanup.mjs:main` and `scripts/ci/run-tests.mjs:main`
 
@@ -147,6 +192,7 @@ Per-file cleanup releases its disposable database; job cleanup removes only stat
 
 - `node scripts/ci/run-tests.mjs audit` checks the actual checkout inventory against the suite map.
 - `node --test tests/integration/ci-runner.test.mjs` exercises the runner with real child Node processes and controlled pass/fail/skip cases.
+- `node --test tests/integration/service-image-export.test.mjs` exercises opt-in, source, identity, OCI, and cleanup failure gates with fake commands; it does not export a real image or prove hosted execution.
 - Use the failing test's file, name and location in the sanitized result to reproduce its exact invocation with approved local prerequisites. Treat the named aggregate as its coverage boundary.
 - On local Docker Desktop or equivalent VM-backed Docker hosts, run one Kubernetes lane at a time when disk or network pressure has caused measured instability. GitHub Actions still runs the configured matrix; this local guidance is for reproducible operator runs.
 - Missing protected environments, tools, images or credentials are setup failures. Configure the approved resource; do not mark its required test skipped or replace it with a fixture.
@@ -164,6 +210,8 @@ Per-file cleanup releases its disposable database; job cleanup removes only stat
 [keep this for the user to add notes. do not change between edits]
 
 ## Changelog
+
+- 2026-10-01 07:32: Describe the opt-in repository credential service image preparation, identity checks, cleanup readback, and restricted artifact handoff in the accompanying changes. (authoring-run/184eda00-e4b4-4887-9730-5feae93ce020 - 93502fd1987502a337fec6ab60b0acb26d920c57)
 
 - 2026-09-29 22:55: Split browser, PostgreSQL authentication, and image model-probe lanes; cache hosted controller/runtime builds while retaining required result accounting. (01a0f0d0-002a-7dc3-af73-e7d25dfe92e2 - b8d7e48f5837d11e54e04dce40650f7ccc5100f0)
 
