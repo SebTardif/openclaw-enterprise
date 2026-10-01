@@ -613,6 +613,8 @@ const codexGatewayConfig = () => ({
     },
   },
   tools: { alsoAllow: ["existing-tool"] },
+  // Admission requires a Codex model selection.
+  agents: { defaults: { model: "openai/gpt-5" } },
 });
 
 test("a running Gateway hot-applies its workspace node under plugins.* and acks only OpenClaw's reload", async () => {
@@ -880,6 +882,7 @@ test("a Gateway given its node in the environment configures it at start and arm
   const intervals = [];
   const kills = [];
   const { files, calls, sandbox } = await runOpenClawRuntimeHelper(undefined, [], {
+    baseConfig: { gateway: { port: 8080 }, agents: { defaults: { model: "openai/gpt-5" } } },
     env: {
       APP_SERVER_URL: "ws://harness.example.test:18790",
       OPENCLAW_WORKSPACE_NODE_ID: "environment-node",
@@ -965,8 +968,9 @@ test("a workspace-node Gateway keeps owner Codex tool excludes, pins every model
           agentRuntime: { id: "codex" },
           params: { thinking: "high", fastMode: true, fastSeconds: 30, store: false },
         },
-        "openai/gpt-5": { params: { temperature: 1 } },
-        "openrouter/*": {},
+        // A value OpenClaw does not take as a run control is a request param.
+        "openai/gpt-5": { params: { temperature: 1, thinking: "deep", fastMode: "turbo" } },
+        "openrouter/*": { params: { thinking: " Extra-High ", fastMode: "Auto" } },
       },
     },
     list: [
@@ -977,6 +981,13 @@ test("a workspace-node Gateway keeps owner Codex tool excludes, pins every model
         models: { "codex/gpt-test": { params: { thinking: 3 } } },
       },
     ],
+  };
+  // OpenClaw copies env entries into the Gateway process environment, where its
+  // bundled openai provider reads CODEX_API_KEY or OPENAI_API_KEY.
+  ownerConfig.env = {
+    OPENAI_API_KEY: "owner-key",
+    LOG_LEVEL: "debug",
+    vars: { CODEX_API_KEY: "owner-key", " anthropic_api_key ": "owner-key", TZ: "UTC" },
   };
   const { files } = await runOpenClawRuntimeHelper(undefined, [], {
     baseConfig: ownerConfig,
@@ -989,6 +1000,7 @@ test("a workspace-node Gateway keeps owner Codex tool excludes, pins every model
     "web_search",
     ...GATEWAY_LOCAL_CODEX_TOOLS,
   ]);
+  assert.deepEqual(effective.env, { LOG_LEVEL: "debug", vars: { TZ: "UTC" } });
   // Timed automations stay; an owner cannot turn triggers back on in the Gateway Pod.
   assert.deepEqual(effective.cron, { enabled: true, triggers: { enabled: false } });
   // The codex row keeps its models but not a transport a built-in run could reach,
@@ -1030,7 +1042,7 @@ test("a workspace-node Gateway keeps owner Codex tool excludes, pins every model
           params: { thinking: "high", fastMode: true, fastSeconds: 30 },
         },
         "openai/gpt-5": {},
-        "openrouter/*": {},
+        "openrouter/*": { params: { thinking: " Extra-High ", fastMode: "Auto" } },
       },
       // The allowlist OpenClaw applied, made explicit.
       modelPolicy: { allow: ["codex/gpt-test", "openai/gpt-5", "openrouter/*"] },
@@ -1084,6 +1096,48 @@ test("a workspace-node Gateway keeps owner Codex tool excludes, pins every model
     assert.deepEqual(result.agents.defaults.modelPolicy, expectedAgents.defaults.modelPolicy);
     assert.deepEqual(result.agents.entries, expectedAgents.entries);
     assert.deepEqual(Object.keys(result.models.providers).sort(), ["codex", ...stubbed].sort());
+  }
+  // A selection made only on an agent entry still yields an allowlist, held by
+  // the defaults that an entry without its own allowlist uses.
+  for (const defaults of [undefined, {}, { models: {} }]) {
+    const entriesOnly = codexGatewayConfig();
+    entriesOnly.agents = {
+      ...(defaults === undefined ? {} : { defaults }),
+      entries: {
+        main: {
+          model: { primary: "openai/gpt-5", fallbacks: ["google/gemini-test"] },
+          models: { "groq/llama-test": {} },
+        },
+      },
+    };
+    const run = await runOpenClawRuntimeHelper(undefined, [], {
+      baseConfig: entriesOnly,
+      env: { APP_SERVER_URL: "ws://harness.example.test:18790" },
+      workspaceNodeId: "enrolled-node",
+    });
+    const result = JSON.parse(run.files.get("/home/node/.openclaw/openclaw.json"));
+    assert.deepEqual(result.agents.defaults.modelPolicy, {
+      allow: ["openai/gpt-5", "google/gemini-test", "groq/llama-test"],
+    });
+    assert.deepEqual(Object.keys(result.models.providers).sort(), ["codex", "google", "groq"]);
+  }
+  // Without any qualified selection the Gateway would allow any model: it does not start.
+  for (const agents of [undefined, { defaults: { model: "gpt-5" } }]) {
+    const unselected = codexGatewayConfig();
+    if (agents === undefined) {
+      delete unselected.agents;
+    } else {
+      unselected.agents = agents;
+    }
+    await assert.rejects(
+      () =>
+        runOpenClawRuntimeHelper(undefined, [], {
+          baseConfig: unselected,
+          env: { APP_SERVER_URL: "ws://harness.example.test:18790" },
+          workspaceNodeId: "enrolled-node",
+        }),
+      /needs a model selection with a provider/,
+    );
   }
   // An openai row that names no transport keeps OpenClaw's default (no credential
   // in the Gateway) so Codex keeps owning its account's models; overrides still go.
@@ -1209,6 +1263,7 @@ test("Gateway launch binds the enrolled node without expanding owner writes or c
         },
       },
     },
+    agents: { defaults: { model: "openai/gpt-5" } },
     hooks: {
       internal: {
         entries: {

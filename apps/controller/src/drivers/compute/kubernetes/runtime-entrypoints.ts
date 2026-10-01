@@ -2065,11 +2065,41 @@ const CODEX_MODEL_KEPT_KEYS = new Set([
   "id", "name", "reasoning", "input", "cost", "contextWindow", "contextTokens",
   "maxTokens", "thinkingLevelMap", "agentRuntime", "mediaInput", "metadataSource",
 ]);
-// Model params Codex takes as run controls rather than provider request params.
+// Model params Codex takes as run controls rather than provider request params,
+// with the values OpenClaw recognizes (isAgentRuntimeModelParam). Any other
+// value stays a provider request param and would move Codex turns off the
+// Harness, so it is dropped.
+const THINKING_PARAM_VALUES = new Set([
+  "disabled", "off", "none", "low", "on", "enable", "enabled", "thinkhard",
+  "think-hard", "think_hard", "minimal", "min", "think", "medium", "mid", "med",
+  "thinkharder", "think-harder", "harder", "high", "ultrathink", "thinkhardest",
+  "highest",
+]);
+const THINKING_PARAM_COLLAPSED_VALUES = new Set([
+  "adaptive", "auto", "max", "maximum", "ultra", "xhigh", "extrahigh",
+]);
+const FAST_MODE_PARAM_VALUES = new Set([
+  "off", "false", "no", "0", "disable", "disabled", "normal",
+  "on", "true", "yes", "1", "enable", "enabled", "fast", "auto", "automatic",
+]);
+
+function isThinkingParam(value) {
+  if (value === false) return true;
+  if (typeof value !== "string") return false;
+  const key = value.trim().toLowerCase();
+  return THINKING_PARAM_VALUES.has(key) ||
+    THINKING_PARAM_COLLAPSED_VALUES.has(key.replace(/[\s_-]+/g, ""));
+}
+
+function isFastModeParam(value) {
+  return typeof value === "boolean" ||
+    (typeof value === "string" && FAST_MODE_PARAM_VALUES.has(value.trim().toLowerCase()));
+}
+
 const RUNTIME_MODEL_PARAMS = {
-  thinking: (value) => value === false || typeof value === "string",
-  fastMode: (value) => typeof value === "boolean" || typeof value === "string",
-  fast_mode: (value) => typeof value === "boolean" || typeof value === "string",
+  thinking: isThinkingParam,
+  fastMode: isFastModeParam,
+  fast_mode: isFastModeParam,
   fastAutoOnSeconds: (value) => Number.isInteger(value) && value > 0,
   fastSeconds: (value) => Number.isInteger(value) && value > 0,
   fast_auto_on_seconds: (value) => Number.isInteger(value) && value > 0,
@@ -2094,9 +2124,10 @@ function modelRefProvider(ref) {
 function agentModelScopes(config) {
   const agents = config.agents;
   if (!isPlainObject(agents)) return [];
-  const entries = Array.isArray(agents.list)
-    ? agents.list
-    : isPlainObject(agents.entries) ? Object.values(agents.entries) : [];
+  const entries = [
+    ...(Array.isArray(agents.list) ? agents.list : []),
+    ...(isPlainObject(agents.entries) ? Object.values(agents.entries) : []),
+  ];
   return [agents.defaults, ...entries].filter(isPlainObject);
 }
 
@@ -2115,27 +2146,57 @@ function hasModelPolicyAllow(scope) {
 // OpenClaw's bundled providers, which reads its credential from the
 // environment. Here every agent gets an explicit allowlist of qualified refs,
 // so each provider it names can get a stub row. An allowlist OpenClaw already
-// applies is kept; a bare ref is dropped, because OpenClaw infers its provider.
+// applies is kept; a bare ref is dropped, because OpenClaw infers its provider,
+// and so is a selector without a provider prefix (for example
+// "openrouter:auto"). Otherwise the list is every agent's model selection and
+// models keys. The defaults hold it, since an agent without its own allowlist
+// uses theirs.
 function restrictModelPolicy(config) {
-  const agents = config.agents;
-  if (!isPlainObject(agents) || !isPlainObject(agents.defaults)) return;
-  const defaults = agents.defaults;
+  const agents = config.agents ??= {};
+  if (!isPlainObject(agents)) {
+    throw new Error("The agents setting must be an object.");
+  }
+  const defaults = agents.defaults ??= {};
+  if (!isPlainObject(defaults)) {
+    throw new Error("The agents.defaults setting must be an object.");
+  }
   const qualified = (refs) =>
     Array.isArray(refs) ? refs.filter((ref) => modelRefProvider(ref) !== undefined) : [];
   const legacyIgnored = config.meta?.migrations?.modelPolicyAllowlist === true;
-  const modelKeys = isPlainObject(defaults.models) ? Object.keys(defaults.models) : [];
+  const modelKeys = (scope) => isPlainObject(scope.models) ? Object.keys(scope.models) : [];
   let allow;
   if (hasModelPolicyAllow(defaults)) allow = qualified(defaults.modelPolicy.allow);
-  else if (!isPlainObject(defaults.modelPolicy) && !legacyIgnored) allow = qualified(modelKeys);
+  else if (!isPlainObject(defaults.modelPolicy) && !legacyIgnored) allow = qualified(modelKeys(defaults));
   if (allow === undefined || allow.length === 0) {
-    allow = [...new Set(qualified([...selectionRefs(defaults.model), ...modelKeys]))];
+    const selected = agentModelScopes(config).flatMap((scope) =>
+      [...selectionRefs(scope.model), ...modelKeys(scope)]);
+    allow = [...new Set(qualified(selected))];
   }
-  if (allow.length === 0) return;
+  if (allow.length === 0) {
+    throw new Error("A Gateway with a workspace node needs a model selection with a provider.");
+  }
   defaults.modelPolicy = { ...(isPlainObject(defaults.modelPolicy) ? defaults.modelPolicy : {}), allow };
   for (const scope of agentModelScopes(config).slice(1)) {
     if (!hasModelPolicyAllow(scope)) continue;
     const own = qualified(scope.modelPolicy.allow);
     scope.modelPolicy.allow = own.length > 0 ? own : [...allow];
+  }
+}
+
+// OpenClaw copies the config's env entries into the Gateway process
+// environment, where its bundled providers read their credentials (openai reads
+// CODEX_API_KEY and OPENAI_API_KEY). The Harness gets its model credential
+// through its authentication binding, so the Gateway config carries none.
+const MODEL_CREDENTIAL_ENV_PATTERN = /^(?:OPENAI_|CODEX_|ANTHROPIC_)/i;
+
+function dropModelCredentialEnv(config) {
+  const env = config.env;
+  if (!isPlainObject(env)) return;
+  for (const values of [env, env.vars]) {
+    if (!isPlainObject(values)) continue;
+    for (const key of Object.keys(values)) {
+      if (MODEL_CREDENTIAL_ENV_PATTERN.test(key.trim())) delete values[key];
+    }
   }
 }
 
@@ -2215,6 +2276,7 @@ function pinGatewayModelProviders(config) {
     configured.add(id);
   }
   stripProviderRequestParams(config);
+  dropModelCredentialEnv(config);
 }
 
 const WORKSPACE_NODE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
