@@ -2929,13 +2929,18 @@ async function assertStartupFailureDeploymentStatusDurable(context, topology, op
   const failed = await deploymentStatus(topology, failure.revision.id);
   assert.deepEqual(
     Object.keys(failed).sort(),
-    ["agentId", "deploymentId", "error", "namespaceId", "status", "warnings"],
+    ["agentId", "deploymentId", "error", "namespaceId", "progress", "status", "warnings"],
     "deployment status must use the approved durable status shape",
   );
   assert.equal(failed.deploymentId, failure.revision.id);
   assert.equal(failed.namespaceId, topology.agent.namespaceId);
   assert.equal(failed.agentId, topology.agent.id);
   assert.equal(failed.status, "failed");
+  assert.equal(
+    failed.progress,
+    null,
+    "terminal deployment status must not expose pending progress",
+  );
   assert.equal(failed.error.code, "CONVERGENCE_DEADLINE_EXCEEDED");
   assert.equal(typeof failed.error.message, "string");
   assert.equal(typeof failed.error.data.timeoutMs, "number");
