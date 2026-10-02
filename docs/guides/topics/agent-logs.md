@@ -127,7 +127,12 @@ returning it:
   `debug`; below `logging.level: debug` the Harness drops them, readiness-probe
   connections and repeated remote-control retries (one per 10 minutes is kept).
 - **text**: plain lines up to 4 KiB, including lines that start with a bracketed
-  component tag such as `[node-host] advertised commands: ...`.
+  component tag such as `[node-host] advertised commands: ...`. Their level is
+  `unknown`, except for the Harness node host's known lines. Lines starting
+  `node host gateway connect failed`, `node host gateway closed` or
+  `node host gateway reconnect paused` are `warn`; a permanently rejected
+  connection is `error`; `node host gateway connected` and `[node-host]` lines
+  are `info`.
 
 Any other structured output, including Codex JSON-RPC protocol traffic, is
 **withheld**: the page shows a count, never the content. Oversized lines, and
