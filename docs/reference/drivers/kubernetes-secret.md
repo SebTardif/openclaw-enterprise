@@ -223,7 +223,9 @@ does not remove the need to deploy again.
 
 Recreating a Harness Pod or running `kubectl rollout restart` only reads its
 existing revision projection; neither is a credential-delivery operation.
-Dedicated Gateway restarts read current canonical channel values directly.
+Embedded Gateway bindings also use revision projections and require explicit
+OCE deployment to refresh. Dedicated Gateway restarts read current canonical
+channel values directly.
 See the [replacement procedure](../../guides/deploy/credential-lifecycle.md#replace-runtime-values-and-verify-consumption)
 for verification and safe upstream revocation.
 
@@ -281,8 +283,8 @@ metadata cleanup after OCC verifies the stored backend identity.
   Omit `secretBindings` on PATCH to preserve existing bindings, or send an empty
   map to clear them.
 - **A rotated value is not visible:** Secret update does not restart workloads.
-  Deploy or restart each consuming Agent and verify the new process or revision
-  became active.
+  Deploy each consuming Agent through OCE and verify the new revision became
+  active; restarting a Pod does not refresh revision projections.
 
 ## Related
 

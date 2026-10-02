@@ -430,6 +430,7 @@ async function startInClusterControllers(
     nativeAdminDomain,
     nativeAdminSharedCookieDomain,
     platformNamespace,
+    workerOptions,
     workspaceGateway,
   },
 ) {
@@ -721,9 +722,19 @@ async function startInClusterControllers(
                   ].includes(name),
                 ),
                 { name: "OCC_WORKER_READINESS_PATH", value: "/var/run/openclaw/ready" },
-                { name: "OCC_WORKER_POLL_INTERVAL_MS", value: "50" },
-                { name: "OCC_WORKER_LEASE_DURATION_MS", value: "60000" },
-                { name: "OCC_WORKER_MAX_ATTEMPTS", value: "30" },
+                {
+                  name: "OCC_WORKER_POLL_INTERVAL_MS",
+                  value: String(workerOptions.pollIntervalMs),
+                },
+                {
+                  name: "OCC_WORKER_LEASE_DURATION_MS",
+                  value: String(workerOptions.leaseDurationMs),
+                },
+                { name: "OCC_WORKER_MAX_ATTEMPTS", value: String(workerOptions.maxAttempts) },
+                {
+                  name: "OCC_WORKER_CONVERGENCE_TIMEOUT_MS",
+                  value: String(workerOptions.convergenceTimeoutMs),
+                },
               ],
               volumeMounts: [
                 ...apiContainer.volumeMounts.filter(({ name }) => workerVolumes.includes(name)),
@@ -773,7 +784,7 @@ async function startInClusterControllers(
       .join(","),
   );
   assert.equal(pods.length, 1, "in-cluster OCC API Deployment must have one Pod");
-  const forwarding = await startPortForwardTarget(
+  let forwarding = await startPortForwardTarget(
     platformNamespace,
     `pod/${pods[0].metadata.name}`,
     `${controllerPort ?? 0}:18080`,
@@ -800,6 +811,7 @@ async function startInClusterControllers(
     { stdio: ["ignore", "pipe", "pipe"] },
   );
   let logError;
+  let logStderr = "";
   let stopping = false;
   logs.once("error", (error) => {
     logError = error;
@@ -807,12 +819,14 @@ async function startInClusterControllers(
   const logExit = new Promise((resolve) =>
     logs.once("close", (code) => {
       if (!stopping) {
-        logError ??= new Error(`Worker log stream exited unexpectedly (${code}).`);
+        logError ??= new Error(`Worker log stream exited unexpectedly (${code}): ${logStderr}`);
       }
       resolve();
     }),
   );
-  logs.stderr.resume();
+  logs.stderr.on("data", (chunk) => {
+    logStderr = `${logStderr}${chunk}`.slice(-2048);
+  });
   const lines = createInterface({ input: logs.stdout });
   lines.on("line", (line) => {
     try {
@@ -821,10 +835,17 @@ async function startInClusterControllers(
         events.push(event);
       }
     } catch {
-      logError ??= new Error("Worker emitted an invalid structured log record.");
+      if (!stopping) {
+        logError ??= new Error("Worker emitted an invalid structured log record.");
+      }
     }
   });
   const worker = {
+    assertHealthy() {
+      if (logError !== undefined) {
+        throw logError;
+      }
+    },
     async stop() {
       if (stopping) {
         return;
@@ -853,7 +874,39 @@ async function startInClusterControllers(
   };
   context.after(() => worker.stop());
   await once(logs, "spawn");
-  return { pod: pods[0], url: forwarding.url, worker };
+  return {
+    pod: pods[0],
+    url: forwarding.url,
+    worker,
+    async restart() {
+      const port = Number(new URL(forwarding.url).port);
+      await forwarding.stop();
+      await kubectl("rollout", "restart", `deployment/${name}`, "--namespace", platformNamespace);
+      await kubectl(
+        "rollout",
+        "status",
+        `deployment/${name}`,
+        "--namespace",
+        platformNamespace,
+        "--timeout=180s",
+      );
+      const pod = await waitFor("replacement OCC API Pod", async () => {
+        const current = await resources("pods", platformNamespace);
+        return current.find(
+          ({ metadata, status }) =>
+            metadata.uid !== pods[0].metadata.uid &&
+            Object.entries(labels).every(([key, value]) => metadata.labels?.[key] === value) &&
+            status.conditions?.some(({ type, status }) => type === "Ready" && status === "True"),
+        );
+      });
+      forwarding = await startPortForwardTarget(
+        platformNamespace,
+        `pod/${pod.metadata.name}`,
+        `${port}:18080`,
+      );
+      return { pod, url: forwarding.url };
+    },
+  };
 }
 
 function installationConfiguration(authentication, platformNamespace, slack, options = {}) {
@@ -1391,6 +1444,14 @@ async function arrangeProductionTopology(context, mode, slack, options = {}) {
   const gatewayPassword =
     options.gatewayPassword === false ? undefined : randomBytes(32).toString("base64url");
   let inClusterWorker;
+  let restartInClusterApi;
+  const workerOptions = {
+    pollIntervalMs: 50,
+    leaseDurationMs: 60_000,
+    maxAttempts: 30,
+    convergenceTimeoutMs: 900_000,
+    ...options.worker,
+  };
   const platformNamespace = `oce-production-${mode}-${hash(identifier)}`;
   await kubectl("create", "namespace", platformNamespace);
   context.after(async () => {
@@ -1618,9 +1679,11 @@ async function arrangeProductionTopology(context, mode, slack, options = {}) {
       nativeAdminDomain: options.nativeAdmin?.domain,
       nativeAdminSharedCookieDomain: options.nativeAdmin?.sharedCookieDomain,
       platformNamespace,
+      workerOptions,
       workspaceGateway,
     });
     inClusterWorker = controllerApi.worker;
+    restartInClusterApi = controllerApi.restart;
     controllerApiPod = controllerApi.pod;
     controllerUrl = controllerApi.url;
     requestFactory = (requestCredentials) =>
@@ -1688,9 +1751,7 @@ async function arrangeProductionTopology(context, mode, slack, options = {}) {
       mode: "production",
       pool: workerPool,
       drivers: workerDrivers,
-      pollIntervalMs: 50,
-      leaseDurationMs: 60_000,
-      maxAttempts: 30,
+      ...workerOptions,
       emit: (event) => events.push(event),
     });
     await worker.start();
@@ -1945,14 +2006,8 @@ async function arrangeProductionTopology(context, mode, slack, options = {}) {
     workspaceGateway === undefined
       ? options.nativeOptions
       : { ...options.nativeOptions, ...workspaceGateway.nativeOptions };
-  if (gatewayPassword !== undefined) {
-    assert.ok(
-      selectedNativeOptions?.gatewayAuth,
-      "gateway password requires explicit native gateway authentication",
-    );
-  }
   const nativeOptions =
-    gatewayPassword === undefined
+    gatewayPassword === undefined || selectedNativeOptions?.gatewayAuth === undefined
       ? selectedNativeOptions
       : {
           ...selectedNativeOptions,
@@ -1971,6 +2026,13 @@ async function arrangeProductionTopology(context, mode, slack, options = {}) {
   // Exercise Preset selection through the same creation APIs as the console. The
   // scoped caller still needs its own Secret grants; the template grants nothing.
   const launchValues = nativeConfiguration(harnessId, slack, nativeOptions);
+  if (gatewayPassword !== undefined) {
+    assert.deepEqual(launchValues.gateway.auth.password, {
+      source: "env",
+      provider: "default",
+      id: "OPENCLAW_GATEWAY_PASSWORD",
+    });
+  }
   const templateValues = structuredClone(launchValues);
   const modelReference = templateValues.agents.defaults.model;
   templateValues.agents.defaults.model = "{{ vars.model }}";
@@ -2121,14 +2183,15 @@ async function arrangeProductionTopology(context, mode, slack, options = {}) {
     assert.equal(observation.status, 200);
     return observation.data.activeRevisionId === deployed.data.id ? observation.data : undefined;
   });
-  await waitFor(`production worker completion of ${deployed.data.id}`, () =>
-    events.find(
+  await waitFor(`production worker completion of ${deployed.data.id}`, () => {
+    inClusterWorker?.assertHealthy();
+    return events.find(
       (event) =>
         event.event === "worker.completed" &&
         event.revisionId === deployed.data.id &&
         event.outcome === "success",
-    ),
-  );
+    );
+  });
   const observedRevision = await request(
     "GET",
     `/namespaces/${namespaceId}/agents/${agent.data.id}/revisions/${deployed.data.id}`,
@@ -2270,11 +2333,14 @@ async function arrangeProductionTopology(context, mode, slack, options = {}) {
     forwarding = await startGatewayForward();
   }
   const restartControllerApi = async () => {
-    assert.equal(
-      workspaceGateway,
-      undefined,
-      "controller restart proof is scoped to the local Fastify production harness",
-    );
+    if (workspaceGateway !== undefined) {
+      const restarted = await restartInClusterApi();
+      controllerUrl = restarted.url;
+      controllerApiPod = restarted.pod;
+      adminRequest = await requestFactory(credentials);
+      request = adminRequest;
+      return;
+    }
     const previousUrl = controllerUrl;
     await productionApp.close();
     productionApp = await composeProduction({
@@ -2576,7 +2642,6 @@ async function assertInvalidHarnessAuthStaysUnready(context, topology, options =
   assert.equal(rebound.status, 200, JSON.stringify(rebound.error));
   const serviceName =
     topology.mode === "dedicated" ? topology.agentServiceName : topology.gatewayServiceName;
-  const servingService = await resource("service", serviceName, topology.placement);
   const candidate = await topology.request("POST", `${agentPath}/deploy`);
   assertNoSecretMaterial(candidate, [invalidKey], "invalid-key deployment response");
   assert.equal(candidate.status, 202, JSON.stringify(candidate.error));
@@ -2684,12 +2749,18 @@ async function assertInvalidHarnessAuthStaysUnready(context, topology, options =
       "openclaw.dev/agent": topology.agent.id,
       "openclaw.dev/revision": candidate.data.id,
       "openclaw.dev/workload-role": "agent",
+      "openclaw.dev/network-profile": "broad-egress-v1",
     });
   } else {
     assert.deepEqual(
       currentService.spec.selector,
-      servingService.spec.selector,
-      "the Service keeps its existing topology selector through failed authentication",
+      {
+        "app.kubernetes.io/name": topology.gatewayServiceName,
+        "openclaw.dev/namespace": topology.agent.namespaceId,
+        "openclaw.dev/agent": topology.agent.id,
+        "openclaw.dev/workload-role": "gateway",
+      },
+      "failed authentication must keep the Service scoped to the exact Agent Gateway",
     );
   }
   const slices = await resources("endpointslices", topology.placement);
@@ -4713,7 +4784,8 @@ async function assertSecretApiRotationAndRedeploy(context, topology) {
     { present: true, matches: false },
   );
 
-  // Deleting only this task-owned Pod proves an already-admitted revision restarts with the latest Secret.
+  // A Pod restart reads the existing revision projection; only explicit OCE
+  // deployment delivers updated canonical values to a new revision.
   await kubectl(
     "delete",
     "pod",
@@ -4729,9 +4801,10 @@ async function assertSecretApiRotationAndRedeploy(context, topology) {
       topology.gatewayPlacement,
       topology.gatewayPod.metadata.name,
       secretRotationProbe,
-      rotatedProbeValue,
+      initialProbeValue,
     ),
     { present: true, matches: true },
+    "same-revision Pod replacement must retain the admitted Secret projection",
   );
 
   // A different OCC Secret reference containing the same authorized key proves draft/revision
@@ -4828,7 +4901,7 @@ async function assertSecretApiRotationAndRedeploy(context, topology) {
   );
   assert.equal(deleteBound.status, 409);
   context.diagnostic(
-    `secret-api rotation: stable ref ${probe.ref.id}; same-revision restart and explicit deploy consumed latest value`,
+    `secret-api rotation: stable ref ${probe.ref.id}; same-revision restart retained its projection; explicit deploy consumed the latest value`,
   );
 }
 

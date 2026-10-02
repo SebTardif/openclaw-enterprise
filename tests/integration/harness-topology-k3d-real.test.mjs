@@ -92,6 +92,7 @@ test(
       "openclaw.dev/agent": topology.agent.id,
       "openclaw.dev/revision": topology.revision.id,
       "openclaw.dev/workload-role": "agent",
+      "openclaw.dev/network-profile": "broad-egress-v1",
     });
     const codexVersion = (
       await kubectl(

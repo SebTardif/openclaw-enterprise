@@ -251,21 +251,22 @@ OCC_TEST_HARNESS_K3D_REAL=1 OCC_TEST_SLACK_LIVE=0 \
   node --env-file="$TEST_ENV_FILE" --test tests/integration/harness-topology-k3d-real.test.mjs
 ```
 
-Three non-Slack runtime cases must pass: dedicated Codex, embedded OpenClaw,
-and the extended Secret lifecycle case. Both topologies use OCC Secret-backed
+Five non-Slack runtime cases must pass: dedicated Codex, embedded OpenClaw,
+the extended Secret lifecycle case, and durable startup-failure status with
+plugins disabled and enabled. Both topologies use OCC Secret-backed
 Agent `harnessAuth` bindings. The Secret API case verifies native SecretRefs, exact grants and denial,
-shared Secrets, rotation, and redeployment. It prepares those Secrets and grants
+shared Secrets, rotation, and redeployment. Same-revision Pod replacement retains
+its existing credential projection; explicit OCE deployment consumes updated
+canonical values. It prepares those Secrets and grants
 itself. Routing, Slack and OTLP cases live in separate files, so this invocation
-contains only its three required runtime cases.
+contains those five required runtime cases.
 
-The ordinary suite uses the real production API and worker in the Node test
-process. The gateway-routing suite runs the API as a Kubernetes Deployment so
-it reaches Envoy through the normal ClusterIP Service endpoint; its worker and
-test coordinator remain in the Node test process. Neither suite installs the
-controller with Helm. Missing selected-suite
-prerequisites fail; an unselected suite skips. Default Codex version expectation
-is `0.158.0`; see [runtime settings](#kubernetes-real-runtime-test-environment)
-for version assertions and alternate image variables.
+Embedded cases run the production API and worker in the Node test process.
+Dedicated and routing cases run both as Kubernetes Deployments with separate
+identities; the coordinator stays in Node. These suites do not install OCC with
+Helm. Missing prerequisites fail selected suites; unselected suites skip.
+The default Codex version is `0.158.0`; see
+[runtime settings](#kubernetes-real-runtime-test-environment) for alternate images.
 
 ### Transcript persistence
 

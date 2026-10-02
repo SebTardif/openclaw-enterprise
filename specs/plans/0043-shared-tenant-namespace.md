@@ -68,6 +68,23 @@ directory restriction and timing-sensitive cancellation, redaction, SSH and
 Gateway startup cases. The Gateway startup case passes the focused rerun; this
 is not a claim that the broader suite is green.
 
+Follow-up validation fixed the Console mock's storage-role label lookup. CI on
+`697c2576` passes all required jobs, including 2394 baseline checks and 228
+Console browser cases, both with zero failures or skips. Local approved native
+runtime proof now passes dedicated Codex (including four workspace subcases)
+and embedded OpenClaw: real model turns, enforced network denials, credential
+rejection/recovery, and conversation/image/SQLite persistence across Pod
+replacement. This uses a disposable single-cluster environment; its API/worker
+Deployments reuse installed Linux dependencies and are not a Helm-install proof.
+
+Runtime-test maintenance preserves actual password authentication, exact
+Agent/revision Service selectors and worker completion evidence. Dedicated
+startup-failure cases now forward configured worker options to the real in-cluster
+worker and restart the actual API Deployment. Secret lifecycle expectations
+follow the existing revision-projection contract: Pod recreation retains the
+admitted projection; explicit OCE deployment refreshes canonical values. The
+remaining native receipts are recorded with the PR validation results.
+
 ## Manual Notes
 
 ## Changelog
