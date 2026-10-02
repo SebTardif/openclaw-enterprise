@@ -29,12 +29,21 @@ conventions change.
 ## Keep agents in their lane
 
 "Our PRs" and "my PRs" mean PRs authored by the requesting user's GitHub
-account unless the user explicitly selects a broader scope. Verify identity
-and filter by author before making changes; ask if unclear.
+account unless the user explicitly selects a broader scope. A user who works
+from more than one GitHub account may name those accounts; PRs authored by any
+of them count. Verify identity and filter by author before making changes; ask
+if unclear.
 
 Keep other authors' PRs, branches, and worktrees read-only unless explicitly
 assigned. Repository permissions and dependencies do not expand scope.
 Subagents inherit these limits.
+
+An assignment to help with another author's PR allows only two kinds of change:
+merging `main` into its branch, and fixing conflicts or failing checks. Explain
+each push in one short PR comment. Do not rebase, merge, or close the PR, and do
+not change its design. Wait until the author has not pushed for 2 hours if they
+are on the core team, or for 48 hours otherwise. If another change supersedes
+the PR, say so in a comment and leave closing it to the author.
 
 "Refresh against main" does not authorize force pushes. Preserve published
 history by default. Rewrite history only with explicit authorization for the
@@ -45,10 +54,13 @@ stop on unexpected changes.
 
 Follow the [contribution and review policy](CONTRIBUTING.md#prepare-a-pull-request)
 through merge. Core team authors may use their authorized merge bypass for their
-own PRs after the applicable review, CI, and specific holds are satisfied. Ask
-for human feedback on architectural RFCs early; implementation and RFC revision
-can proceed in parallel. Follow the [RFC process](docs/contributing/rfcs.md).
-New contributors wait for maintainer feedback.
+own PRs after the applicable review, CI, and specific holds are satisfied. An
+agent merges only PRs authored by the user it acts for, through any account that
+user named, and never another author's PR, even when it is approved and its
+checks pass. Ask for human feedback on architectural RFCs early; implementation
+and RFC revision can proceed in parallel. Follow the
+[RFC process](docs/contributing/rfcs.md). New contributors wait for maintainer
+feedback.
 
 ## Development style
 

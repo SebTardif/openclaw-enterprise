@@ -121,11 +121,14 @@ proof selection, diff cleanup, and requested independent review.
   hostnames, and personal paths. Use synthetic fixtures and redacted evidence.
 
 Open a draft while implementation or proof is incomplete, then mark it ready for
-review. New contributors wait for maintainer feedback before merging. Core team
-members are expected to carry their own changes through merge. When the PR author
-and authenticated account match, an authorized maintainer may use their merge
-bypass if the review rule otherwise prevents self-merging. They must still check
-the final head, independent review, required CI, review conversations, and any
+review. New contributors wait for maintainer feedback before merging. After a
+contributor has not pushed for 48 hours, a maintainer may merge `main` into
+their branch and fix failing checks, explaining each push in a comment; the
+author or a maintainer still decides when it merges. Core team members are
+expected to carry their own changes through merge. When the PR author and
+authenticated account match, an authorized maintainer may use their merge bypass
+if the review rule otherwise prevents self-merging. They must still check the
+final head, independent review, required CI, review conversations, and any
 specific holds; record the reason for the bypass. Do not bypass an unresolved
 finding or claim a missing review succeeded.
 
