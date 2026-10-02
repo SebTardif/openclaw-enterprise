@@ -17,7 +17,8 @@ Named **TokenDriver** instances implement upstream issuance and revocation;
 `GitHubTokenDriver` is the first implementation. Keep repository discovery,
 Git/`gh` routing, and repository permission checks in the existing RepoDriver and
 repository gateway adapter. Agents receive opaque lease credentials; upstream
-tokens remain inside the trusted service.
+tokens remain inside the trusted service. Repository metadata lookups use short
+Installation-owned leases, independent of Agents and drafts.
 
 This is a proposed architecture and YAML extension, not supported configuration.
 It extends the current credential lifecycle rather than introducing an alternative
@@ -47,14 +48,14 @@ promised integration without a supported caller.
 
 ## Ownership
 
-| Owner                         | Responsibility                                                                                                          |
-| ----------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| OCC and selected IAM Driver   | Authorize Agent operations; freeze owner, grant, and deadline; persist admission and cleanup intent.                    |
-| Token Service                 | Validate bound admission; own lease credentials, token custody, scheduling, capacity, and durable action outcomes.      |
-| TokenDriver                   | Normalize issuer-specific grants; acquire replacement tokens; report actual scope, expiry, revocation, and uncertainty. |
-| Repository gateway adapter    | Validate Git/`gh` requests and destinations; use a lease internally; preserve existing response filtering.              |
-| RepoDriver and GitHub Backend | Project repository choices, resolve profiles, and coordinate leases through the private service client.                 |
-| Compute Driver                | Deliver only revision-owned client material; withdraw it during retirement.                                             |
+| Owner                         | Responsibility                                                                                                                |
+| ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| OCC and selected IAM Driver   | Authorize Agent operations and repository discovery; freeze owner, grant, and deadline; persist admission and cleanup intent. |
+| Token Service                 | Validate bound admission; own lease credentials, token custody, scheduling, capacity, and durable action outcomes.            |
+| TokenDriver                   | Normalize issuer-specific grants; acquire replacement tokens; report actual scope, expiry, revocation, and uncertainty.       |
+| Repository gateway adapter    | Validate Git/`gh` requests and destinations; use a lease internally; preserve existing response filtering.                    |
+| RepoDriver and GitHub Backend | Own repository discovery and metadata caching; resolve profiles and coordinate leases through the private service client.     |
+| Compute Driver                | Deliver only revision-owned client material; withdraw it during retirement.                                                   |
 
 The first service stays in the existing worker-sidecar deployment with its
 private Unix control socket and HTTPS repository listener. No new public minting
@@ -168,26 +169,66 @@ bounded semantics; this RFC changes neither their values nor enforcement.
 ## Lease contract and lifecycle
 
 A lease is permission for one consumer to use one immutable grant until an
-absolute deadline. Its owner is `(installationId, namespaceId, agentId,
-revisionId)`. It has `leaseId`, `admissionId`, `grantId`, `grantFingerprint`,
+absolute deadline. Its owner is one of two tagged forms:
+
+- `agent-revision`: `(installationId, namespaceId, agentId, revisionId)`.
+- `installation-operation`: `(installationId, backendId, operationId, purpose)`,
+  with `purpose: repository-metadata` as the only supported internal operation.
+
+It has `leaseId`, `admissionId`, `grantId`, `grantFingerprint`,
 `audience`, `deadline`, and nonsecret status. Token generations have separate
 issuer expiry and cleanup obligations. A lease is not an upstream token.
 
 The trusted private client exposes:
 
-| Operation                   | Result and authority                                                                            |
-| --------------------------- | ----------------------------------------------------------------------------------------------- |
-| `openLease(boundAdmission)` | Persisted owner/grant/deadline required; returns opaque client material once.                   |
-| `leaseStatus(leaseId)`      | Owner-scoped status and cleanup counters; never credential recovery.                            |
-| `renewLease(leaseId)`       | Ensure a usable token generation under the original grant and deadline; does not extend either. |
-| `closeLease(leaseId)`       | Immediately deny new use and request cancellation/retirement; disposal is separate.             |
+| Operation                   | Result and authority                                                                                            |
+| --------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| `openLease(boundAdmission)` | Persisted owner/grant/deadline required; returns Agent client material once or an internal handle for metadata. |
+| `leaseStatus(leaseId)`      | Owner-scoped status and cleanup counters; never credential recovery.                                            |
+| `renewLease(leaseId)`       | Ensure a usable token generation under the original grant and deadline; does not extend either.                 |
+| `closeLease(leaseId)`       | Immediately deny new use and request cancellation/retirement; disposal is separate.                             |
 
 The gateway adapter's internal `withCredential(leaseId, minimumValidity, use)`
 supplies credentials only to its trusted forwarding code. It is not a network
 API. An Agent bearer authenticates only to its admitted audience; it cannot
 select an issuer, supply scopes, open another lease, or call a token endpoint.
 
-Proposed flow; dashed connections are not implemented yet:
+### Installation-owned repository metadata
+
+The Installation's GitHub Backend owns description lookup and the five-minute
+cache, keyed by provider and repository identity. Descriptions remain optional;
+lookup failure does not block approved repository selection. No draft or revision
+is required.
+
+OCC preserves the existing repository-options authorization: Agent `create` in
+the requested Namespace, or `update` on the edited Agent. It checks repository
+eligibility before fetching or returning cached data. Admission records the
+requesting principal and Namespace separately from lease ownership. Shared
+caching never grants cross-Namespace visibility.
+
+The trusted Backend requests the lease through the private control path. The
+service validates Backend membership and current Namespace policy, then derives
+a Metadata-read grant from the configured GitHub issuer and exact repository.
+Its fingerprint includes that source configuration and Namespace policy. This
+internal grant is not a selectable Agent profile or another YAML grant registry.
+Only the trusted metadata adapter may use it, for `GET /repos/OWNER/REPO` with
+numeric repository identity validation; no bearer reaches the API or Agent.
+
+The lease lasts at most 30 seconds, capped by configured duration policy, and
+closes on completion, failure, cancellation, or expiry. It shares provider
+capacity and cleanup accounting with revision leases; uncertain issuance retains
+cleanup obligations and blocks replacement. Configuration or policy withdrawal
+invalidates it independently of Agent lifecycle.
+
+The Installation is an owner, not an IAM principal. Existing
+[Installation-scoped ServicePrincipals](../../docs/reference/authorization.md#principals)
+can represent automation, but this trusted internal path requires no new
+principal or bootstrap administrator credential. GitHub authentication remains
+the TokenDriver's responsibility. Other internal purposes fail admission.
+
+### Agent revision lifecycle
+
+Proposed Agent flow; dashed connections are not implemented yet:
 
 ```mermaid
 ---
@@ -251,7 +292,7 @@ outcome identifiers, never credentials or issuer response bodies. Platform
 grant withdrawal must invalidate active leases, not only future admissions.
 Every use checks the lease against the service's active grant fingerprint.
 Applying a changed snapshot closes mismatched leases; OCC reconciliation closes
-leases when their revision loses eligibility. Preserve the existing elapsed-time
+revision leases when their revision loses eligibility. Preserve the existing elapsed-time
 deadline checks; restart recovery cannot reset a lease's duration.
 
 ## TokenDriver extension contract
@@ -347,6 +388,11 @@ service composition, not a direct test-only call. Qualify actual GitHub issuance
 and revocation separately with authorized disposable resources; fixtures do not
 prove upstream behavior. Future Drivers need a supported consumer and equivalent
 integration proof before being advertised.
+
+Also verify metadata discovery before Agent creation, authorized cache reuse,
+cross-Namespace denial, Metadata-read scope, timeout/uncertain cleanup, and no
+credential delivery to API or Agent callers through the real repository-options
+path.
 
 This RFC has only document validation; no new runtime behavior is implemented.
 
