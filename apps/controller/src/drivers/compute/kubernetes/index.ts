@@ -1061,48 +1061,6 @@ export function kubernetesNamespaceName(namespaceId: string): string {
   return `oce-${sha256Hex(id, 15)}`;
 }
 
-/** Restarts after which a container that keeps exiting with an error is a crash loop. */
-const CRASH_LOOP_RESTARTS = 3;
-
-/**
- * Crash-loop evidence for one runtime container: it restarted at least
- * `CRASH_LOOP_RESTARTS` times and its last instance exited nonzero. Only the fixed code
- * and the exit time leave the Driver; termination messages never do.
- */
-function crashLoopEvidence(
-  pods: readonly KubernetesRecord[],
-  container: "agent" | "gateway",
-): RuntimeFailureEvidence | undefined {
-  for (const pod of pods) {
-    if (asRecord(pod.metadata)?.deletionTimestamp !== undefined) {
-      continue;
-    }
-    const statuses = asRecord(pod.status)?.containerStatuses;
-    const entry = Array.isArray(statuses)
-      ? statuses.map(asRecord).find((item) => item?.name === container)
-      : undefined;
-    const last = asRecord(asRecord(entry?.lastState)?.terminated);
-    if (
-      Number.isSafeInteger(entry?.restartCount) &&
-      (entry!.restartCount as number) >= CRASH_LOOP_RESTARTS &&
-      Number.isSafeInteger(last?.exitCode) &&
-      last!.exitCode !== 0
-    ) {
-      const finishedAt = last!.finishedAt;
-      return {
-        component: container,
-        check: "container",
-        code: "CONTAINER_CRASH_LOOP",
-        checkedAt:
-          typeof finishedAt === "string" && !Number.isNaN(Date.parse(finishedAt))
-            ? finishedAt
-            : new Date().toISOString(),
-      };
-    }
-  }
-  return undefined;
-}
-
 function previousKubernetesNamespaceName(namespaceId: string): string {
   const id = required(namespaceId, "Platform Namespace ID");
   const slug =
@@ -11496,4 +11454,46 @@ function kubernetesTime(value: unknown): string | null {
     return new Date(value).toISOString();
   }
   return null;
+}
+
+/** Restarts after which a container that keeps exiting with an error is a crash loop. */
+const CRASH_LOOP_RESTARTS = 3;
+
+/**
+ * Crash-loop evidence for one runtime container: it restarted at least
+ * `CRASH_LOOP_RESTARTS` times and its last instance exited nonzero. Only the fixed code
+ * and the exit time leave the Driver; termination messages never do.
+ */
+function crashLoopEvidence(
+  pods: readonly KubernetesRecord[],
+  container: "agent" | "gateway",
+): RuntimeFailureEvidence | undefined {
+  for (const pod of pods) {
+    if (asRecord(pod.metadata)?.deletionTimestamp !== undefined) {
+      continue;
+    }
+    const statuses = asRecord(pod.status)?.containerStatuses;
+    const entry = Array.isArray(statuses)
+      ? statuses.map(asRecord).find((item) => item?.name === container)
+      : undefined;
+    const last = asRecord(asRecord(entry?.lastState)?.terminated);
+    if (
+      Number.isSafeInteger(entry?.restartCount) &&
+      (entry!.restartCount as number) >= CRASH_LOOP_RESTARTS &&
+      Number.isSafeInteger(last?.exitCode) &&
+      last!.exitCode !== 0
+    ) {
+      const finishedAt = last!.finishedAt;
+      return {
+        component: container,
+        check: "container",
+        code: "CONTAINER_CRASH_LOOP",
+        checkedAt:
+          typeof finishedAt === "string" && !Number.isNaN(Date.parse(finishedAt))
+            ? finishedAt
+            : new Date().toISOString(),
+      };
+    }
+  }
+  return undefined;
 }
