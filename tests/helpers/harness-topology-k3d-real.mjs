@@ -1,4 +1,3 @@
-import { kubernetesGatewayNamespaceName } from "../../apps/controller/src/drivers/compute/kubernetes/index.ts";
 import { defaultAgentModel } from "../../apps/controller/src/console/agents/starter-model.mjs";
 import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
@@ -1361,28 +1360,6 @@ async function storedAgent(pool, namespaceId, agentId) {
   };
 }
 
-async function grantGatewayWorkerTarget(target, role, account, platformNamespace) {
-  await waitFor(`Gateway runtime namespace ${target}`, async () => {
-    try {
-      return await resource("namespace", target);
-    } catch (error) {
-      if (/NotFound|not found/i.test(error.stderr ?? error.message)) {
-        return undefined;
-      }
-      throw error;
-    }
-  });
-  await kubectl(
-    "create",
-    "rolebinding",
-    "openclaw-gateway-worker",
-    "--namespace",
-    target,
-    `--clusterrole=${role}`,
-    `--serviceaccount=${platformNamespace}:${account}`,
-  );
-}
-
 async function topologyPods(topology) {
   const targets = [...new Set([topology.placement, topology.gatewayPlacement])];
   return (await Promise.all(targets.map((target) => resources("pods", target)))).flat();
@@ -1561,7 +1538,7 @@ async function arrangeProductionTopology(context, mode, slack, options = {}) {
       }
       await observerPool.end();
       await detachPostgres?.();
-      if (gatewayRuntimeNamespace !== undefined) {
+      if (gatewayRuntimeNamespace !== undefined && gatewayRuntimeNamespace !== placement) {
         await kubectl(
           "delete",
           "namespace",
@@ -1703,7 +1680,7 @@ async function arrangeProductionTopology(context, mode, slack, options = {}) {
     namespaceId = createdNamespace.data.id;
   }
   placement = kubernetesNamespaceName(namespaceId);
-  gatewayRuntimeNamespace = kubernetesGatewayNamespaceName(namespaceId);
+  gatewayRuntimeNamespace = kubernetesNamespaceName(namespaceId);
   gatewayPlacement = mode === "dedicated" ? gatewayRuntimeNamespace : placement;
   if (workspaceGateway === undefined) {
     workerPool = new pg.Pool({ connectionString: databaseUrl, max: 6 });
@@ -1757,23 +1734,6 @@ async function arrangeProductionTopology(context, mode, slack, options = {}) {
     `--clusterrole=${controller.apiConfigurationRole}`,
     `--serviceaccount=${platformNamespace}:${controller.apiAccount}`,
   );
-  await grantGatewayWorkerTarget(
-    gatewayRuntimeNamespace,
-    controller.tenantRole,
-    controller.account,
-    platformNamespace,
-  );
-  for (const role of [controller.apiSecretRole, controller.apiConfigurationRole]) {
-    await kubectl(
-      "create",
-      "rolebinding",
-      `canonical-${role}`,
-      "--namespace",
-      gatewayRuntimeNamespace,
-      `--clusterrole=${role}`,
-      `--serviceaccount=${platformNamespace}:${controller.apiAccount}`,
-    );
-  }
   for (const verb of ["get", "create"]) {
     const secretAccess = await kubectl(
       "auth",
@@ -4195,9 +4155,7 @@ async function assertCrossNamespaceSecretBindingDenied(context, topology) {
   });
   assert.equal(namespace.status, 201, JSON.stringify(namespace.error));
   const placement = topology.kubernetesNamespaceName(namespace.data.id);
-  const gatewayTarget = kubernetesGatewayNamespaceName(namespace.data.id);
   context.after(async () => {
-    await kubectl("delete", "namespace", gatewayTarget, "--ignore-not-found=true", "--wait=true");
     await kubectl(
       "delete",
       "namespace",
@@ -4232,21 +4190,6 @@ async function assertCrossNamespaceSecretBindingDenied(context, topology) {
     "openclaw-production-secret-api",
     "--namespace",
     placement,
-    `--clusterrole=${topology.apiSecretRole}`,
-    `--serviceaccount=${topology.platformNamespace}:${topology.apiAccount}`,
-  );
-  await grantGatewayWorkerTarget(
-    gatewayTarget,
-    topology.controllerTenantRole,
-    topology.controllerAccount,
-    topology.platformNamespace,
-  );
-  await kubectl(
-    "create",
-    "rolebinding",
-    "canonical-secret-api",
-    "--namespace",
-    gatewayTarget,
     `--clusterrole=${topology.apiSecretRole}`,
     `--serviceaccount=${topology.platformNamespace}:${topology.apiAccount}`,
   );

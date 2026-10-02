@@ -1,7 +1,7 @@
 # Kubernetes Secret Driver
 
 The Kubernetes Secret Driver stores OCC Secret values in the Kubernetes
-managed control-plane namespace for the owning OpenClaw Namespace. Each Secret belongs to one
+verified tenant storage namespace for the owning OpenClaw Namespace. Each Secret belongs to one
 Namespace, returns metadata only through OCC, and can be delivered as an
 environment variable through an Agent `harnessAuth` API-key binding or a
 Configuration `secretBindings` entry for gateway-only credentials.
@@ -26,14 +26,18 @@ Native OpenClaw
 `SecretRef` handling for `env`, `file`, and `exec` configuration remains the
 gateway's responsibility.
 
+Single-cluster Compute uses the tenant workload namespace, including adopted
+namespaces. The two-cluster profile retains separate control-cluster storage.
+Namespace workload managers are trusted with both Gateway and Harness roles.
+
 ## Requirements
 
 - The bundled Kubernetes Compute Driver must select or create the backing
-  control-plane Kubernetes namespace for the OpenClaw Namespace.
+  tenant storage namespace for the OpenClaw Namespace.
 - The OpenClaw Namespace must be `ready` before Secret create, update, or
   projection validation or server-side credential use can succeed.
 - The controller API needs tenant-local Kubernetes Secret `get`, `create`,
-  `update`, `patch`, and `delete` permission in each tenant control-plane namespace.
+  `update`, `patch`, and `delete` permission in each tenant storage namespace.
   The trusted worker reads admitted sources and manages selected runtime projections
   in the data plane. Workload ServiceAccounts receive no Secret API permissions.
 - The caller must be authenticated through OCC and authorized to create or

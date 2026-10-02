@@ -1132,20 +1132,32 @@ export function kubernetesGatewayNamespaceName(namespaceId: string): string {
   return `oce-gateways-${sha256Hex(required(namespaceId, "Platform Namespace ID"), 24)}`;
 }
 
-/** Canonical configuration and credentials belong to the managed control-plane tenant. */
+/** Resolve the exact-owned storage target: shared tenant or two-cluster control namespace. */
 export async function resolveKubernetesControlNamespace(
   client: CoreV1Api,
   namespaceId: string,
 ): Promise<{ readonly name: string }> {
-  const name = kubernetesGatewayNamespaceName(namespaceId);
-  const observed = await client.readNamespace({ name });
-  const metadata = observed?.metadata;
+  const discovered = await client.listNamespace({
+    labelSelector: `openclaw.dev/gateway-namespace=${namespaceId}`,
+    timeoutSeconds: Math.ceil(REQUEST_TIMEOUT_MS / 1000),
+  });
+  if (!Array.isArray(discovered?.items) || discovered.items.length !== 1) {
+    throw new OwnershipFailure("Canonical tenant storage requires exactly one namespace.");
+  }
+  const observed = discovered.items[0]!;
+  const metadata = observed.metadata;
+  const name = required(metadata?.name, "Canonical tenant storage namespace");
   if (
-    metadata?.name !== name ||
-    metadata.labels?.["openclaw.dev/gateway-namespace"] !== namespaceId ||
-    metadata.labels?.["app.kubernetes.io/managed-by"] !== MANAGER ||
-    metadata.annotations?.["openclaw.dev/namespace-id"] !== namespaceId ||
-    metadata.labels?.["openclaw.dev/namespace"] !== undefined
+    metadata?.labels?.["openclaw.dev/gateway-namespace"] !== namespaceId ||
+    metadata.annotations?.["openclaw.dev/namespace-id"] !== namespaceId
+  ) {
+    throw new OwnershipFailure("Refusing an unowned control-plane storage namespace.");
+  }
+  if (metadata.labels?.["openclaw.dev/namespace"] !== undefined) {
+    verifiedKubernetesNamespace(metadata, namespaceId);
+  } else if (
+    name !== kubernetesGatewayNamespaceName(namespaceId) ||
+    metadata.labels?.["app.kubernetes.io/managed-by"] !== MANAGER
   ) {
     throw new OwnershipFailure("Refusing an unowned control-plane storage namespace.");
   }
@@ -2798,11 +2810,19 @@ export class KubernetesComputeDriver implements ComputeDriver {
         throw new ResourceConflictError("The Agent runtime credential binding is invalid.");
       }
       // A draft mode edit does not describe historical runtime placement. Final
-      // Agent deletion checks both targets, with ownership and UID fences.
-      const target = this.controlNamespace(namespaceId);
+      // Agent deletion checks selected targets, with ownership and UID fences.
+      const target = await this.controlNamespace(namespaceId);
       const observed = await this.getNamespace(target);
       if (observed !== undefined) {
-        this.verifyGatewayNamespace(observed, { namespaceId });
+        if (this.options.executionCluster === undefined) {
+          this.verifyNamespaceOwnership(
+            observed,
+            { namespaceId },
+            observed.metadata.annotations?.["openclaw.dev/namespace-lifecycle"] === "external",
+          );
+        } else {
+          this.verifyGatewayNamespace(observed, { namespaceId });
+        }
         await this.deleteGatewayPrivateStateClaim({ namespaceId, agentId }, target);
         await this.deleteOwnedNamespacedResource(
           "ConfigMap",
@@ -2868,7 +2888,7 @@ export class KubernetesComputeDriver implements ComputeDriver {
     const serviceAccountId = required(input.serviceAccountId, "ServiceAccount ID");
     const accessToken = required(input.accessToken, "ServiceAccount access token");
     const workspaceId = required(input.workspaceId, "ServiceAccount workspace ID");
-    const namespace = this.controlNamespace(namespaceId);
+    const namespace = await this.controlNamespace(namespaceId);
     const observed = await this.getNamespace(namespace);
     if (observed === undefined || observed.status?.phase !== "Active") {
       throw new OwnershipFailure("The ServiceAccount Kubernetes namespace is unavailable.");
@@ -2913,7 +2933,7 @@ export class KubernetesComputeDriver implements ComputeDriver {
       throw new OwnershipFailure("Refusing another ServiceAccount's credential Secret.");
     }
 
-    const namespace = this.controlNamespace(namespaceId);
+    const namespace = await this.controlNamespace(namespaceId);
     const tenant = await this.getNamespace(namespace);
     if (tenant === undefined) {
       return;
@@ -2962,6 +2982,9 @@ export class KubernetesComputeDriver implements ComputeDriver {
         desired.metadata.labels = {
           ...desired.metadata.labels,
           ...this.gatewayMembershipLabels(this.options.executionCluster?.harnessRouting),
+          ...(this.options.executionCluster === undefined
+            ? { "openclaw.dev/gateway-namespace": ownership.namespaceId }
+            : {}),
           "pod-security.kubernetes.io/enforce": "restricted",
           "pod-security.kubernetes.io/audit": "restricted",
           "pod-security.kubernetes.io/warn": "restricted",
@@ -3016,20 +3039,24 @@ export class KubernetesComputeDriver implements ComputeDriver {
     revision: AgentRevision,
     harnessNamespace: KubernetesNamespaceAddress,
   ): KubernetesNamespaceAddress {
-    return revision.harness.mode === "embedded"
+    return revision.harness.mode === "embedded" || this.options.executionCluster === undefined
       ? harnessNamespace
-      : this.controlNamespace(revision.namespaceId);
+      : { name: kubernetesGatewayNamespaceName(revision.namespaceId), plane: "control" };
   }
 
   private gatewayNamespaceManifest(ownership: Ownership): ManagedKubernetesObject<"Namespace"> {
     const desired = this.manifest(
       "v1",
       "Namespace",
-      kubernetesGatewayNamespaceName(ownership.namespaceId),
+      this.options.executionCluster === undefined
+        ? kubernetesNamespaceName(ownership.namespaceId)
+        : kubernetesGatewayNamespaceName(ownership.namespaceId),
       ownership,
     );
-    // Tenant discovery must continue to resolve only the data-plane namespace.
-    delete desired.metadata.labels!["openclaw.dev/namespace"];
+    // Two-cluster tenant discovery must resolve only the execution target.
+    if (this.options.executionCluster !== undefined) {
+      delete desired.metadata.labels!["openclaw.dev/namespace"];
+    }
     desired.metadata.labels = {
       ...desired.metadata.labels,
       "openclaw.dev/gateway-namespace": ownership.namespaceId,
@@ -3045,6 +3072,15 @@ export class KubernetesComputeDriver implements ComputeDriver {
     namespace: ManagedKubernetesObject<"Namespace">,
     ownership: Ownership,
   ): void {
+    if (this.options.executionCluster === undefined) {
+      const external =
+        namespace.metadata.annotations?.["openclaw.dev/namespace-lifecycle"] === "external";
+      this.verifyNamespaceOwnership(namespace, ownership, external);
+      if (namespace.metadata.labels?.["openclaw.dev/gateway-namespace"] !== ownership.namespaceId) {
+        throw new OwnershipFailure("Refusing an unowned canonical storage namespace.");
+      }
+      return;
+    }
     const desired = this.gatewayNamespaceManifest(ownership);
     if (
       namespace.metadata.name !== desired.metadata.name ||
@@ -3059,7 +3095,10 @@ export class KubernetesComputeDriver implements ComputeDriver {
   }
 
   private async deleteGatewayNamespace(ownership: Ownership): Promise<boolean> {
-    const name = this.controlNamespace(ownership.namespaceId);
+    if (this.options.executionCluster === undefined) {
+      return true;
+    }
+    const name = await this.controlNamespace(ownership.namespaceId);
     const existing = await this.getNamespace(name);
     if (existing === undefined) {
       return true;
@@ -3083,8 +3122,11 @@ export class KubernetesComputeDriver implements ComputeDriver {
   }
 
   private async ensureGatewayNamespace(ownership: Ownership): Promise<boolean> {
+    if (this.options.executionCluster === undefined) {
+      return true;
+    }
     const desired = this.gatewayNamespaceManifest(ownership);
-    const name = this.controlNamespace(ownership.namespaceId);
+    const name = await this.controlNamespace(ownership.namespaceId);
     const existing = await this.getNamespace(name);
     if (existing !== undefined) {
       this.verifyGatewayNamespace(existing, ownership);
@@ -3111,11 +3153,8 @@ export class KubernetesComputeDriver implements ComputeDriver {
     harnessNamespace: KubernetesNamespaceAddress,
   ): Promise<KubernetesNamespaceAddress> {
     const namespace = this.gatewayNamespace(revision, harnessNamespace);
-    if (revision.harness.mode === "embedded") {
+    if (revision.harness.mode === "embedded" || this.options.executionCluster === undefined) {
       return namespace;
-    }
-    if (namespace.name === harnessNamespace.name && this.options.executionCluster === undefined) {
-      throw new ConfigurationFailure("Gateway and Harness runtime targets must be separate.");
     }
     if (
       this.options.runtime !== undefined &&
@@ -3189,9 +3228,11 @@ export class KubernetesComputeDriver implements ComputeDriver {
           existing.metadata.labels?.["openclaw.dev/namespace"] === undefined &&
           existing.metadata.annotations?.["openclaw.dev/namespace-id"] === undefined)
       ) {
-        const gateway = await this.getNamespace(this.controlNamespace(namespace.id));
-        if (gateway !== undefined) {
-          this.verifyGatewayNamespace(gateway, ownership);
+        if (this.options.executionCluster !== undefined) {
+          const gateway = await this.getNamespace(await this.controlNamespace(namespace.id));
+          if (gateway !== undefined) {
+            this.verifyGatewayNamespace(gateway, ownership);
+          }
         }
         await this.lifecycle.beforeNamespaceDelete(namespace);
         return { ...result, namespaceDeleted: await this.deleteGatewayNamespace(ownership) };
@@ -3203,9 +3244,11 @@ export class KubernetesComputeDriver implements ComputeDriver {
       ) {
         return result;
       }
-      const gateway = await this.getNamespace(this.controlNamespace(namespace.id));
-      if (gateway !== undefined) {
-        this.verifyGatewayNamespace(gateway, ownership);
+      if (this.options.executionCluster !== undefined) {
+        const gateway = await this.getNamespace(await this.controlNamespace(namespace.id));
+        if (gateway !== undefined) {
+          this.verifyGatewayNamespace(gateway, ownership);
+        }
       }
       await this.lifecycle.beforeNamespaceDelete(namespace);
       if (this.sandboxDriver !== undefined) {
@@ -3428,16 +3471,12 @@ export class KubernetesComputeDriver implements ComputeDriver {
     const channels = this.enabledChannels(admittedRevision);
     this.verifyGatewayRoutingConfiguration(admittedRevision);
     const { name: namespace, external } = await this.resolveNamespace(revision.namespaceId);
-    const secretEnvironment = this.secretEnvironmentForRevision(
-      revision,
-      context,
-      this.controlNamespace(revision.namespaceId),
-    );
-    const harnessAuth = this.harnessAuthForRevision(
-      admittedRevision,
-      context,
-      this.controlNamespace(revision.namespaceId),
-    );
+    const sourceNamespace =
+      this.options.executionCluster === undefined
+        ? namespace
+        : await this.controlNamespace(revision.namespaceId);
+    const secretEnvironment = this.secretEnvironmentForRevision(revision, context, sourceNamespace);
+    const harnessAuth = this.harnessAuthForRevision(admittedRevision, context, sourceNamespace);
     const gatewayNamespace = await this.requireGatewayNamespace(revision, namespace);
     const nativeRuntime = nativeRuntimeSnapshot(admittedRevision);
     const tenantOwnership = { namespaceId: revision.namespaceId };
@@ -3449,7 +3488,8 @@ export class KubernetesComputeDriver implements ComputeDriver {
     if (observed.status?.phase !== "Active") {
       return result;
     }
-    const policyNamespaces = embedded ? [namespace] : [namespace, gatewayNamespace];
+    const policyNamespaces =
+      gatewayNamespace === namespace ? [namespace] : [namespace, gatewayNamespace];
     for (const policyNamespace of policyNamespaces) {
       const policies = this.networkPolicies(tenantOwnership, policyNamespace).filter(
         (policy) => policyNamespace === namespace || policy.metadata.name === "allow-dns",
@@ -4260,16 +4300,12 @@ export class KubernetesComputeDriver implements ComputeDriver {
     const channels = this.enabledChannels(admittedRevision);
     const { name: namespace } = await this.resolveNamespace(revision.namespaceId);
     await this.deliverWorkspaceSetup(revision, workspaceSetup, namespace);
-    const secretEnvironment = this.secretEnvironmentForRevision(
-      revision,
-      context,
-      this.controlNamespace(revision.namespaceId),
-    );
-    const harnessAuth = this.harnessAuthForRevision(
-      admittedRevision,
-      context,
-      this.controlNamespace(revision.namespaceId),
-    );
+    const sourceNamespace =
+      this.options.executionCluster === undefined
+        ? namespace
+        : await this.controlNamespace(revision.namespaceId);
+    const secretEnvironment = this.secretEnvironmentForRevision(revision, context, sourceNamespace);
+    const harnessAuth = this.harnessAuthForRevision(admittedRevision, context, sourceNamespace);
     const gatewayNamespace = await this.requireGatewayNamespace(revision, namespace);
     const nativeRuntime = nativeRuntimeSnapshot(admittedRevision);
     const agentName = `agent-${sha256Hex(revision.agentId, 12)}`;
@@ -5073,7 +5109,7 @@ export class KubernetesComputeDriver implements ComputeDriver {
     const otherTarget =
       revision.harness.mode === "dedicated"
         ? namespace
-        : this.controlNamespace(revision.namespaceId);
+        : await this.controlNamespace(revision.namespaceId);
     const name = `gateway-${sha256Hex(revision.agentId, 12)}`;
     for (const kind of this.options.gatewayRouting === undefined
       ? (["Deployment"] as const)
@@ -5667,17 +5703,18 @@ export class KubernetesComputeDriver implements ComputeDriver {
     const transportName = `${runtime.transportSecretPrefix}-${context.suffix}`;
     validateKubernetesResourceName(transportName, "Agent runtime credential Secret name");
     const dedicated = binding.agent.executionMode === "dedicated";
-    const namespace = dedicated
-      ? {
-          name: (
-            await resolveKubernetesControlNamespace(
-              (await this.clients("control")).core,
-              context.namespaceId,
-            )
-          ).name,
-          plane: "control" as const,
-        }
-      : context.namespace;
+    const namespace =
+      dedicated && this.options.executionCluster !== undefined
+        ? {
+            name: (
+              await resolveKubernetesControlNamespace(
+                (await this.clients("control")).core,
+                context.namespaceId,
+              )
+            ).name,
+            plane: "control" as const,
+          }
+        : context.namespace;
     return {
       ...context,
       namespace,
@@ -5940,17 +5977,22 @@ export class KubernetesComputeDriver implements ComputeDriver {
     }
     const existingLabel = labels["openclaw.dev/namespace"];
     const existingId = annotations["openclaw.dev/namespace-id"];
+    const storageOwner = labels["openclaw.dev/gateway-namespace"];
     if (
       (existingLabel !== undefined && existingLabel !== ownership.namespaceId) ||
-      (existingId !== undefined && existingId !== ownership.namespaceId)
+      (existingId !== undefined && existingId !== ownership.namespaceId) ||
+      (storageOwner !== undefined && storageOwner !== ownership.namespaceId)
     ) {
       throw new OwnershipFailure(
         `Existing Kubernetes namespace ${namespace.metadata.name} belongs to another tenant.`,
       );
     }
-    const requiredLabels = this.gatewayMembershipLabels(
-      this.options.executionCluster?.harnessRouting,
-    );
+    const requiredLabels = {
+      ...this.gatewayMembershipLabels(this.options.executionCluster?.harnessRouting),
+      ...(this.options.executionCluster === undefined
+        ? { "openclaw.dev/gateway-namespace": ownership.namespaceId }
+        : {}),
+    };
     const hasGatewayMembership = Object.entries(requiredLabels).every(
       ([key, value]) => labels[key] === value,
     );
@@ -6012,6 +6054,9 @@ export class KubernetesComputeDriver implements ComputeDriver {
                   labels: {
                     "openclaw.dev/namespace": ownership.namespaceId,
                     ...this.gatewayMembershipLabels(this.options.executionCluster?.harnessRouting),
+                    ...(this.options.executionCluster === undefined
+                      ? { "openclaw.dev/gateway-namespace": ownership.namespaceId }
+                      : {}),
                   },
                   annotations: { "openclaw.dev/namespace-id": ownership.namespaceId },
                 },
@@ -6155,8 +6200,10 @@ export class KubernetesComputeDriver implements ComputeDriver {
     return true;
   }
 
-  private controlNamespace(namespaceId: string): KubernetesNamespaceAddress {
-    return { name: kubernetesGatewayNamespaceName(namespaceId), plane: "control" };
+  private async controlNamespace(namespaceId: string): Promise<KubernetesNamespaceAddress> {
+    return this.options.executionCluster === undefined
+      ? (await this.resolveNamespace(namespaceId)).name
+      : { name: kubernetesGatewayNamespaceName(namespaceId), plane: "control" };
   }
 
   private async clients(plane: KubernetesNamespaceAddress["plane"]): Promise<KubernetesApiClients> {
@@ -10527,7 +10574,7 @@ chmodSync(${JSON.stringify(nodeStatePath)}, 0o700);`;
     prepared: PreparedHarnessAuth,
     namespace: KubernetesNamespaceAddress,
   ): Promise<PreparedHarnessAuth> {
-    const sourceNamespace = this.controlNamespace(revision.namespaceId);
+    const sourceNamespace = await this.controlNamespace(revision.namespaceId);
     const sources: SecretEnvironmentProjection[] = [];
     const auth = context?.harnessAuth;
     if (auth === undefined) {
@@ -10642,8 +10689,8 @@ chmodSync(${JSON.stringify(nodeStatePath)}, 0o700);`;
     gatewayNamespace: KubernetesNamespaceAddress,
     projections: readonly SecretEnvironmentProjection[],
   ): Promise<readonly SecretEnvironmentProjection[]> {
-    // Dedicated Gateways consume the canonical control-plane sources directly.
-    if (gatewayNamespace !== harnessNamespace) {
+    // Dedicated Gateways consume canonical sources directly, even in a shared namespace.
+    if (revision.harness.mode === "dedicated") {
       for (const projection of projections) {
         const ref = projection.backendRef;
         if (
@@ -10685,7 +10732,7 @@ chmodSync(${JSON.stringify(nodeStatePath)}, 0o700);`;
     }
     try {
       const ownership = this.pluginRuntimeOwnership(revision);
-      const sourceNamespace = this.controlNamespace(revision.namespaceId);
+      const sourceNamespace = await this.controlNamespace(revision.namespaceId);
       const data: Record<string, string> = {};
       for (const projection of projections) {
         const ref = projection.backendRef;

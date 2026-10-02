@@ -17,8 +17,6 @@ its launcher and filesystem layout are concrete Kubernetes implementation choice
 | Execution        | The selected Harness owns execution and its workspace lifecycle.                          | Codex app-server executes turns; a separate node serves file, Memory and Skills operations.                                 |
 | Startup          | Compute delivers the selected workload and observes readiness.                            | The launcher supervises Codex and the file node separately, separates their credentials, and sets Codex shell/PATH options. |
 
-These deployment details are specific to Codex, not requirements for every
-Harness or additions to the public Compute contract.
 The file node's explicit command allowlist disables OpenClaw worker hosting;
 this launcher is not an OpenClaw remote worker launcher.
 
@@ -34,8 +32,8 @@ app-server settings.
 Each real gateway, embedded or dedicated, receives one private `10Gi`
 `ReadWriteOnce` filesystem claim named `gateway-state-<agent-hash>`, where
 `agent-hash` is the first 12 hexadecimal characters of `sha256(agentId)`.
-Dedicated claims live in the managed Gateway runtime namespace; embedded claims
-remain in the tenant data-plane namespace. The required
+Claims live in the tenant namespace in a single cluster; dedicated Gateway claims
+use the control-cluster Gateway namespace only with the two-cluster profile. The required
 `runtime.gatewayStorageClassName` selects an operator-provisioned
 StorageClass for a local or cloud block disk mounted as a filesystem.
 
@@ -207,17 +205,18 @@ and [deployment procedure](../../../guides/deploy/native-admin.md).
 ## Runtime credentials
 
 Canonical Configuration, OCC Secret and managed account credential sources live
-in the tenant's managed control-plane namespace. Dedicated Gateways reference
+in the shared tenant namespace in a single cluster, or the control-cluster
+storage target with the two-cluster profile. Dedicated Gateways reference
 admitted channel Secrets there directly; Compute verifies their scope and UID.
-There is no data-plane source or Gateway Secret mirror.
+There is no additional Gateway Secret mirror.
 
 For dedicated execution, `transport-<agent-hash>` (using the configured prefix)
 contains only `app-server-token`; `gateway-password-<agent-hash>` contains only
-`gateway-password`. Both are canonical CP resources. Compute creates
+`gateway-password`. Both are canonical sources, separate from the Harness projection. Compute creates
 `harness-secrets-<agent-hash>-<revision-hash>` in the data plane, containing only
 the selected model credential fields and app-server token. Harness Pods reference
 that revision-owned runtime Secret. Gateway password and channel tokens never
-enter it. Managed account sources retain account ownership in CP; runtime copies
+enter it. Managed account sources retain account ownership in canonical storage; runtime copies
 have exact Namespace, Agent, service-principal and revision ownership.
 
 Preparation checks admitted source identities before writing runtime material.
@@ -233,13 +232,13 @@ sequence is: update the OCC Secret, redeploy each consuming Agent through OCE,
 wait for the new revision to become active, and verify a model request with the
 new credential. Preparation delivers current source values to the new revision's
 runtime Secret. Merely recreating a Harness Pod or restarting its Deployment
-reads the existing projection and does not refresh it from CP. See
+reads the existing projection and does not refresh it from the canonical source. See
 [update and redeploy](../kubernetes-secret.md#update-and-redeploy).
 Deleting a source or runtime Secret does not revoke bytes a process loaded or a
 provider accepted.
 Transport rotation, finite token TTL and immediate revocation remain open; see
 [follow-up tracking](../../../../specs/plans/36-control-plane-gateways-plan.md#open-work-and-release-boundaries).
-Embedded execution retains its combined workload and transport bundle; CP-backed
+Embedded execution retains its combined workload and transport bundle; canonical
 model/configuration sources are delivered to that workload as needed. It is
 outside the dedicated trust-boundary acceptance scope.
 
@@ -253,7 +252,7 @@ values. Backend-managed credentials and Configuration Secret bindings retain
 their separate provisioning paths.
 
 The controller API service account needs `list` permission for Deployments in
-both physical namespaces so it can reject an existing runtime before
+each runtime target so it can reject an existing runtime before
 creating initial Secrets.
 
 The Driver names each Agent-specific transport Secret with the configured

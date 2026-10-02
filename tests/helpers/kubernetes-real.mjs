@@ -326,10 +326,7 @@ export function createRealKubernetesFixture({
       const owner = await kubernetes.resource("namespace", namespace);
       const namespaceId = owner.metadata.labels["openclaw.dev/namespace"];
       assert.ok(namespaceId, "transport source must belong to the resolved data-plane Namespace");
-      const { kubernetesGatewayNamespaceName } =
-        await import("../../apps/controller/src/drivers/compute/kubernetes/index.ts");
-      const target =
-        executionMode === "embedded" ? namespace : kubernetesGatewayNamespaceName(namespaceId);
+      const target = namespace;
       const bundles =
         executionMode === "embedded"
           ? [[`openclaw-agent-transport-${suffix}`, ["app-server-token", "gateway-password"]]]
