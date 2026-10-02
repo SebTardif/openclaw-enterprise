@@ -1,16 +1,13 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import test from "node:test";
 import vm from "node:vm";
-import {
-  modelProbeSettled,
-  trackProbeCpuHog,
-} from "../helpers/runtime-model-probe-observation.mjs";
+import { modelProbeSettled } from "../helpers/runtime-model-probe-observation.mjs";
 import reporter from "../../scripts/ci/reporter.mjs";
 import { GATEWAY_RUNTIME_ENTRYPOINT } from "../../apps/controller/src/drivers/compute/kubernetes/runtime-entrypoints.ts";
 
@@ -36,65 +33,6 @@ test("probe settlement accepts ready and failed outcomes without accepting parti
     false,
   );
   assert.equal(modelProbeSettled({ events: [{ event: "observe", key: "runtimeFailure" }] }), false);
-});
-
-test("actual starved-case callback accepts READY; guard-removal control does not", async () => {
-  const source = await readFile(
-    new URL("../integration/runtime-image-model-probe.test.mjs", import.meta.url),
-    "utf8",
-  );
-  const body = source.slice(
-    source.indexOf('"runtime image embedded Gateway reports a CPU-starved model probe at its cap"'),
-  );
-  const start = body.indexOf("until: ") + 7;
-  const end = body.indexOf("\n      },", start) + 8;
-  const callback = body.slice(start, end);
-  const evaluate = (code) =>
-    vm.runInNewContext(`let hogs; (${code})`, {
-      Promise,
-      modelProbeSettled,
-      failed: ({ events }) =>
-        events.some((event) => event.key === "runtimeFailure" && event.value != null),
-      trackProbeCpuHog: () => Promise.resolve(),
-      execute: () => Promise.resolve(),
-      docker: "unused",
-      stress: {},
-    });
-  assert.equal(evaluate(callback)(ready, "owned"), true);
-  const negative = callback.replace(
-    "return modelProbeSettled(snapshot);",
-    "return failed(snapshot);",
-  );
-  assert.notEqual(negative, callback);
-  assert.equal(evaluate(negative)(ready, "owned"), false);
-  const program = /'([^']*openclaw-cpu-hog-started[^']*)'/u.exec(callback)?.[1];
-  assert.ok(program);
-  const actualArgument = vm.runInNewContext(`'${program}'`);
-  assert.doesNotThrow(() => new vm.Script(actualArgument));
-});
-
-test(
-  "owned inert Node child proves marker observation and terminal settlement",
-  { timeout: 10_000 },
-  async () => {
-    const stress = { requested: 0, started: 0, settled: 0, rejected: 0 };
-    const operation = execute(
-      process.execPath,
-      ["-e", 'process.stdout.write("openclaw-cpu-hog-started\\n")'],
-      { timeout: 2_000 },
-    );
-    await trackProbeCpuHog(operation, stress);
-    assert.deepEqual(stress, { requested: 1, started: 1, settled: 1, rejected: 0 });
-  },
-);
-
-test("a rejected owned inert child is not counted as started", { timeout: 10_000 }, async () => {
-  const stress = { requested: 0, started: 0, settled: 0, rejected: 0 };
-  await trackProbeCpuHog(
-    execute(process.execPath, ["-e", "process.exit(3)"], { timeout: 2_000 }),
-    stress,
-  );
-  assert.deepEqual(stress, { requested: 1, started: 0, settled: 1, rejected: 1 });
 });
 
 test(

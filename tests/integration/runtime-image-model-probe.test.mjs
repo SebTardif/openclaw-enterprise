@@ -9,7 +9,6 @@ import test from "node:test";
 import {
   modelProbeSettled,
   modelProbeDiagnostic,
-  trackProbeCpuHog,
 } from "../helpers/runtime-model-probe-observation.mjs";
 import { promisify } from "node:util";
 import { imageSmokeTimeoutMultiplier } from "../helpers/image-smoke-timeout.mjs";
@@ -24,12 +23,14 @@ import { admitLoggingConfiguration } from "../../packages/contracts/src/index.ts
 // The embedded Gateway's startup model probe on the real runtime image, under
 // the production example's Gateway memory limit and a 500m CPU limit, an eighth
 // of the example's four cores (deploy/examples/production/installation.yaml),
-// which operators may still choose. Only the model provider is
-// substituted: a sidecar in the runtime image owns the network namespace,
+// which operators may still choose. The successful and hung-provider cases
+// substitute only the provider: a sidecar owns the network namespace and
 // answers the Responses API as api.openai.com (mapped to loopback, trusted
 // through a private CA), and observes the wrapper from outside. Like the
 // kubelet, the test also runs the real readiness program inside the Gateway
 // container every two seconds, so it shares the Gateway's CPU quota.
+// The cap case substitutes a CPU-bound probe child to exercise the real
+// wrapper's timeout, cgroup classification and cleanup deterministically.
 
 const execute = promisify(execFile);
 const docker = process.env.OCC_DOCKER_BIN ?? "docker";
@@ -235,10 +236,17 @@ function containerTime(value) {
 // "hang". Resolves once `until` accepts an observation snapshot.
 async function runEmbeddedGatewayProbe(
   t,
-  { mode, delayMs = 0, cpus, memory, until, limitMs, stress, afterStop },
+  { mode, delayMs = 0, cpus, memory, until, limitMs, cpuBoundProbe = false },
 ) {
   const gateway = embeddedGateway();
   const material = await createProbeMaterial(t, gateway.configuration);
+  if (cpuBoundProbe) {
+    await writeFile(
+      join(material, "cpu-bound-probe.mjs"),
+      await readFile(new URL("../fixtures/runtime-cpu-bound-probe.mjs", import.meta.url)),
+      { mode: 0o644 },
+    );
+  }
   const suffix = randomBytes(6).toString("hex");
   const sidecar = `oce-runtime-model-probe-endpoint-${suffix}`;
   const containerName = `oce-runtime-model-probe-gateway-${suffix}`;
@@ -247,7 +255,6 @@ async function runEmbeddedGatewayProbe(
     stopReadiness = true;
     await runDocker(["rm", "-f", containerName]).catch(() => {});
     await runDocker(["rm", "-f", sidecar]).catch(() => {});
-    await afterStop?.();
   });
   const readinessEnvironment = Object.fromEntries(
     gateway.environment.map((entry) => [
@@ -323,6 +330,13 @@ async function runEmbeddedGatewayProbe(
     `${join(material, "resolv.conf")}:/etc/resolv.conf:ro`,
     "--volume",
     `${join(material, "openclaw.json")}:/etc/openclaw/openclaw.json:ro`,
+    // /app/openclaw.mjs resolves to this canonical file in the runtime image.
+    ...(cpuBoundProbe
+      ? [
+          "--volume",
+          `${join(material, "cpu-bound-probe.mjs")}:/app/node_modules/openclaw/openclaw.mjs:ro`,
+        ]
+      : []),
     ...gateway.environment.flatMap((value) => ["-e", value]),
     "--entrypoint",
     "node",
@@ -374,14 +388,14 @@ async function runEmbeddedGatewayProbe(
         const error = new assert.AssertionError({
           message: "The Gateway wrapper exited before settlement.",
         });
-        error.openclawCiDiagnostic = modelProbeDiagnostic(snapshot, stress, "wrapper-exited");
+        error.openclawCiDiagnostic = modelProbeDiagnostic(snapshot, "wrapper-exited");
         throw error;
       }
       if (Date.now() > deadline) {
         const error = new assert.AssertionError({
           message: "The embedded Gateway exceeded its settlement guard.",
         });
-        error.openclawCiDiagnostic = modelProbeDiagnostic(snapshot, stress, "outer-timeout");
+        error.openclawCiDiagnostic = modelProbeDiagnostic(snapshot, "outer-timeout");
         throw error;
       }
       await new Promise((resolve) => setTimeout(resolve, 250));
@@ -469,57 +483,27 @@ test(
   },
 );
 
-// Other work in the container takes most of the Gateway's 500m quota, as a
-// runaway process would: the probe cannot finish its local work within its
-// CPU budget, waits for CPU most of the time, and reports that specific
-// failure at its cap, which the worker turns into a prompt deployment failure.
+// A nonterminating CPU-bound child guarantees the cap is exercised; finite
+// OpenClaw work can legitimately finish despite competing CPU load. Node,
+// the generated wrapper, cgroup counters and readiness checks remain real.
 test(
-  "runtime image embedded Gateway reports a CPU-starved model probe at its cap",
+  "runtime image embedded Gateway classifies a CPU-bound probe fault at its cap",
   { ...imageTestOptions, timeout: 900_000 },
   async (t) => {
-    let hogs;
-    const stress = { requested: 0, started: 0, settled: 0, rejected: 0 };
     const run = await runEmbeddedGatewayProbe(t, {
       mode: "answer",
       delayMs: 2_000,
       cpus: constrainedGatewayCpuLimit,
       memory: productionGatewayMemoryLimit,
       limitMs: 400_000,
-      stress,
-      afterStop: async () => {
-        await hogs;
-      },
-      until: (snapshot, containerName) => {
-        hogs ??= Promise.all(
-          Array.from({ length: 8 }, () =>
-            trackProbeCpuHog(
-              execute(
-                docker,
-                [
-                  "exec",
-                  containerName,
-                  "node",
-                  "-e",
-                  'process.stdout.write("openclaw-cpu-hog-started\\n"); for (;;) {}',
-                ],
-                {
-                  timeout: 600_000,
-                  maxBuffer: 4_000_000,
-                },
-              ),
-              stress,
-            ),
-          ),
-        );
-        return modelProbeSettled(snapshot);
-      },
+      cpuBoundProbe: true,
+      until: modelProbeSettled,
     });
     const { events, phases, output } = run.snapshot;
     const detail = `\n${output}\n${JSON.stringify(events)}`;
     // CI keeps only a failed assertion's location: each cause fails on its own line.
     const probe = jsonLines(output).find(({ event }) => event === "openclaw.model_probe");
     try {
-      assert.equal(stress.started, 8, "all eight owned CPU hogs reached their loops");
       assert.ok(probe, `the wrapper logged its probe${detail}`);
       assert.equal(probe.capMs, 110_000, `cap from the 500m cgroup limit${detail}`);
       assert.ok(probe.elapsedMs >= probe.capMs, `the probe reached its cap${detail}`);
@@ -528,14 +512,23 @@ test(
       assert.equal(runtimeFailure(events), "MODEL_PROBE_CPU_STARVED", detail);
       assert.equal(phaseAt(phases, "model-probe")?.outcome, "failed", detail);
       assert.equal(phaseAt(phases, "native-spawn"), undefined, detail);
+      assert.ok(!events.some(observed("ready", true)), detail);
+      await runDocker([
+        "exec",
+        run.containerName,
+        "node",
+        "-e",
+        `const assert = require("node:assert/strict");
+const pid = Number(require("node:fs").readFileSync("/tmp/openclaw-cpu-probe.pid", "utf8"));
+assert.ok(Number.isSafeInteger(pid) && pid > 1, "the fault child recorded its own PID");
+assert.throws(() => process.kill(pid, 0), { code: "ESRCH" }, "the wrapper reaped the fault child");`,
+      ]);
       t.diagnostic(
         `CPU-starved probe at --cpus ${constrainedGatewayCpuLimit}: ${JSON.stringify(probe)}`,
       );
     } catch (error) {
-      error.openclawCiDiagnostic = modelProbeDiagnostic(run.snapshot, stress, "classification");
+      error.openclawCiDiagnostic = modelProbeDiagnostic(run.snapshot, "classification");
       throw error;
     }
-    await runDocker(["rm", "-f", run.containerName]).catch(() => {});
-    await hogs;
   },
 );
