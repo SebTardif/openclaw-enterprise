@@ -10,7 +10,7 @@ status_note: "Decision request. Nothing in this RFC removes code. Each cut needs
   Driver and console owners for their areas.
 - **Created:** 2026-10-02
 - **Last updated:** 2026-10-02
-- **RFC PR:** this PR
+- **RFC PR:** [#898](https://github.com/openclaw/openclaw-enterprise/pull/898)
 - **Related:** [RFC-0046 (#853)][pr-853], [RFC-0047 (#855)][pr-855],
   [#519][pr-519], [#824][pr-824], [#830][pr-830], [#829][issue-829]
 - **Source baseline:** `main` at `63b21fb4b`. Line counts are `wc -l` on that
