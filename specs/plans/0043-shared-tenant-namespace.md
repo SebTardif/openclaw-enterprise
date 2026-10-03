@@ -94,6 +94,14 @@ skip. A real Agent API mode-cutover assertion extends the native lifecycle proof
 Startup durability checks now expect the existing immediate authentication
 failure code rather than an obsolete convergence-deadline result.
 
+Native cutover also exposed a canonical transport format collision between modes.
+New Agents now use separate transport/password Secrets in either mode. Legacy
+combined sources remain readable and retained for older Pods; workload delivery
+copies the same password to its separate owned source without changing the old
+Secret. Both mode-transition regressions failed before the change and pass after;
+compatibility coverage checks retained bytes, idempotence and conflicting sources.
+Network interruption affected the subsequent runtime batch, which must be rerun.
+
 ## Manual Notes
 
 ## Changelog

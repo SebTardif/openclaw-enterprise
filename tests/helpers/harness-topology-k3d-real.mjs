@@ -2103,10 +2103,15 @@ async function arrangeProductionTopology(context, mode, slack, options = {}) {
     agent.data.id,
     {
       gatewayPassword,
-      executionMode: mode,
+      legacyCombined: options.legacyRuntimeCredentials === true,
     },
   );
   assert.equal(provisionedGatewayPassword, gatewayPassword);
+  const legacyTransportName = `openclaw-agent-transport-${hash(agent.data.id)}`;
+  const legacyTransport =
+    options.legacyRuntimeCredentials === true
+      ? await resource("secret", legacyTransportName, placement)
+      : undefined;
   {
     const revisionsBefore = await request(
       "GET",
@@ -2321,6 +2326,18 @@ async function arrangeProductionTopology(context, mode, slack, options = {}) {
     { mode, placement, gatewayPlacement, gatewayPod },
     `${harnessId === "codex" ? "codex" : "openai"}/${providerModel}`,
   );
+
+  if (legacyTransport !== undefined) {
+    const retained = await resource("secret", legacyTransportName, placement);
+    const password = await resource("secret", `gateway-password-${hash(agent.data.id)}`, placement);
+    assert.equal(retained.metadata.uid, legacyTransport.metadata.uid);
+    assert.deepEqual(retained.data, legacyTransport.data);
+    assert.deepEqual(Object.keys(password.data), ["gateway-password"]);
+    assert.equal(password.data["gateway-password"], retained.data["gateway-password"]);
+    context.diagnostic(
+      "legacy combined credentials retained their UID and bytes; the real worker delivered the separate Gateway password source",
+    );
+  }
 
   const startGatewayForward = () =>
     options.gatewayPort === undefined

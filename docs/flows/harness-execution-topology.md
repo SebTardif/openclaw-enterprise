@@ -111,21 +111,19 @@ See the [harness authentication flow](native-service-account-credential-delivery
 for admission, immutable source snapshots, and worker reauthorization.
 
 Kubernetes `ensureNamespace` prepares one tenant namespace in a single cluster,
-including adopted namespaces. Its storage-role label enables
-Secret and Configuration discovery. The two-cluster
-profile retains its control-cluster Gateway target.
+including adopted namespaces; its storage-role label enables discovery.
+The two-cluster profile retains its control-cluster Gateway target.
 `prepareRevision` and `activateRevision` keep dedicated Gateway and Harness Pods,
 identities and PVCs separate in their selected targets. `deliverGatewaySecrets`
 validates canonical sources for dedicated Gateways; `deliverHarnessAuth` creates
-only the selected model/transport projection, even in a shared namespace. App-server DNS includes the Harness namespace; policies select exact
-Namespace, Agent and revision peers. The active dedicated Harness Service selector
-carries the selected Harness network profile and the same Namespace, Agent, revision,
-and workload-role labels before
-adding a Compute-owned workload-name selector, so Service-IP traffic remains
-compatible with NetworkPolicy implementations that check Service selectors before
-destination translation. Active Gateway Services carry the Namespace, Agent, and
-gateway workload-role labels, satisfying gateway policy selectors without tying
-the stable Gateway route to a revision. `runtime.gatewayNodeSelector`
+only the selected model/transport projection. Canonical transport and Gateway
+password sources now stay separate across modes. Legacy combined sources remain
+for older Pods; Compute copies their password to the separate source before
+new templates reference it. App-server DNS includes the Harness namespace; policies select exact
+Namespace, Agent and revision peers. Harness Services select exact Namespace, Agent, revision, workload role, network
+profile and Compute-owned workload name. Gateway Services omit revision for a
+stable route. These selectors match NetworkPolicy before destination translation.
+`runtime.gatewayNodeSelector`
 independently places the Gateway Pod and private-state initializer on trusted nodes.
 Before preparing a dedicated replacement, the worker stops every earlier revision, including its
 Gateway, so a redeploy interrupts service until the replacement is ready. Because the predecessor
@@ -312,6 +310,8 @@ owns claim sizes, mount paths, StorageClass requirements, and final teardown.
 [keep this for the user to add notes. do not change between edits]
 
 ## Changelog
+
+- 2026-10-02: Stabilize canonical credential layout across execution modes with legacy source compatibility. (01a0fe72-58b2-7cc3-b770-7310f5401deb)
 
 - 2026-10-02: Retain dedicated predecessor projections during shared-namespace embedded cutover until Harness retirement. (01a0fe72-58b2-7cc3-b770-7310f5401deb)
 

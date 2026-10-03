@@ -213,22 +213,23 @@ storage target with the two-cluster profile. Dedicated Gateways reference
 admitted channel Secrets there directly; Compute verifies their scope and UID.
 There is no Gateway Secret mirror.
 
-For dedicated execution, `transport-<agent-hash>` (using the configured prefix)
-contains only `app-server-token`; `gateway-password-<agent-hash>` contains only
-`gateway-password`. Both are canonical sources, separate from the Harness projection. Compute creates
-`harness-secrets-<agent-hash>-<revision-hash>` in the data plane, containing only
-the selected model credential fields and app-server token. Harness Pods reference
-that revision-owned runtime Secret. Gateway password and channel tokens never
-enter it. Managed account sources retain account ownership in canonical storage; runtime copies
-have exact Namespace, Agent, service-principal and revision ownership.
+New credentials use `transport-<agent-hash>` (configured prefix) with only
+`app-server-token`, and `gateway-password-<agent-hash>` with only
+`gateway-password`, in either execution mode. Mode changes preserve these sources.
+Legacy combined transport Secrets remain readable. Before rendering new workloads,
+Compute copies their password into an owned separate source; the legacy Secret
+survives for older Gateway Pods. Conflicting password sources fail closed.
+`harness-secrets-<agent-hash>-<revision-hash>` contains only selected model fields
+and the app-server token. Gateway passwords and channel tokens never enter the
+Harness projection. Managed account sources retain account ownership; runtime
+copies have exact Namespace, Agent, service-principal and revision ownership.
 
 Preparation checks admitted source identities before writing runtime material.
 Repeated preparation repairs absent or changed projections. Activation validates
 Gateway sources and selects the prepared revision; it does not issue credentials.
 Stop and retirement wait for the workload to stop, then delete its projection
-and revision ConfigMaps by UID. Gateway and account canonical sources survive
-revision retirement; final Agent deletion removes its transport/password, while
-account and OCC Secret storage retain their separate lifecycles.
+and revision ConfigMaps by UID. Canonical sources survive retirement; Agent deletion removes transport/password.
+Account and OCC Secret lifecycles remain independent.
 
 Source updates do not restart running processes. The supported model-key update
 sequence is: update the OCC Secret, redeploy each consuming Agent through OCE,
@@ -241,9 +242,8 @@ Deleting a source or runtime Secret does not revoke bytes a process loaded or a
 provider accepted.
 Transport rotation, finite token TTL and immediate revocation remain open; see
 [follow-up tracking](../../../../specs/plans/36-control-plane-gateways-plan.md#open-work-and-release-boundaries).
-Embedded execution retains its combined workload and transport bundle; canonical
-model/configuration sources are delivered to that workload as needed. It is
-outside the dedicated trust-boundary acceptance scope.
+Embedded execution combines Gateway and Harness in one workload; model/configuration
+sources are delivered to that workload.
 
 When Kubernetes runtime credentials are configured,
 [Agent creation or first deployment](../../console/create-and-deploy.md#initial-runtime-credentials)

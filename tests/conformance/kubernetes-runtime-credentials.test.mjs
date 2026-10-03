@@ -199,9 +199,14 @@ function credentialFixture({
       const observed = {
         ...request.body,
         metadata: { ...request.body.metadata, uid: `${request.body.metadata.name}-uid` },
-        data: Object.fromEntries(
-          Object.entries(request.body.stringData).map(([key, value]) => [key, encode(value)]),
-        ),
+        data:
+          request.body.data ??
+          Object.fromEntries(
+            Object.entries(request.body.stringData ?? {}).map(([key, value]) => [
+              key,
+              encode(value),
+            ]),
+          ),
       };
       secrets[observed.metadata.name] = observed;
       return structuredClone(observed);
@@ -276,6 +281,80 @@ test("mocked Kubernetes client reports only complete owned Agent runtime credent
   assert.deepEqual(await fixture.driver.getAgentRuntimeCredentialStatus(binding()), {
     transportConfigured: true,
   });
+});
+
+for (const executionMode of ["dedicated", "embedded"]) {
+  test(`runtime credentials remain valid across ${executionMode} mode changes`, async () => {
+    const fixture = credentialFixture();
+    const initial = { namespace, agent: { ...agent, executionMode } };
+    await fixture.driver.provisionAgentRuntimeCredentials(initial, {});
+    assert.deepEqual(
+      await fixture.driver.getAgentRuntimeCredentialStatus({
+        namespace,
+        agent: {
+          ...agent,
+          executionMode: executionMode === "dedicated" ? "embedded" : "dedicated",
+        },
+      }),
+      { transportConfigured: true },
+      "changing execution mode must preserve the Agent's provisioned credentials",
+    );
+  });
+}
+
+test("legacy combined credentials remain usable without removing the serving Gateway source", async () => {
+  const first = credentialFixture();
+  const name = `transport-${digest(agent.id)}`;
+  const legacy = runtimeSecret(
+    first.driver,
+    first.namespaceName,
+    "transport",
+    {
+      "app-server-token": "legacy-transport",
+      "gateway-password": "legacy-password",
+    },
+    {
+      metadata: {
+        ...runtimeSecret(first.driver, first.namespaceName, "transport", {}).metadata,
+        uid: "legacy-uid",
+      },
+    },
+  );
+  const secrets = { [name]: legacy };
+  const fixture = credentialFixture({ secrets });
+  for (const executionMode of ["embedded", "dedicated"]) {
+    assert.deepEqual(
+      await fixture.driver.getAgentRuntimeCredentialStatus({
+        namespace,
+        agent: { ...agent, executionMode },
+      }),
+      { transportConfigured: true },
+    );
+  }
+  const before = structuredClone(legacy);
+  await fixture.driver.ensureLegacyGatewayPassword(
+    { namespaceId: namespace.id, agentId: agent.id },
+    {
+      name: fixture.namespaceName,
+      plane: "control",
+    },
+  );
+  const password = secrets[`gateway-password-${digest(agent.id)}`];
+  assert.deepEqual(password.data, { "gateway-password": legacy.data["gateway-password"] });
+  assert.deepEqual(secrets[name], before, "an older Gateway may still reference its legacy Secret");
+  await fixture.driver.ensureLegacyGatewayPassword(
+    { namespaceId: namespace.id, agentId: agent.id },
+    {
+      name: fixture.namespaceName,
+      plane: "control",
+    },
+  );
+  assert.equal(fixture.created.length, 1, "compatibility delivery must be idempotent");
+  password.data["gateway-password"] = encode("conflicting-password");
+  await assert.rejects(
+    fixture.driver.getAgentRuntimeCredentialStatus(binding()),
+    ResourceConflictError,
+  );
 });
 
 test("mocked Kubernetes client deletes every owned Agent runtime credential Secret idempotently", async () => {
@@ -509,7 +588,7 @@ test("mocked Kubernetes client rejects transport Secrets with unexpected keys", 
   assert.equal(created.length, 0);
 });
 
-test("embedded Gateway retains its existing transport Secret password reference", () => {
+test("embedded Gateway uses the separate canonical password source", () => {
   const { driver, namespaceName } = credentialFixture();
   const agentId = "agent-password-projection";
   const suffix = digest(agentId);
@@ -578,7 +657,7 @@ test("embedded Gateway retains its existing transport Secret password reference"
         auth: { password: { source: "env", id: "OPENCLAW_GATEWAY_PASSWORD" } },
       },
     }).OPENCLAW_GATEWAY_PASSWORD.valueFrom.secretKeyRef,
-    { name: `transport-${suffix}`, key: "gateway-password" },
+    { name: `gateway-password-${suffix}`, key: "gateway-password" },
   );
   assert.throws(
     () =>

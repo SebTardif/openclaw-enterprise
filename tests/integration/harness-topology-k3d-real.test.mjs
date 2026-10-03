@@ -156,7 +156,9 @@ test(
   "production Secret binding powers embedded OpenClaw and preserves conversations across Pod replacement",
   { ...requiresProductionCluster, timeout: 900_000 },
   async (context) => {
-    const topology = await arrangeProductionTopology(context, "embedded");
+    const topology = await arrangeProductionTopology(context, "embedded", undefined, {
+      legacyRuntimeCredentials: true,
+    });
     assert.equal(topology.harnessPod, undefined, "embedded execution must not create a Codex Pod");
     assert.equal(topology.gatewayPod.spec.serviceAccountName, topology.agentServiceName);
     assert.equal((await resources("deployments", topology.placement)).length, 1);

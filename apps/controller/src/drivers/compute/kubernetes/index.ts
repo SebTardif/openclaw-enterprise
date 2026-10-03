@@ -5730,18 +5730,12 @@ export class KubernetesComputeDriver implements ComputeDriver {
       namespace,
       transport: {
         name: transportName,
-        keys: dedicated
-          ? [AGENT_TRANSPORT_TOKEN_KEY]
-          : [AGENT_TRANSPORT_TOKEN_KEY, GATEWAY_PASSWORD_KEY],
+        keys: [AGENT_TRANSPORT_TOKEN_KEY],
       },
-      ...(dedicated
-        ? {
-            gatewayPassword: {
-              name: `gateway-password-${context.suffix}`,
-              keys: [GATEWAY_PASSWORD_KEY],
-            },
-          }
-        : {}),
+      gatewayPassword: {
+        name: `gateway-password-${context.suffix}`,
+        keys: [GATEWAY_PASSWORD_KEY],
+      },
     };
   }
 
@@ -5785,14 +5779,86 @@ export class KubernetesComputeDriver implements ComputeDriver {
       }
       const secret = await this.getOwned("Secret", spec.name, context.namespace, context.ownership);
       if (secret !== undefined) {
-        this.requireCompleteRuntimeCredentialSecret(secret, spec);
+        this.requireCompleteRuntimeCredentialSecret(
+          secret,
+          spec === context.transport ? this.runtimeTransportSecretSpec(spec.name, secret) : spec,
+        );
       }
       return secret;
     };
+    const transport = await read(context.transport);
+    const password = await read(context.gatewayPassword);
+    const legacyPassword = transport?.data?.[GATEWAY_PASSWORD_KEY];
+    if (
+      password !== undefined &&
+      legacyPassword !== undefined &&
+      password.data?.[GATEWAY_PASSWORD_KEY] !== legacyPassword
+    ) {
+      throw new ResourceConflictError("The Agent runtime credential sources conflict.");
+    }
     return {
-      transport: await read(context.transport),
-      gatewayPassword: await read(context.gatewayPassword),
+      transport,
+      gatewayPassword: password ?? (legacyPassword === undefined ? undefined : transport),
     };
+  }
+
+  private runtimeTransportSecretSpec(
+    name: string,
+    secret: ManagedKubernetesObject<"Secret">,
+  ): RuntimeCredentialSecretSpec {
+    return {
+      name,
+      keys: Object.hasOwn(asRecord(secret.data) ?? {}, GATEWAY_PASSWORD_KEY)
+        ? [AGENT_TRANSPORT_TOKEN_KEY, GATEWAY_PASSWORD_KEY]
+        : [AGENT_TRANSPORT_TOKEN_KEY],
+    };
+  }
+
+  private async ensureLegacyGatewayPassword(
+    revision: AgentRevision,
+    namespace: KubernetesNamespaceAddress,
+  ): Promise<void> {
+    if (this.options.runtime === undefined) {
+      return;
+    }
+    const ownership = { namespaceId: revision.namespaceId, agentId: revision.agentId };
+    const suffix = sha256Hex(revision.agentId, 12);
+    const transportName = `${this.options.runtime.transportSecretPrefix}-${suffix}`;
+    const transport = await this.getOwned("Secret", transportName, namespace, ownership);
+    if (
+      transport === undefined ||
+      !Object.hasOwn(asRecord(transport.data) ?? {}, GATEWAY_PASSWORD_KEY)
+    ) {
+      return;
+    }
+    this.requireCompleteRuntimeCredentialSecret(
+      transport,
+      this.runtimeTransportSecretSpec(transportName, transport),
+    );
+    const name = `gateway-password-${suffix}`;
+    const existing = await this.getOwned("Secret", name, namespace, ownership);
+    if (existing !== undefined) {
+      this.requireCompleteRuntimeCredentialSecret(existing, { name, keys: [GATEWAY_PASSWORD_KEY] });
+      if (existing.data?.[GATEWAY_PASSWORD_KEY] !== transport.data?.[GATEWAY_PASSWORD_KEY]) {
+        throw new ResourceConflictError("The Agent runtime credential sources conflict.");
+      }
+      return;
+    }
+    // Preserve the legacy source for an older Gateway that still references it.
+    // New templates use the separate password source in either execution mode.
+    const clients = await this.clients(namespace.plane);
+    await this.request(
+      () =>
+        clients.core.createNamespacedSecret({
+          namespace: namespace.name,
+          body: {
+            ...this.manifest("v1", "Secret", name, ownership, namespace),
+            type: "Opaque",
+            data: { [GATEWAY_PASSWORD_KEY]: transport.data![GATEWAY_PASSWORD_KEY]! },
+          },
+        }),
+      { mutating: true },
+    );
   }
 
   private requireCompleteRuntimeCredentialSecret(
@@ -10590,6 +10656,7 @@ chmodSync(${JSON.stringify(nodeStatePath)}, 0o700);`;
     if (auth === undefined) {
       throw new ConfigurationFailure("Resolved Harness authentication is required.");
     }
+    await this.ensureLegacyGatewayPassword(revision, sourceNamespace);
     if (auth.method === "oauth") {
       const source = await this.oauthSource(revision, context);
       if (
@@ -10654,10 +10721,10 @@ chmodSync(${JSON.stringify(nodeStatePath)}, 0o700);`;
       if (source === undefined) {
         throw new DependencyUnavailableError("Harness transport credential is unavailable.");
       }
-      this.requireCompleteRuntimeCredentialSecret(source, {
-        name,
-        keys: [AGENT_TRANSPORT_TOKEN_KEY],
-      });
+      this.requireCompleteRuntimeCredentialSecret(
+        source,
+        this.runtimeTransportSecretSpec(name, source),
+      );
       sources.push({
         name: AGENT_TRANSPORT_TOKEN_KEY,
         namespaceId: revision.namespaceId,
@@ -11182,7 +11249,7 @@ require("node:fs").rmSync("/harness-workspace-state/codex-home", { recursive: tr
                     agentId,
                     required(ownership.revisionId, "Harness revision ID"),
                   )
-                : dedicated && key === GATEWAY_PASSWORD_KEY
+                : key === GATEWAY_PASSWORD_KEY
                   ? `gateway-password-${suffix}`
                   : `${prefix}-${suffix}`,
             key,

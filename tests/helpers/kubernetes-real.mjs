@@ -309,7 +309,7 @@ export function createRealKubernetesFixture({
     directory,
     namespace,
     agentId,
-    { gatewayPassword, executionMode = "dedicated" } = {},
+    { gatewayPassword, legacyCombined = false } = {},
   ) {
     const suffix = kubernetesHash(agentId);
     const tokenDirectory = join(directory, `tokens-${suffix}`);
@@ -327,13 +327,12 @@ export function createRealKubernetesFixture({
       const namespaceId = owner.metadata.labels["openclaw.dev/namespace"];
       assert.ok(namespaceId, "transport source must belong to the resolved data-plane Namespace");
       const target = namespace;
-      const bundles =
-        executionMode === "embedded"
-          ? [[`openclaw-agent-transport-${suffix}`, ["app-server-token", "gateway-password"]]]
-          : [
-              [`openclaw-agent-transport-${suffix}`, ["app-server-token"]],
-              [`gateway-password-${suffix}`, ["gateway-password"]],
-            ];
+      const bundles = legacyCombined
+        ? [[`openclaw-agent-transport-${suffix}`, ["app-server-token", "gateway-password"]]]
+        : [
+            [`openclaw-agent-transport-${suffix}`, ["app-server-token"]],
+            [`gateway-password-${suffix}`, ["gateway-password"]],
+          ];
       for (const [name, keys] of bundles) {
         await kubectl(
           "create",
