@@ -2913,7 +2913,11 @@ async function assertStartupFailureDeploymentStatusDurable(context, topology, op
     plugins,
     recover: false,
   });
-  const failed = await deploymentStatus(topology, failure.revision.id);
+  const failed = await waitFor("durable terminal authentication failure", async () => {
+    const status = await deploymentStatus(topology, failure.revision.id);
+    assert.notEqual(status.status, "succeeded", "invalid credentials must never succeed");
+    return status.status === "failed" ? status : undefined;
+  });
   assert.deepEqual(
     Object.keys(failed).sort(),
     ["agentId", "deploymentId", "error", "namespaceId", "progress", "status", "warnings"],
