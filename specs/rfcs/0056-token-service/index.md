@@ -13,15 +13,17 @@ status: Proposed
 
 Refactor the repository credential broker into an Installation-scoped **Token
 Service** deployed independently of OCC workers, with standalone support. It owns
-bounded leases, memory-only token custody, replacement, and cleanup.
+Agent-scoped bearer access with durable verification records, internal credential
+leases, memory-only upstream token custody, replacement, and cleanup.
 Named **TokenDriver** instances implement upstream issuance and revocation;
 `GitHubTokenDriver` is the first implementation. Keep repository discovery,
 Git/`gh` routing, and repository permission checks in the existing RepoDriver and
-repository gateway adapter. Agents receive opaque lease credentials; upstream
-tokens remain inside the trusted service. Repository metadata lookups use short
+repository gateway adapter. Managed Agents authenticate with opaque bearers
+bound to the Agent, not its revision. Upstream tokens remain inside the service. Repository metadata lookups use short
 Installation-owned leases, independent of Agents and drafts.
 
-This proposed architecture extends the existing credential lifecycle. YAML is
+This proposed architecture changes managed access lifetime and restart recovery
+while retaining exact authority and truthful cleanup accounting. YAML is
 not yet supported; an implementation plan follows interface review.
 
 ## Motivation and scope
@@ -42,6 +44,12 @@ interactive OAuth login, raw-token delivery, and a general public token API are 
 delivery. OAuth below demonstrates the extension seam; it is not a second
 promised integration without a supported caller.
 
+The broker backend is not pluggable. OpenShell users either manage credentials
+without the OCC broker or use OCC to supply credentials to OpenShell itself.
+The latter requires a separate trusted-service handoff; it does not enable raw
+Agent delivery in this RFC. See the [OpenShell FAQ](faq.md) for overlap,
+refresh ownership, and integration limits.
+
 Remove OCE-managed Git hooks and `pushRefAllowlist` in this refactor. The
 [current push-ref guardrail](../../../docs/reference/repository-credentials/push-ref-guardrail.md)
 is bypassable; its accidental-push protection is intentionally dropped. Remove
@@ -52,29 +60,30 @@ remote-ref restrictions; this refactor does not provision those rules. Reconside
 managed hooks only for a concrete future need.
 
 Retain the repository clients and gateway adapter over the generic lease engine.
-Except for managed hooks, preserve the supported
-[Git/`gh` contract](../../../docs/reference/repository-credentials.md#client-routing-and-limits):
-native Git configuration, exact destination checks, generation pinning, explicit
-selection among duplicate bindings, original deadlines, and response filtering.
-Stale clients must not adopt a newer generation's credentials. Uncertain remote
-mutations must never be replayed automatically. No generic client framework is
-introduced.
+Preserve the supported [Git/`gh` behavior](../../../docs/reference/repository-credentials.md#client-routing-and-limits):
+native configuration, exact destination checks, explicit duplicate-binding
+selection, response filtering, and no automatic replay of uncertain mutations.
+Managed bearer ownership moves to the Agent and has no mandatory session expiry.
+Client configuration generations still pin the admitted binding; stale clients
+cannot silently select newer or broader authority. Standalone sessions retain
+explicit deadlines. Workload-identity authentication is future work, not a
+condition for accepting a managed bearer.
 
 ## Ownership
 
 | Owner                         | Responsibility                                                                                                          |
 | ----------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| OCC and selected IAM Driver   | Authorize platform operations; bind owner, grant, and deadline; persist admission and cleanup.                          |
+| OCC and selected IAM Driver   | Authorize platform operations; bind Agent grants and active admission; persist lifecycle and cleanup intent.            |
 | Token Service                 | Validate admissions; own leases, custody, renewal, capacity, reservations, and terminal receipts.                       |
 | TokenDriver                   | Normalize issuer-specific grants; acquire replacement tokens; report actual scope, expiry, revocation, and uncertainty. |
 | Repository gateway adapter    | Validate Git/`gh` requests and destinations; use a lease internally; preserve existing response filtering.              |
 | RepoDriver and GitHub Backend | Own discovery, metadata caching, profile resolution, and private lease coordination.                                    |
-| Compute Driver                | Deliver only revision-owned client material; withdraw it during retirement.                                             |
+| Compute Driver                | Own Agent bearer artifacts and binding configuration; withdraw retired workload access.                                 |
 
 Deploy one active Token Service per Installation, independently of workers.
-Workers call its authenticated HTTPS control API; Agents use opaque bearers on
-its separate HTTPS gateway. The service accesses nonsecret admission records
-and writes receipts directly, replacing Unix control sockets and worker callbacks
+Workers call its authenticated HTTPS control API; Agents use Agent-scoped bearers on
+its separate HTTPS gateway. The service accesses admission and restricted bearer
+verification records and writes receipts directly, replacing Unix control sockets and worker callbacks
 in OCC mode. [Deployment and recovery](deployment.md) defines authentication,
 state ownership, failure behavior, and the proposed topology. General
 [Agent-to-OCC workload authentication remains planned](../../../docs/design.md#implementation-status).
@@ -95,7 +104,7 @@ tokenService:
     clientCaFile: /run/token-service/control-clients-ca.crt
     clients:
       - identity: spiffe://oce.example/worker
-        admissionKinds: [agent-revision]
+        admissionKinds: [agent]
       - identity: spiffe://oce.example/api
         admissionKinds: [installation-operation]
   state:
@@ -104,8 +113,12 @@ tokenService:
     publicOrigin: https://credentials.example.internal
     tlsCertFile: /run/token-service/tls.crt
     tlsKeyFile: /run/token-service/tls.key
+  recovery:
+    minimumIntervalSeconds: 60
+    maximumUnresolvedAttemptsPerAgent: 3
+    maximumUnresolvedAttemptsPerDriver: 100
   leasePolicy:
-    maximumDurationSeconds: 86400
+    maximumOperationDurationSeconds: 30
     credentialMarginSeconds: 60
   drivers:
     - id: github-production
@@ -139,7 +152,6 @@ drivers:
   repo:
     id: repository-credentials
     configuration:
-      sessionDurationSeconds: 86400
       publicCaPath: /etc/openclaw/token-service/ca.crt
       controlClient:
         certFile: /run/occ/token-control/client.crt
@@ -184,7 +196,7 @@ The API, worker, and service bind authority to the same `configurationDigest`.
 Compute it from a deterministic, nonsecret projection of the authority
 configuration: service identity and mode, pinned Driver implementation identity,
 public issuer configuration, grant IDs and parameters, Namespace restrictions,
-audiences, repository/profile mappings, duration policy, and authorization
+audiences, repository/profile mappings, bounded-consumer duration policy, and authorization
 generation. Canonical serialization fixes object-key order and normalizes
 unordered collections without executing Driver packages. Private credential
 contents are excluded; rotating an equivalent signing key does not change the
@@ -192,7 +204,7 @@ digest. Semantically equivalent configuration edits may change it and invalidate
 leases. There is no generated semantic catalog or digest-advertisement handshake.
 
 Admissions bind `configurationDigest` and `grantId`, along with the exact owner,
-authority, authorization generation, and deadline. API and worker retain public
+authority, authorization generation, and any bounded-operation deadline. API and worker retain public
 GitHub identity and profile policy resolution. Only the service loads TokenDriver
 packages and private issuer files. Before becoming ready, it validates every
 Driver configuration and grant against its schemas, normalizes all grants, and
@@ -202,37 +214,61 @@ a digest alone does not authorize access. Retiring Drivers remain available for
 cleanup until their obligations settle.
 
 Preserve existing protected-file, TLS, queue, byte, timeout, and capacity limits,
-including override bounds and enforcement.
+including override bounds and enforcement. The additional positive recovery
+limits above bound managed GitHub restart issuance; their durable accounting and
+Driver eligibility are defined in [restart recovery](deployment.md#state-and-recovery).
 
 ## Lease contract and lifecycle
 
-A lease is permission for one consumer to use one immutable grant until an
-absolute deadline. Its owner is one of three tagged forms:
+Managed access belongs to `agent`: `(installationId, namespaceId, agentId)`.
+The opaque bearer identifies that Agent across revisions. Its current admitted
+grants record `revisionId` as configuration provenance, an
+`authorizationGeneration`, exact authority, and `configurationDigest`; revision
+identity is not the bearer subject. Draft or inactive revisions grant no access.
 
-- `agent-revision`: `(installationId, namespaceId, agentId, revisionId)`.
+Managed Agent bearers have no mandatory wall-clock expiry or renewal operation.
+On every request the service validates the bearer, the Agent's active state, the
+selected current admitted binding, and configuration authority. No workload
+certificate, SPIFFE identity, Pod identity, or caller-location proof is required.
+Possession of a valid bearer authenticates the Agent; it does not bypass the
+current authorization checks. Stop, deletion, explicit bearer revocation, or
+withdrawal of the relevant grant denies access. Persist the bearer hash, Agent
+owner, credential generation, and active/revoked state; service restart does not
+revoke the bearer. Plaintext bearer recovery is never provided.
+
+Internal leases hold one grant's upstream credential generations. Their owners are:
+
+- `agent`: `(installationId, namespaceId, agentId)`, with the authorizing admission
+  generation retained for scope checks and cleanup; no fixed session deadline.
 - `installation-operation`: `(installationId, backendId, operationId, purpose)`,
-  with `purpose: repository-metadata` as the only supported internal operation.
-- `operator-session`: `(serviceInstanceId, operatorSessionId)` in standalone mode.
+  with `purpose: repository-metadata` and an absolute deadline.
+- `operator-session`: `(serviceInstanceId, operatorSessionId)` in standalone mode,
+  with an absolute deadline and its own opaque bearer.
 
-It has `leaseId`, `admissionId`, `grantId`, `configurationDigest`,
-`audience`, `deadline`, and nonsecret status. Token generations have separate
-issuer expiry and cleanup obligations. A lease is not an upstream token.
+Each lease retains `leaseId`, `admissionId`, `grantId`, `configurationDigest`,
+`audience`, nonsecret status, and separately accounted token generations. One
+Agent bearer selects only that Agent's current admitted grants; it is not an
+upstream token or a grant to arbitrary repositories.
 
 The authenticated control client exposes three lease controls:
 
-| Operation              | Result and authority                                                                     |
-| ---------------------- | ---------------------------------------------------------------------------------------- |
-| `openLease(admission)` | Revision or standalone operator admission required; returns opaque client material once. |
-| `leaseStatus(leaseId)` | Owner-scoped status and cleanup counters; never credential recovery.                     |
-| `closeLease(leaseId)`  | Immediately deny new use and request cancellation/retirement; disposal is separate.      |
+| Operation              | Result and authority                                                                                                                                                                    |
+| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `openLease(admission)` | Validate committed Agent authority and return binding/status; return a new Agent bearer once when first established or explicitly replaced. Standalone returns its session bearer once. |
+| `leaseStatus(leaseId)` | Owner-scoped status and cleanup counters; never bearer recovery.                                                                                                                        |
+| `closeLease(leaseId)`  | Deny that grant's further use and request retirement; preserve the Agent bearer for other admitted grants. Disposal is separate.                                                        |
 
-Repository descriptions use the separate bounded operation below, not these
-controls. There is no caller-facing renewal operation or proactive refresh timer.
+Agent-wide revocation uses OCC’s durable lifecycle state, not another control
+RPC. Stop/delete and credential replacement follow the
+[revocation contract](deployment.md#durable-bearer-verification). A separate
+operator-facing revoke action is deferred.
 
-The gateway adapter's internal `withCredential(leaseId, minimumValidity, use)`
-supplies credentials only to its trusted forwarding code. It is not a network
-API. An Agent bearer authenticates only to its admitted audience; it cannot
-select an issuer, supply scopes, open another lease, or call a token endpoint.
+Repository descriptions use the bounded operation below. No caller-facing
+renewal or proactive refresh is added. The internal
+`withCredential(leaseId, minimumValidity, use)` supplies upstream credentials only
+to trusted forwarding code. The request's repository/binding selector is checked
+within the authenticated Agent's admitted authority; it cannot select an issuer
+or supply arbitrary scopes.
 
 ### Installation-owned repository metadata
 
@@ -268,8 +304,9 @@ uncertain. Keep the existing batch bound and five-minute cache; timeout or failu
 still leaves descriptions optional.
 
 The operation and its leases last at most 30 seconds, capped by configured
-duration policy. Leases close on completion, failure, cancellation, or expiry.
-They share provider capacity and cleanup accounting with revision leases;
+`leasePolicy.maximumOperationDurationSeconds`. Leases close on completion,
+failure, cancellation, or expiry.
+They share provider capacity and cleanup accounting with Agent leases;
 uncertain issuance retains cleanup obligations and blocks replacement. Pending
 cleanup can outlive the operation deadline, without permitting more use.
 Configuration or policy withdrawal invalidates them independently of Agent
@@ -286,45 +323,42 @@ Standalone leases use [service-local operator admission](standalone.md), with
 process-local custody and recovery limits. OCC-managed admissions remain durable;
 standalone access cannot bypass them.
 
-### Agent revision lifecycle
+### Managed Agent lifecycle
 
-See the [deployment diagram](deployment.md#topology) for direct control and gateway paths.
+See [deployment and recovery](deployment.md) for credential delivery and handover.
 
-1. **Admit.** Preserve existing Agent create/update/deploy authorization and
-   worker rechecks. Resolve repository profiles to grants. Persist the exact
-   attempt before external work; the service independently checks its current
-   snapshot and atomically records its reservation before returning client material.
-   Duplicate admission IDs recover status,
-   not bearers. A lost response uses existing find-or-fence/close recovery.
-2. **Use.** Acquire on demand when the gateway needs a token. Reuse a sufficiently
-   valid generation; otherwise coalesce concurrent acquisition or replacement
-   into one attempt per lease. Idle leases never mint or refresh tokens.
-   Required validity covers the bounded exchange plus the configured margin;
-   the first request needing a replacement pays the issuance latency.
-   Requested duration is a ceiling, never a promise the issuer supports that TTL.
-   Replacement preserves grant and lease handle. Extending access beyond the
-   deadline requires a newly authorized admission, not token refresh.
+1. **Admit.** Preserve Agent create/update/deploy authorization and worker rechecks.
+   OCC commits exact Agent grants and revision provenance. The service checks
+   that record and atomically reserves the admission before returning binding
+   data or a newly created bearer. Duplicate admission IDs recover status, not
+   bearer material. Compute retains the Agent-owned credential artifact across
+   eligible revision changes and publishes the active binding configuration.
+2. **Use.** Validate the bearer and current authority before dispatch. Acquire on
+   demand, reusing a sufficiently valid token or coalescing replacement into one
+   attempt per internal lease. Idle leases mint nothing. Required validity covers
+   the bounded exchange plus margin; the first request needing replacement pays
+   issuance latency. Replacement never widens the admitted grant.
 3. **Fail.** Retry only definitely safe acquisition failures with bounded delay.
-   Reauthorization-required marks the lease unavailable. Previously issued
-   credentials remain usable only while both authorization and validity hold.
-   Uncertain issuance fences further acquisition until reconciled; never replay
-   an uncertain Git push or API mutation to obtain success.
-4. **Close.** Stop, delete, revision retirement, or authority withdrawal closes
-   the lease and cancels owned exchanges. `CLOSED` denies new use; `DISPOSED`
-   requires settled actions, credential revocation or proven expiry, and auxiliary
-   cleanup. Revocation-unsupported Drivers report expiry-only cleanup explicitly.
+   Reauthorization-required makes the grant unavailable. Uncertain issuance
+   blocks acquisition except for the explicit, bounded managed-GitHub recovery
+   path after predecessor fencing. Old cleanup remains unresolved even when a
+   recovery attempt succeeds. Never replay an uncertain Git push or API mutation.
+   Missing required authorization state denies dispatch.
+4. **Change or close.** Close withdrawn or replaced grant generations before
+   activating new authority. OCC commits Agent bearer revocation with the
+   accepted stop/delete transition; lease cleanup proceeds separately. A later
+   start needs fresh authorized
+   admission and credential delivery. `CLOSED` denies new use and cancels owned
+   exchanges. `DISPOSED` additionally requires settlement, revocation or proven
+   expiry, and auxiliary cleanup.
 
-The service never shares token generations between leases in first delivery.
-An issuer's token may outlive the lease; the gateway deadline still denies use,
-and retirement remains pending until revocation or conservative expiry proof.
-Admission and use audit records contain owner, grant, Driver, generation, and
-outcome identifiers, never credentials or issuer response bodies. Platform
-grant withdrawal must invalidate active leases, not only future admissions.
-Every use checks the lease's `configurationDigest`, selected grant, and current
-eligibility against the active configuration. Applying a changed authority
-configuration closes mismatched leases; OCC reconciliation closes
-revision leases when their revision loses eligibility. Preserve the existing elapsed-time
-deadline checks; restart recovery cannot reset a lease's duration.
+Do not share token generations between leases in first delivery. Revision changes
+need not rotate an otherwise valid Agent bearer, but its permissions always come
+from the current active admission. Retiring a grant preserves its cleanup debt.
+Audit records contain Agent, revision provenance, admission generation, grant,
+Driver, and outcome identifiers, never credentials. Per-operation and bounded
+consumer deadlines retain elapsed-time checks; managed access no longer has a
+session-duration clock. Upstream token expiry remains enforced.
 
 ## TokenDriver extension contract
 
@@ -386,27 +420,43 @@ with service authority, so package review remains a trust boundary.
 
 ## Persistence and recovery
 
-Issued tokens remain memory-only in both modes. OCC admissions, service
-reservations, and terminal receipts remain durable and credential-free.
-[Recovery rules](deployment.md#state-and-recovery) distinguish worker restart,
-service loss, and unresolved cleanup; lost leases are never silently reminted.
+Issued upstream tokens remain memory-only. Managed Agent bearer hashes, owner
+bindings, revocation state, and credential generations survive service restart.
+OCC grants, service reservations, issuance-attempt evidence, recovery budgets,
+and terminal receipts remain durable. Do not persist raw bearers, upstream
+tokens, refresh tokens, or recoverable token ciphertext in this state.
+
+[Recovery rules](deployment.md#state-and-recovery) let the same active Agent
+bearer authenticate after restart. Once the predecessor is confirmed stopped or
+fenced, the next request may acquire a fresh, exactly scoped GitHub token despite
+old unresolved cleanup, within persisted rate and outstanding-attempt limits.
+This explicitly replaces the current blanket block on replacement for that case;
+it does not prove old tokens revoked or authorize replay of the Agent's operation.
+Metadata and standalone recovery remain unchanged. Other TokenDrivers remain
+fail-closed until an equivalent bounded recovery contract is reviewed and proven.
 
 ## Delivery and verification
 
 Create a separate plan after interface review. First delivery extracts the engine,
-integrates `GitHubTokenDriver`, repository and operator callers, preserves current
-recovery limits, and delivers the [independent service and control boundary](deployment.md).
+integrates `GitHubTokenDriver`, Agent-scoped bearer ownership, repository and
+operator callers, and delivers the [independent service and control boundary](deployment.md).
 Update references, flows, Installation parsing, and Kubernetes packaging together. Historical RFCs remain unchanged. Retire the old
 configuration path when the canonical replacement ships; no compatibility shim
 is proposed.
 
 Required integration proof extends the
 [regular Agent repository test](../../../tests/integration/repository-credentials-platform.test.mjs):
-deploy, Git read/write and `gh` use, forced token expiry, unchanged scope and lease
-deadline, stop/delete, and confirmed cleanup. Include real PostgreSQL competing
+deploy, Git read/write and `gh` use, forced upstream-token expiry, unchanged
+scope, continued managed access beyond the former session deadline, stop/delete,
+and confirmed cleanup. Include real PostgreSQL competing
 workers, lost admission responses, crash-after-dispatch uncertainty, expired
-tokens, late completion, and authority withdrawal. Service restart must reject old
-bearers without claiming lost tokens revoked or silently replacing old leases.
+tokens, late completion, and authority withdrawal. Service restart must accept
+the same active Agent bearer without changing client files, acquire within the
+GitHub recovery limits, and preserve unresolved predecessor cleanup. Revoked
+bearers must stay rejected after restart. Exercise stop/delete while Token
+Service is unavailable, rejection of the old bearer when it returns, and fresh
+credential delivery on a later start. Standalone restart still invalidates
+its process-local bearers.
 Verify no private issuer material reaches API/worker/Agent artifacts. Exercise the packaged Driver through
 service composition, not a direct test-only call. Qualify actual GitHub issuance
 and revocation separately with authorized disposable resources; fixtures do not
@@ -419,7 +469,11 @@ credential delivery to API or Agent callers through the real repository-options
 path.
 
 Through the regular Agent workflow, verify duplicate-binding selection, stale
-generations, revision replacement, rejected destinations, and uncertain mutations.
+binding generations, revision replacement with an Agent-scoped bearer, rejected
+destinations, and uncertain mutations. Verify stopped Agents are denied, inactive revisions never become authority,
+current grants override old authority, and missing workload identity does not
+prevent valid bearer authentication. Reject the removed managed
+`sessionDurationSeconds` setting.
 Verify Git operations without OCE hooks, ordinary user-hook execution, and rejection
 of removed `pushRefAllowlist` configuration.
 
@@ -430,16 +484,44 @@ lease interface, and lifecycle decisions together for review. Deployment and
 standalone details already have companions; further splitting separates the
 contract from its authority and cleanup requirements. -->
 
+## Future work
+
+The following capabilities are outside first delivery:
+
+- **GitHub metadata access by Namespace and user.** Add finer-grained policy for
+  which repositories and metadata each Namespace or user can discover, beyond
+  the IAM checks and approved repository grants required by this RFC.
+- **Built-in OAuth TokenDriver.** Provide a bundled OAuth implementation with
+  defined authorization, refresh, revocation, and recovery behavior. The OAuth
+  package example illustrates the extension contract; it is not a shipped Driver.
+- **Custom TokenDrivers.** Support authoring and operating additional Drivers
+  through the package extension contract, with documented configuration,
+  lifecycle requirements, and integration verification. First delivery defines
+  that contract and ships the GitHub implementation.
+- **ChatGPT service-account TokenDriver.** Define the supported service-account
+  credential source, permitted consumers, and token lifecycle before adding a
+  dedicated Driver.
+- **Agent/workload identity on bearer-authenticated calls.** Authenticate the
+  calling workload and verify that it belongs to the Agent identified by the
+  bearer on each request. See the [workload-identity design considerations](deployment.md#future-workload-identity-authentication),
+  including a possible move to identity-only authentication. First delivery
+  continues to accept valid bearers without a workload-identity check.
+
 ## Alternatives and review decisions
 
 - Keeping the broker GitHub-specific avoids new configuration but duplicates
   lifecycle/security work for every issuer. Extracting only a minting helper
   fails to integrate ownership, recovery, and the real Agent caller.
-- Delegating everything to OpenShell couples repository support to a Sandbox
-  topology currently excluded by RepoDriver. Its stable-placeholder pattern is
-  useful, but CredentialGatewayDriver remains a separate integration.
+- A pluggable broker backend would require translating OCC authorization,
+  lease, and recovery contracts into another engine. For OpenShell, use direct
+  credential management or OCC-to-OpenShell credential supply instead, as
+  described in the [FAQ](faq.md).
 - Encrypted persistent custody enables token recovery after restart but adds
   storage and key management. It is excluded from this refactor.
 - **Platform maintainers** should confirm the independent service, authenticated
   control and state ownership, named TokenDrivers, and private package factory. Review
-  must preserve Namespace, scope, deadline, and cleanup guarantees.
+  must preserve Namespace, scope, bounded-operation deadlines, and cleanup guarantees.
+- Managed bearers have no mandatory expiry and are not sender-bound. A copied
+  bearer can impersonate the Agent until revocation; lifecycle
+  authorization still applies. [Workload identity](deployment.md#future-workload-identity-authentication)
+  is deferred rather than required for this delivery.

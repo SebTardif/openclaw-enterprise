@@ -20,7 +20,9 @@ grant ID, bounded duration, and new protected output directory. The CLI generate
 and prints a nonsecret admission ID before dispatch. Socket access
 authorizes the request within configured grants; internal metadata grants are
 not selectable. The service fixes owner, grant, deadline, and admission ID in a
-process-local record before returning opaque client material once. The CLI writes
+process-local record before returning opaque client material once. Its
+`leasePolicy.maximumDurationSeconds` still caps session duration: standalone
+clients have no Agent lifecycle to govern indefinite access. The CLI writes
 it without printing credentials. Clients receive only those files and use the
 HTTPS gateway, which cannot admit leases. Status and close use the control socket.
 
@@ -29,8 +31,9 @@ token custody remain process-local: restart invalidates bearers and loses recove
 state, never proves revocation, and leaves missing cleanup evidence unresolved.
 After an ambiguous open response, use the same admission ID for status recovery
 and close any recovered lease before explicitly requesting replacement material.
-Do not blindly replace uncertain admissions. Durable credential storage is
-outside this RFC in both modes; scope, deadline, capacity, and cleanup rules still
+Do not blindly replace uncertain admissions. Managed Agent bearer persistence
+and the managed GitHub restart-recovery exception do not apply here. Upstream
+credential storage remains memory-only in both modes; scope, deadline, capacity, and cleanup rules still
 apply. Startup rejects OCC-only Backend/RepoDriver bindings in standalone
 configuration. Mode selection cannot disable OCC's durable nonsecret admission
 records for OCC-managed leases.
