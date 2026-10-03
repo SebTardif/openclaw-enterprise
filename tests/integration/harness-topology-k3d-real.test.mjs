@@ -6,6 +6,7 @@ import {
   assertInvalidHarnessAuthStaysUnready,
   assertDedicatedAgentsInstructionsInFreshSession,
   assertLegacyModelSecretBindingDenied,
+  assertDedicatedToEmbeddedCutover,
   assertDedicatedWorkspaceResources,
   assertDedicatedWorkspaceRuntime,
   assertDeniedConnection,
@@ -134,6 +135,7 @@ test(
     );
     await assertLegacyModelSecretBindingDenied(topology);
     process.stderr.write("k3d dedicated: retained state and Pod replacement passed.\n");
+    await assertDedicatedToEmbeddedCutover(context, topology);
   },
 );
 

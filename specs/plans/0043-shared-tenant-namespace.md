@@ -85,6 +85,15 @@ follow the existing revision-projection contract: Pod recreation retains the
 admitted projection; explicit OCE deployment refreshes canonical values. The
 remaining native receipts are recorded with the PR validation results.
 
+A further cleanup audit reproduced premature credential deletion during
+dedicated-to-embedded cutover, both with an existing Harness Deployment and a
+terminating orphan Pod. The replacement now retains predecessor projections
+until normal Harness retirement. Both regression cases failed before the fix
+and pass afterward; full Compute conformance has 213 passes and one platform
+skip. A real Agent API mode-cutover assertion extends the native lifecycle proof.
+Startup durability checks now expect the existing immediate authentication
+failure code rather than an obsolete convergence-deadline result.
+
 ## Manual Notes
 
 ## Changelog

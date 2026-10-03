@@ -196,9 +196,7 @@ preparation starts the replacement Gateway itself before activation. If the Gate
 of a revision that never served (its Service still selects no Pod) is unready,
 for example after rejected model authentication, the next revision's preparation
 repairs it with its own template instead of waiting on the failed predecessor.
-The repair also deletes that predecessor's per-revision Secret and ConfigMap copies,
-such as its model API key, because no Gateway runs it any more; they no longer
-wait for stop or deletion.
+The repair deletes an embedded predecessor's revision Secret and ConfigMap copies.
 
 The worker commits the database `activeRevisionId` with an exact compare-and-set
 before Kubernetes default after-commit activation.
@@ -209,9 +207,11 @@ runs for initial and replacement gateways. A failed check, including a provider
 timeout or rate limit, holds the gateway unready until repair and restart or a
 new deployment. Readiness polling does not repeat model requests; worker retries
 do not restart an unchanged Pod. No automatic rollback restores the predecessor.
-Embedded activation deletes the replaced predecessor's per-revision Secret and
-ConfigMap copies as soon as it re-renders the Gateway, so a replacement that never
-becomes ready (and so never reaches predecessor retirement) does not keep them.
+Embedded activation also deletes embedded predecessor copies when it re-renders
+the Gateway, even if the replacement never becomes ready.
+For a dedicated predecessor, activation preserves copies while its Harness
+Deployment or terminating Pod survives. Normal retirement stops the Harness
+and removes the artifacts.
 
 If activation, readiness, predecessor retirement, or audit completion fails,
 the worker requeues the revision with `REVISION_FINALIZATION_INCOMPLETE`, or a
@@ -312,6 +312,8 @@ owns claim sizes, mount paths, StorageClass requirements, and final teardown.
 [keep this for the user to add notes. do not change between edits]
 
 ## Changelog
+
+- 2026-10-02: Retain dedicated predecessor projections during shared-namespace embedded cutover until Harness retirement. (01a0fe72-58b2-7cc3-b770-7310f5401deb)
 
 - 2026-10-02: Share the single-cluster tenant namespace while preserving role-specific runtime delivery and revision cleanup. (01a0fe72-58b2-7cc3-b770-7310f5401deb)
 

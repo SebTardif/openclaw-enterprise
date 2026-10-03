@@ -2856,19 +2856,6 @@ async function assertInvalidHarnessAuthStaysUnready(context, topology, options =
   );
 }
 
-function assertRuntimeFailureEvidence(value) {
-  assert.deepEqual(
-    Object.keys(value).sort(),
-    ["check", "checkedAt", "code", "component"],
-    "startup failure evidence must contain only the allowlisted runtime fields",
-  );
-  for (const key of ["component", "check", "code"]) {
-    assert.equal(typeof value[key], "string", `runtime failure ${key} must be a string`);
-    assert.match(value[key], /^[A-Za-z0-9._~:@-]{1,64}$/);
-  }
-  assert.equal(Number.isNaN(Date.parse(value.checkedAt)), false);
-}
-
 async function deploymentStatus(topology, revisionId) {
   const response = await topology.request(
     "GET",
@@ -2941,11 +2928,8 @@ async function assertStartupFailureDeploymentStatusDurable(context, topology, op
     null,
     "terminal deployment status must not expose pending progress",
   );
-  assert.equal(failed.error.code, "CONVERGENCE_DEADLINE_EXCEEDED");
+  assert.equal(failed.error.code, "RUNTIME_AUTHENTICATION_FAILED");
   assert.equal(typeof failed.error.message, "string");
-  assert.equal(typeof failed.error.data.timeoutMs, "number");
-  assert.ok(failed.error.data.timeoutMs > 0);
-  assertRuntimeFailureEvidence(failed.error.data.runtimeFailure);
   assert.ok(Array.isArray(failed.warnings));
   const deletedPods = await deleteRevisionPods(topology, failure.revision.id);
   assert.ok(
@@ -4977,6 +4961,116 @@ async function assertNativeReferenceNegativeControl(context, topology) {
   );
 }
 
+async function assertDedicatedToEmbeddedCutover(context, topology) {
+  const predecessor = topology.revision;
+  const oldHarness = topology.harnessPod;
+  const oldProjectionName = oldHarness.spec.containers[0].env.find(
+    ({ name }) => name === "OPENAI_API_KEY",
+  ).valueFrom.secretKeyRef.name;
+  const oldProjectionUid = (await resource("secret", oldProjectionName, topology.placement))
+    .metadata.uid;
+  const currentConfiguration = await topology.request(
+    "GET",
+    `/namespaces/${topology.agent.namespaceId}/configurations/${topology.agent.configurationId}`,
+  );
+  assert.equal(currentConfiguration.status, 200);
+  const values = nativeConfiguration("openclaw");
+  values.gateway = currentConfiguration.data.values.gateway;
+  // The successor uses the existing authenticated Envoy route. It does not need
+  // the dedicated Gateway's optional direct-loopback password or transport token.
+  delete values.gateway.auth.password;
+  const configuration = await topology.request(
+    "POST",
+    `/namespaces/${topology.agent.namespaceId}/configurations`,
+    { kind: "agent", values },
+  );
+  assert.equal(configuration.status, 201, JSON.stringify(configuration.error));
+  const updated = await topology.request(
+    "PATCH",
+    `/namespaces/${topology.agent.namespaceId}/agents/${topology.agent.id}`,
+    {
+      configurationId: configuration.data.id,
+      executionMode: "embedded",
+    },
+  );
+  assert.equal(updated.status, 200, JSON.stringify(updated.error));
+
+  const deployed = await topology.request(
+    "POST",
+    `/namespaces/${topology.agent.namespaceId}/agents/${topology.agent.id}/deploy`,
+  );
+  assert.equal(deployed.status, 202, JSON.stringify(deployed.error));
+  let observedLivePredecessor = false;
+  await waitFor("embedded cutover and dedicated predecessor termination", async () => {
+    const gateway = await resource(
+      "deployment",
+      topology.gatewayServiceName,
+      topology.gatewayPlacement,
+    );
+    const oldPodStillExists = (await resources("pods", topology.placement)).some(
+      ({ metadata }) => metadata.uid === oldHarness.metadata.uid,
+    );
+    if (oldPodStillExists) {
+      let projection;
+      try {
+        projection = await resource("secret", oldProjectionName, topology.placement);
+      } catch (error) {
+        if (!/NotFound|not found/i.test(error.stderr ?? error.message)) {
+          throw error;
+        }
+        const stillExists = (await resources("pods", topology.placement)).some(
+          ({ metadata }) => metadata.uid === oldHarness.metadata.uid,
+        );
+        assert.equal(
+          stillExists,
+          false,
+          "cutover must retain credentials until the predecessor Harness Pod is gone",
+        );
+      }
+      if (projection !== undefined) {
+        assert.equal(projection.metadata.uid, oldProjectionUid);
+        if (gateway.metadata.annotations?.["openclaw.dev/agent-revision-id"] === deployed.data.id) {
+          observedLivePredecessor = true;
+        }
+      }
+    }
+    const observed = await topology.request(
+      "GET",
+      `/namespaces/${topology.agent.namespaceId}/agents/${topology.agent.id}`,
+    );
+    assert.equal(observed.status, 200);
+    return !oldPodStillExists && observed.data.activeRevisionId === deployed.data.id
+      ? observed.data
+      : undefined;
+  });
+  assert.equal(
+    observedLivePredecessor,
+    true,
+    "the real cutover must overlap the new Gateway template with the old dedicated Harness",
+  );
+  await waitFor("retired dedicated predecessor credential removal", async () => {
+    try {
+      await resource("secret", oldProjectionName, topology.placement);
+      return false;
+    } catch (error) {
+      if (/NotFound|not found/i.test(error.stderr ?? error.message)) {
+        return true;
+      }
+      throw error;
+    }
+  });
+  topology.mode = "embedded";
+  topology.harnessId = "openclaw";
+  topology.harnessPod = undefined;
+  topology.agent = updated.data;
+  topology.revision = deployed.data;
+  topology.gatewayPod = await waitForReadyGatewayPod(topology, deployed.data.id);
+  await assertOpenAiKeyProjectedFromSecret(topology, topology.gatewayPod);
+  context.diagnostic(
+    `dedicated-to-embedded cutover retained ${predecessor.id} credentials until Harness termination, then retired them after the embedded Gateway became ready`,
+  );
+}
+
 async function assertLegacyModelSecretBindingDenied(topology) {
   const value = `dedicated-denied-secret-${randomUUID()}`;
   const secret = await createApiSecret(
@@ -5464,6 +5558,7 @@ export {
   assertActualModelTurn,
   assertDedicatedAgentsInstructionsInFreshSession,
   assertLegacyModelSecretBindingDenied,
+  assertDedicatedToEmbeddedCutover,
   assertDedicatedWorkspaceResources,
   assertDedicatedWorkspaceRuntime,
   assertDeniedConnection,

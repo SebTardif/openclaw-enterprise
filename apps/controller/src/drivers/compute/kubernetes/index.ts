@@ -5126,7 +5126,7 @@ export class KubernetesComputeDriver implements ComputeDriver {
   }
 
   // An embedded repair or activation replaces the predecessor's Gateway with the
-  // successor's template, so nothing runs that predecessor any more. Its
+  // successor's template. Once no dedicated Harness remains, its
   // credential and configuration copies go now; without a ready successor
   // activation, nothing else would retire them before stop or delete. A newer
   // revision's copies are left alone: its own pass may still be converging.
@@ -5146,12 +5146,22 @@ export class KubernetesComputeDriver implements ComputeDriver {
     ) {
       return;
     }
-    // The shared embedded Gateway lives in the Harness namespace, so the
-    // predecessor it ran was embedded and shares this Agent's identity.
-    await this.deleteRetiredRevisionArtifacts(
-      { ...revision, id: predecessorId, revision: predecessorNumber },
+    const predecessor = { ...revision, id: predecessorId, revision: predecessorNumber };
+    // In a shared namespace the replaced Gateway may belong to a dedicated
+    // predecessor. Retirement owns its copies until its Harness is gone.
+    const predecessorHarness = await this.getOwned(
+      "Deployment",
+      `agent-${sha256Hex(revision.agentId, 12)}-rev-${sha256Hex(predecessorId, 12)}`,
       namespace,
+      this.pluginRuntimeOwnership(predecessor),
     );
+    if (
+      predecessorHarness !== undefined ||
+      (await this.revisionPods(predecessor, namespace, "agent")).length > 0
+    ) {
+      return;
+    }
+    await this.deleteRetiredRevisionArtifacts(predecessor, namespace);
   }
 
   private async deleteRetiredRevisionArtifacts(

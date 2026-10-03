@@ -11524,6 +11524,81 @@ test("shared tenant preparation waits for missing infrastructure and rejects a f
   }
 });
 
+for (const predecessorRuntime of ["Deployment", "terminating Pod"]) {
+  test(`embedded cutover retains dedicated predecessor credentials while its ${predecessorRuntime} survives`, async () => {
+    const { driver, revision, namespace, objects, state } = workspaceSetupFixture(false);
+    state.ready = true;
+    await driver.prepareRevision(revision, authContext(revision));
+    const suffix = digest(revision.agentId);
+    const harnessName = `agent-${suffix}-rev-${digest(revision.id)}`;
+    const harnessKey = `Deployment:${namespace}:${harnessName}`;
+    const harness = objects.get(harnessKey);
+    assert.ok(harness, "the predecessor must have a real rendered dedicated Harness");
+    const successor = {
+      ...revision,
+      id: "embedded-mode-successor",
+      revision: revision.revision + 1,
+      harness: { id: "openclaw", version: "1.0.0", mode: "embedded" },
+      configuration: workspaceSetupFixture(true).revision.configuration,
+    };
+    let survivingPod;
+    if (predecessorRuntime === "terminating Pod") {
+      // Kubernetes may retain a terminating Pod after its Deployment is gone.
+      objects.delete(harnessKey);
+      survivingPod = {
+        apiVersion: "v1",
+        kind: "Pod",
+        metadata: {
+          ...harness.spec.template.metadata,
+          name: "terminating-predecessor",
+          namespace,
+          uid: "terminating-predecessor-uid",
+          deletionTimestamp: new Date().toISOString(),
+        },
+        spec: harness.spec.template.spec,
+      };
+      const clients = await driver.apiClients;
+      const listPods = clients.core.listNamespacedPod;
+      clients.core.listNamespacedPod = async (request) => {
+        const labels = Object.fromEntries(
+          request.labelSelector.split(",").map((entry) => entry.split("=")),
+        );
+        return survivingPod !== undefined &&
+          request.namespace === namespace &&
+          labels["openclaw.dev/revision"] === revision.id &&
+          labels["openclaw.dev/workload-role"] === "agent"
+          ? { items: [survivingPod] }
+          : listPods(request);
+      };
+    }
+    const projectionKey = (selected) =>
+      `Secret:${namespace}:harness-secrets-${suffix}-${digest(selected.id)}`;
+    const predecessorProjection = structuredClone(objects.get(projectionKey(revision)));
+    assert.ok(predecessorProjection);
+    await driver.prepareRevision(successor, authContext(successor));
+    await driver.activateRevision(successor, authContext(successor));
+    assert.deepEqual(
+      objects.get(projectionKey(revision)),
+      predecessorProjection,
+      "cutover must not delete credentials still referenced by the dedicated predecessor",
+    );
+    survivingPod = undefined;
+    await driver.retireRevision(revision);
+    assert.equal(
+      objects.has(projectionKey(revision)),
+      false,
+      "normal retirement removes the predecessor projection after runtime termination",
+    );
+    assert.ok(objects.has(projectionKey(successor)));
+    assert.equal(
+      objects.get(`Deployment:${namespace}:gateway-${suffix}`).metadata.annotations[
+        "openclaw.dev/agent-revision-id"
+      ],
+      successor.id,
+    );
+  });
+}
+
 for (const embedded of [true, false]) {
   for (const surviving of ["Deployment", "HTTPRoute"]) {
     test(`retiring ${embedded ? "embedded" : "dedicated"} preserves other-mode runtime with surviving ${surviving}`, async () => {
