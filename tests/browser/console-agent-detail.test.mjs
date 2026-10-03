@@ -7,6 +7,7 @@ import test from "node:test";
 
 import { FilesystemConfigurationDriver } from "../../apps/controller/src/drivers/configuration/filesystem/index.ts";
 import { CodexPluginDriver } from "../../apps/controller/src/drivers/plugin/index.ts";
+import { InMemoryAuditSink } from "../../packages/audit/src/index.ts";
 import { WORKSPACE_DEFAULTS } from "../../packages/contracts/src/workspace-defaults.mjs";
 import { createConsoleAppFixture } from "../helpers/console-app.mjs";
 import { authenticatedHeaders } from "../helpers/auth-session.mjs";
@@ -28,6 +29,7 @@ import {
   secretOptionLabel,
   secretPostRequests,
   selectSecret,
+  waitForCondition,
 } from "./console-agents-browser-helpers.mjs";
 import { createRuntimeAuthFixture } from "./console-agents-runtime-auth-fixture.mjs";
 import {
@@ -75,7 +77,10 @@ test("Agent detail separates the current version, viewed version, and latest dep
               agentId: agent.id,
               status,
               error: null,
-              warnings: [],
+              warnings:
+                status === "succeeded"
+                  ? [{ code: "PLUGIN_AUTH_REQUIRED", pluginId: "linear@openai-curated-remote" }]
+                  : [],
               progress: status === "queued" ? pendingProgress : null,
             },
             meta: { requestId: "req_test_deployment_activity" },
@@ -136,15 +141,21 @@ test("Agent detail separates the current version, viewed version, and latest dep
   await activity.getByRole("button", { name: "Refresh deployment" }).click();
   await activity.getByText("Waiting to continue deployment.").waitFor();
   await activity.getByText("Waiting for the runtime to become ready.").waitFor();
-  await activity.getByText("Last checked", { exact: true }).waitFor();
+  await activity.getByText("Since", { exact: true }).waitFor();
   assert.equal(await activity.getByText("Waiting for a worker claim.").count(), 0);
   await activity.getByText("Successful completion is not recorded yet.").waitFor();
   const versionRecord = page.locator(".version-deployment-record");
   await versionRecord.getByRole("heading", { name: "This version’s deployment record" }).waitFor();
   await versionRecord.getByText("Recorded outcome: succeeded").waitFor();
+  // D331: a startup warning says what happened to the plugin, not only its code.
+  await versionRecord
+    .getByText(
+      "linear@openai-curated-remote was disabled for this startup because it is not authenticated: Codex plugins need a ChatGPT login rather than an API key, and some also need their app connected to that account. (PLUGIN_AUTH_REQUIRED)",
+    )
+    .waitFor();
   const observations = page.locator(".version-diagnostics");
   await observations
-    .getByText(/For Kubernetes Compute, Gateway checks currently cover Slack configuration/)
+    .getByText(/For Kubernetes Compute, Gateway checks cover only the Slack channel/)
     .waitFor();
   await observations
     .getByText("No current observation has been requested for this version.")
@@ -986,7 +997,8 @@ test("Agent draft plugin browsing explains a missing hosted credential", async (
     namespace.id,
     "Hosted plugin Agent",
     nativeValues("plugin-discovery-auth", { harnessId: "codex" }),
-    { executionMode: "dedicated" },
+    // No API key: Codex serves plugins only to ChatGPT logins.
+    { executionMode: "dedicated", harnessAuth: null },
   );
   const { page } = await newPage(t, fixture);
   const requests = apiRequests(page, fixture.origin);
@@ -1008,6 +1020,42 @@ test("Agent draft plugin browsing explains a missing hosted credential", async (
   assert.equal(await page.getByLabel("Plugin selections JSON").isEnabled(), true);
 });
 
+test("Agent draft plugin picker warns that API-key Codex Agents cannot use plugins", async (t) => {
+  const fixture = await createConsoleAppFixture(t);
+  await fixture.bootstrap();
+  const driver = new CodexPluginDriver({ catalogSource: "openai-curated" });
+  fixture.controller.registerDriver(driver);
+  fixture.controller.selectDriver("plugin", driver.id);
+  const namespace = await fixture.createNamespace("API-key plugins", { ready: true });
+  const agent = await fixture.createAgent(
+    namespace.id,
+    "API-key plugin Agent",
+    nativeValues("api-key-plugins", { harnessId: "codex" }),
+    { executionMode: "dedicated" },
+  );
+  assert.equal(agent.harnessAuth.method, "api_key");
+  const { page } = await newPage(t, fixture);
+  const requests = apiRequests(page, fixture.origin);
+  const url = detailUrl(fixture, namespace.id, agent.id, "draft", "plugins");
+  await login(page, fixture, url.pathname + url.search);
+  await page
+    .getByText(
+      "Codex plugins need a ChatGPT login. This Agent uses an API key, so each selected plugin is disabled when it deploys (PLUGIN_AUTH_REQUIRED).",
+      { exact: false },
+    )
+    .waitFor();
+  await page.getByRole("button", { name: "Configure plugins", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "Configure plugins", exact: true });
+  await dialog.getByText("Plugin browsing is unavailable with API-key authentication.").waitFor();
+  assert.equal(await dialog.getByRole("button", { name: "Load plugins" }).isDisabled(), true);
+  assert.equal(
+    pathRequests(requests, "POST", `/namespaces/${namespace.id}/agents/${agent.id}/plugins`).length,
+    0,
+  );
+  await dialog.getByRole("button", { name: "Done" }).click();
+  assert.equal(await page.getByLabel("Plugin selections JSON").isEnabled(), true);
+});
+
 test("Agent draft browses the curated catalog without a saved Secret", async (t) => {
   const fixture = await createConsoleAppFixture(t);
   await fixture.bootstrap();
@@ -1019,7 +1067,8 @@ test("Agent draft browses the curated catalog without a saved Secret", async (t)
     namespace.id,
     "Curated plugin Agent",
     nativeValues("curated-revision", { harnessId: "codex" }),
-    { executionMode: "dedicated" },
+    // No API key: Codex serves plugins only to ChatGPT logins.
+    { executionMode: "dedicated", harnessAuth: null },
   );
   const { page } = await newPage(t, fixture);
   const requests = apiRequests(page, fixture.origin);
@@ -1059,6 +1108,49 @@ test("Agent draft browses the curated catalog without a saved Secret", async (t)
   });
 });
 
+test("Dedicated OpenClaw credentials and plugins do not offer Codex-only controls", async (t) => {
+  const fixture = await createConsoleAppFixture(t);
+  await fixture.bootstrap();
+  const driver = new CodexPluginDriver({ catalogSource: "openai-curated" });
+  fixture.controller.registerDriver(driver);
+  fixture.controller.selectDriver("plugin", driver.id);
+  const namespace = await fixture.createNamespace("Dedicated OpenClaw controls", { ready: true });
+  const agent = await fixture.createAgent(
+    namespace.id,
+    "Dedicated OpenClaw Agent",
+    createHarnessConfiguration("openclaw", "gpt-4.1"),
+    { executionMode: "dedicated" },
+  );
+  const { page } = await newPage(t, fixture);
+  const requests = apiRequests(page, fixture.origin);
+  const url = detailUrl(fixture, namespace.id, agent.id, "draft", "credentials");
+  await login(page, fixture, url.pathname + url.search);
+  await page.getByLabel("API key Secret", { exact: true }).waitFor();
+  assert.equal(
+    await page.getByLabel("Authentication source").locator('option[value="codex_pat"]').count(),
+    0,
+  );
+  assert.equal(await page.getByLabel("API key Secret", { exact: true }).isEnabled(), true);
+
+  // A credentialless Codex catalog does not make an OpenClaw harness compatible with its plugins.
+  const capabilities = page.waitForResponse(
+    (response) =>
+      response.url() ===
+      `${fixture.origin}/namespaces/${namespace.id}/agents/${agent.id}/plugins/capabilities`,
+  );
+  await page.getByRole("button", { name: "Plugins", exact: true }).click();
+  assert.equal((await capabilities).status(), 200);
+  await page.getByRole("button", { name: "Configure plugins", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "Configure plugins", exact: true });
+  assert.equal(await dialog.getByRole("button", { name: "Load plugins" }).isDisabled(), true);
+  assert.deepEqual(
+    pathRequests(requests, "POST", `/namespaces/${namespace.id}/agents/${agent.id}/plugins`),
+    [],
+  );
+  await dialog.getByRole("button", { name: "Done", exact: true }).click();
+  assert.equal(await page.getByLabel("Plugin selections JSON").isEnabled(), true);
+});
+
 test("Agent credentials choose existing Secrets for harness authentication", async (t) => {
   const fixture = await createConsoleAppFixture(t);
   await fixture.bootstrap();
@@ -1076,7 +1168,7 @@ test("Agent credentials choose existing Secrets for harness authentication", asy
   const agent = await fixture.createAgent(
     namespace.id,
     "Harness Picker Agent",
-    nativeValues("harness-picker"),
+    nativeValues("harness-picker", { harnessId: "codex" }),
     { harnessAuth: { method: "api_key", source: originalSecret.ref }, executionMode: "dedicated" },
   );
   const { page } = await newPage(t, fixture);
@@ -1151,7 +1243,7 @@ test("Agent credential Secret picker distinguishes action labels from Secret nam
   const agent = await fixture.createAgent(
     namespace.id,
     "Action Name Agent",
-    nativeValues("secret-action-names"),
+    nativeValues("secret-action-names", { harnessId: "codex" }),
     { harnessAuth: { method: "api_key", source: original.ref }, executionMode: "dedicated" },
   );
   const { page } = await newPage(t, fixture);
@@ -1220,7 +1312,7 @@ test("Agent credential Secret picker searches, validates, and preserves duplicat
   const agent = await fixture.createAgent(
     namespace.id,
     "Combobox Agent",
-    nativeValues("credential-picker-ux"),
+    nativeValues("credential-picker-ux", { harnessId: "codex" }),
     { harnessAuth: { method: "api_key", source: originalSecret.ref }, executionMode: "dedicated" },
   );
   const { page } = await newPage(t, fixture);
@@ -1920,6 +2012,87 @@ test("Agent deletion recovery returns a missing Agent detail to its Namespace li
   await page.getByRole("heading", { name: "Agents", exact: true }).waitFor();
 });
 
+test("Agent link without a Namespace opens the Agent in the Namespace that holds it", async (t) => {
+  const fixture = await createConsoleAppFixture(t);
+  await fixture.bootstrap();
+  // Sorted first, so it is the default selection for a link without a Namespace.
+  const selected = await fixture.createNamespace("A link default", { ready: true });
+  const holder = await fixture.createNamespace("Z link holder", { ready: true });
+  const agent = await fixture.createAgent(holder.id, "Linked Agent", nativeValues("link"));
+  const { page } = await newPage(t, fixture);
+  const missed = page.waitForResponse(
+    (response) =>
+      response.url() === `${fixture.origin}/namespaces/${selected.id}/agents/${agent.id}` &&
+      response.request().method() === "GET",
+  );
+
+  await login(page, fixture, `/console/agents/${agent.id}`);
+  assert.equal((await missed).status(), 404);
+  await page.waitForURL(
+    (url) =>
+      url.pathname === `/console/agents/${agent.id}` &&
+      url.searchParams.get("namespace") === holder.id,
+  );
+  await page.getByRole("heading", { name: "Linked Agent" }).first().waitFor();
+  await expectNoText(page, "may have been deleted");
+});
+
+test("Agent link without a Namespace says when no readable Namespace has the Agent", async (t) => {
+  const fixture = await createConsoleAppFixture(t);
+  await fixture.bootstrap();
+  const selected = await fixture.createNamespace("A missing default", { ready: true });
+  const other = await fixture.createNamespace("Z missing other", { ready: true });
+  const agentId = `agt_${randomUUID()}`;
+  const { page } = await newPage(t, fixture);
+  const requests = apiRequests(page, fixture.origin);
+
+  await login(page, fixture, `/console/agents/${agentId}`);
+  await page.getByRole("heading", { name: "Agent unavailable" }).waitFor();
+  await page.getByText("None of your Namespaces has this Agent", { exact: false }).waitFor();
+  const reads = (namespaceId) =>
+    requests.filter((request) => request.path === `/namespaces/${namespaceId}/agents/${agentId}`)
+      .length;
+  assert.equal(reads(selected.id), 1);
+  assert.equal(reads(other.id), 1);
+  await page.getByRole("button", { name: "Back to Agents" }).click();
+  await page.waitForURL(
+    (url) =>
+      url.pathname === "/console/agents" && url.searchParams.get("namespace") === selected.id,
+  );
+});
+
+test("Agent link without a Namespace offers switching when the lookup is uncertain", async (t) => {
+  const fixture = await createConsoleAppFixture(t);
+  await fixture.bootstrap();
+  await fixture.createNamespace("A uncertain default", { ready: true });
+  const other = await fixture.createNamespace("Z uncertain other", { ready: true });
+  const agentId = `agt_${randomUUID()}`;
+  const { page } = await newPage(t, fixture);
+  await page.route(`${fixture.origin}/namespaces/${other.id}/agents/${agentId}`, (route) =>
+    route.fulfill({
+      status: 503,
+      contentType: "application/json",
+      body: JSON.stringify({
+        error: { code: "DEPENDENCY_UNAVAILABLE", message: "unavailable" },
+        meta: { requestId: "req_00000000-0000-4000-8000-000000000503" },
+      }),
+    }),
+  );
+
+  await login(page, fixture, `/console/agents/${agentId}`);
+  await page.getByRole("heading", { name: "Agent not in this Namespace" }).waitFor();
+  await page.getByText("not in the A uncertain default Namespace", { exact: false }).waitFor();
+  await expectNoText(page, "may have been deleted");
+  await page.getByRole("button", { name: "Switch Namespace" }).click();
+  assert.equal(
+    await page
+      .locator("#namespace-selector")
+      .evaluate((node) => node === node.ownerDocument.activeElement),
+    true,
+    "Switch Namespace focuses the Namespace selector",
+  );
+});
+
 test("Agent delete denial keeps the Agent visible with permission feedback", async (t) => {
   const fixture = await createConsoleAppFixture(t);
   await fixture.bootstrap();
@@ -2027,13 +2200,13 @@ test("Agent detail opens native admin UI only after real API access checks pass"
     "Native admin Agent",
     nativeValues("unsupported-ui"),
   );
-  const { page } = await newPage(t, fixture, {
+  let { page } = await newPage(t, fixture, {
     args: [
       ...fixture.browserArgs,
       `--host-resolver-rules=MAP ${consoleHost} 127.0.0.1,MAP *.${nativeDomain} 127.0.0.1`,
     ],
   });
-  const requests = apiRequests(page, fixture.origin);
+  let requests = apiRequests(page, fixture.origin);
   const draftDetail = detailUrl(fixture, namespace.id, agent.id, "draft", "configuration");
 
   // A fresh shared-cookie login clears legacy host-only cookies from the Console.
@@ -2077,7 +2250,7 @@ test("Agent detail opens native admin UI only after real API access checks pass"
   await page.getByRole("button", { name: "Refresh access" }).click();
   await page
     .getByText(
-      "Native admin UI access is unavailable because OCE could not load an active AgentRevision. Check this Agent’s deployment, then refresh access.",
+      "Native admin UI is unavailable because no version of this Agent is serving: a deployment is in progress or has failed. Check Deployment activity, then refresh access.",
     )
     .waitFor({ timeout: 5_000 });
   assert.equal(await page.getByText("Open native admin UI", { exact: true }).isVisible(), false);
@@ -2098,7 +2271,9 @@ test("Agent detail opens native admin UI only after real API access checks pass"
   await page.getByRole("heading", { name: "Native admin Agent" }).waitFor();
   await page.getByRole("heading", { name: "Native admin UI" }).waitFor();
   await page
-    .getByText("This Agent does not expose a supported native admin UI endpoint.")
+    .getByText(
+      "Native admin UI is not enabled in this Agent’s current version. Someone who can edit its Configuration can enable it (see the native admin UI guide) and deploy a new version.",
+    )
     .waitFor();
   assert.equal(await page.getByText("Open native admin UI", { exact: true }).isVisible(), false);
 
@@ -2114,6 +2289,14 @@ test("Agent detail opens native admin UI only after real API access checks pass"
   await page.getByRole("heading", { name: "Native admin Agent" }).waitFor();
   await expectNativeAdminHidden(page);
   fixture.policy.restrictions.length = 0;
+  // The audited denial is settled for this tab; a new tab in the same session asks afresh.
+  const deniedTabWrites = nonAuthWriteRequests(requests);
+  const browserContext = page.context();
+  await page.close();
+  page = await browserContext.newPage();
+  requests = apiRequests(page, fixture.origin);
+  await page.goto(`${fixture.origin}${detail().pathname}${detail().search}`);
+  await page.getByRole("heading", { name: "Native admin UI" }).waitFor();
 
   const stopped = await fixture.request(
     "POST",
@@ -2212,7 +2395,7 @@ test("Agent detail opens native admin UI only after real API access checks pass"
   assert.match(nativeRequestCookie, /(?:__Secure-)?openclaw_occ_shared\.session_token=/);
   assert.doesNotMatch(nativeRequestCookie, /legacy-host-only/);
 
-  assert.deepEqual(nonAuthWriteRequests(requests), []);
+  assert.deepEqual([...deniedTabWrites, ...nonAuthWriteRequests(requests)], []);
 });
 
 for (const [dmPolicy, groupPolicy, enterpriseOrgInstall] of [
@@ -2828,7 +3011,8 @@ test("Agent sharing grants existing people exact discovery and native access, th
   const recipient = (await newPage(t, fixture, browserOptions)).page;
   const recipientRequests = apiRequests(recipient, fixture.origin);
   await login(recipient, fixture, `${detail.pathname}${detail.search}`, person.credentials);
-  await recipient.getByRole("heading", { name: "Configuration unavailable" }).waitFor();
+  // Agent sharing does not include version read, so the version pane says so.
+  await recipient.getByRole("heading", { name: "You cannot read this version" }).waitFor();
   // The policy reads are denied, so the sharing card is hidden instead of showing an error.
   await recipient.locator(".agent-access").waitFor({ state: "hidden" });
   assert.equal(
@@ -2977,6 +3161,65 @@ test("Agent sharing reconciles a truncated committed response without replaying 
   await page.getByText("Your session has expired").waitFor();
   await page.getByRole("button", { name: "Login", exact: true }).waitFor();
   assert.equal(await panel.count(), 0);
+});
+
+test("a read-only viewer is denied saved settings and native admin once per tab, not per view", async (t) => {
+  const auditSink = new InMemoryAuditSink();
+  const fixture = await createConsoleAppFixture(t, { auditSink });
+  await fixture.bootstrap();
+  const namespace = await fixture.createNamespace("Read-only detail");
+  const agent = await fixture.createAgent(namespace.id, "Viewed Agent", nativeValues("viewed"));
+  const viewer = await fixture.createAccountWithPolicy("agent-viewer", (principal) => {
+    fixture.policy.roles.push({
+      id: "role-console-agent-viewer",
+      namespaceId: namespace.id,
+      permissions: [
+        { action: "read", resourceKind: "namespace" },
+        { action: "read", resourceKind: "agent" },
+      ],
+    });
+    fixture.policy.bindings.push({
+      id: "binding-console-agent-viewer",
+      namespaceId: namespace.id,
+      subjectKind: "identity",
+      subjectId: principal.id,
+      roleId: "role-console-agent-viewer",
+    });
+  });
+  const denials = (action) =>
+    auditSink
+      .list()
+      .filter((event) => event.kind === "authorization_denial" && event.action === action).length;
+  const { page } = await newPage(t, fixture);
+  const requests = apiRequests(page, fixture.origin);
+  const detail = detailUrl(fixture, namespace.id, agent.id, "draft", "configuration");
+  await login(page, fixture, `${detail.pathname}${detail.search}`, viewer.credentials);
+  const unavailable = page.getByRole("heading", { name: "Configuration unavailable" });
+  await unavailable.waitFor();
+  const configurationPath = `/namespaces/${namespace.id}/configurations/${agent.configurationId}`;
+  const nativeAdminPath = `/namespaces/${namespace.id}/agents/${agent.id}/native-admin`;
+  const reads = (path) => requests.filter((request) => request.path === path).length;
+  await waitForCondition(() => reads(nativeAdminPath) === 1, "native admin status read");
+  assert.equal(reads(configurationPath), 1);
+
+  // Each denied read is an audited authorization denial; reloading the view does not repeat it.
+  for (let view = 0; view < 2; view += 1) {
+    await page.reload();
+    await unavailable.waitFor();
+  }
+  await page.waitForTimeout(300);
+  assert.equal(reads(configurationPath), 1);
+  assert.equal(reads(nativeAdminPath), 1);
+  assert.equal(denials("openclaw.configurations.read"), 1);
+  assert.equal(denials("openclaw.agents.native_admin.read"), 1);
+  await page.getByText("Retry checks your access again", { exact: false }).waitFor();
+  assert.equal(await page.locator(".native-admin-access:not([hidden])").count(), 0);
+
+  // Retry asks again, so a real denial after a grant change is never hidden.
+  await page.getByRole("button", { name: "Retry" }).click();
+  await unavailable.waitFor();
+  await waitForCondition(() => reads(configurationPath) === 2, "saved settings reread");
+  assert.equal(denials("openclaw.configurations.read"), 2);
 });
 
 test("Agent sharing rejects emails locally and names an unknown Principal ID", async (t) => {

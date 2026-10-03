@@ -2,12 +2,14 @@ import type {
   AgentRuntimeDescription,
   AgentRuntimeLogChunk,
   AgentRuntimeLogRequest,
+  RuntimeLogLevel,
   RuntimeLogSourceId,
   RuntimeLogStream,
 } from "@openclaw-enterprise/contracts";
 import {
   newRuntimeLogViewId,
   runtimeLogLineHash,
+  validRuntimeLogFrontierTime,
   type RuntimeLogCursorBinding,
   type RuntimeLogCursorCodec,
   type RuntimeLogCursorPosition,
@@ -31,6 +33,41 @@ export interface RuntimeLogQuery {
   readonly tailLines: number;
   readonly sinceSeconds?: number;
   readonly cursor?: string;
+  /** Drop lines below this level; unknown-level lines, gaps and withheld counts stay. */
+  readonly minLevel?: RuntimeLogMinimumLevel;
+}
+
+export type RuntimeLogMinimumLevel = Exclude<RuntimeLogLevel, "unknown">;
+
+const LEVEL_RANK: Readonly<Record<RuntimeLogMinimumLevel, number>> = Object.freeze({
+  debug: 0,
+  info: 1,
+  warn: 2,
+  error: 3,
+});
+
+/**
+ * The page with lines below `minLevel` removed. It runs after the page is read,
+ * sanitized and its cursor signed, so the cursor still resumes after the last line
+ * read (shown or not), and gap and withheld records are kept.
+ */
+export function runtimeLogPageAtLevel(
+  page: RuntimeLogPage,
+  minLevel: RuntimeLogMinimumLevel | undefined,
+): RuntimeLogPage {
+  if (minLevel === undefined || minLevel === "debug") {
+    return page;
+  }
+  const floor = LEVEL_RANK[minLevel];
+  return Object.freeze({
+    ...page,
+    records: Object.freeze(
+      page.records.filter(
+        (record) =>
+          record.type !== "line" || record.level === "unknown" || LEVEL_RANK[record.level] >= floor,
+      ),
+    ),
+  });
 }
 
 /** Audit details for one view; never message text. */
@@ -183,6 +220,12 @@ export async function readRuntimeLogPage(input: ReadRuntimeLogPageInput): Promis
     leading.push(runtimeLogGap("stream_replaced", stream));
   }
   const resume = sameStream && prior.lastTime !== null ? prior : undefined;
+  // A view that has delivered no line yet (a quiet container, or an empty
+  // `sinceSeconds` window) continues from its previous page, not from the whole tail:
+  // cursor polls need not repeat `sinceSeconds`, and a cursor reads newer lines only.
+  // The bound starts at the previous read, not the end of its page: the cursor's
+  // `issuedAt` is taken before the Driver read.
+  const quiet = sameStream && prior.lastTime === null ? prior : undefined;
   // A view is audited once, before its first Driver read. Cursor polls inside a
   // view are not re-audited; an expired cursor starts a new view, and so does a
   // cursor whose Pod is gone (the audit row names the Pod that is read).
@@ -199,16 +242,15 @@ export async function readRuntimeLogPage(input: ReadRuntimeLogPageInput): Promis
       tailLines: query.tailLines,
     });
   }
+  const secondsSince = (time: number) =>
+    Math.min(86_400, Math.max(1, Math.ceil((now() - time) / 1000) + RESUME_OVERLAP_SECONDS));
   const sinceSeconds =
     resume !== undefined
-      ? Math.min(
-          86_400,
-          Math.max(
-            1,
-            Math.ceil((now() - Date.parse(resume.lastTime!)) / 1000) + RESUME_OVERLAP_SECONDS,
-          ),
-        )
-      : query.sinceSeconds;
+      ? secondsSince(Date.parse(resume.lastTime!))
+      : quiet !== undefined
+        ? secondsSince(quiet.issuedAt)
+        : query.sinceSeconds;
+  const readStartedAt = now();
   const chunk = validChunk(
     await input.readLogs({
       source: sourceId,
@@ -247,11 +289,21 @@ export async function readRuntimeLogPage(input: ReadRuntimeLogPageInput): Promis
     leading.push(runtimeLogGap("stream_replaced", observedStream));
   }
   // The byte limit cuts the final line; a partial line may end inside a token.
-  let lines = chunk.truncated ? chunk.lines.slice(0, -1) : chunk.lines;
+  const completeLines = chunk.truncated ? chunk.lines.slice(0, -1) : chunk.lines;
+  let lines = completeLines;
+  const earliest = lines.find((line) => line.time !== null)?.time ?? null;
+  // A full tail since a quiet view's previous read may have dropped its oldest lines.
+  if (
+    quiet !== undefined &&
+    !replacedDuringRead &&
+    chunk.lines.length >= query.tailLines &&
+    earliest !== null
+  ) {
+    leading.push(runtimeLogGap("window_exceeded", observedStream, earliest));
+  }
   if (resume !== undefined && !replacedDuringRead) {
     const lastTime = resume.lastTime!;
     const seen = new Set(resume.lastHashes);
-    const earliest = lines.find((line) => line.time !== null)?.time ?? null;
     if (
       chunk.lines.length >= query.tailLines &&
       earliest !== null &&
@@ -280,11 +332,60 @@ export async function readRuntimeLogPage(input: ReadRuntimeLogPageInput): Promis
     }
     delivered.push(line);
   }
-  const sanitized = sanitizeRuntimeLogChunk({
-    stream: observedStream,
-    lines: delivered,
-    truncated: false,
-  });
+  // Context belongs AFTER the authenticated delivered frontier, never before the
+  // fetched overlap. Hashes and equal timestamps cannot prove a new closing line.
+  const pemPrior =
+    sameStream && !replacedDuringRead && prior.pemOpen !== undefined ? prior : undefined;
+  // Locate the consumed prefix by the actual subsequence retained above, not by
+  // hashes. Validate ordering only through the last delivered line: future fetched
+  // lines must neither close context nor advance its persistent frontier.
+  let nextDelivered = 0;
+  let prefixEnd = 0;
+  for (const [index, line] of completeLines.entries()) {
+    if (nextDelivered < delivered.length && line === delivered[nextDelivered]) {
+      nextDelivered += 1;
+      prefixEnd = index + 1;
+    }
+  }
+  const prefix = completeLines.slice(0, prefixEnd);
+  const ordered = prefix.every(
+    (line, index) =>
+      validRuntimeLogFrontierTime(line.time) &&
+      (index === 0 || compareRuntimeLogTime(line.time, prefix[index - 1]!.time!) >= 0),
+  );
+  // Uncertain chronology also applies when BEGIN is first observed in this page.
+  // Without this guard, an older/null-time END could close it before any signed
+  // context exists, leaving a false closed state that later polls cannot repair.
+  const canClose = !ordered
+    ? delivered.map(() => false)
+    : pemPrior === undefined
+      ? undefined
+      : delivered.map(
+          (line) =>
+            pemPrior.pemAfterTime != null &&
+            line.time !== null &&
+            compareRuntimeLogTime(line.time, pemPrior.pemAfterTime) > 0,
+        );
+  const sanitized = sanitizeRuntimeLogChunk(
+    {
+      stream: observedStream,
+      lines: delivered,
+      truncated: false,
+    },
+    { open: pemPrior?.pemOpen, canClose },
+  );
+  let pemAfterTime = pemPrior?.pemAfterTime ?? null;
+  if (delivered.length > 0) {
+    if (!ordered || (pemPrior !== undefined && pemPrior.pemAfterTime === null)) {
+      // A later timestamped page cannot reconstruct an unknown boundary.
+      pemAfterTime = null;
+    } else {
+      const deliveredTime = delivered.at(-1)!.time!;
+      if (pemAfterTime === null || compareRuntimeLogTime(deliveredTime, pemAfterTime) > 0) {
+        pemAfterTime = deliveredTime;
+      }
+    }
+  }
   const truncated = chunk.truncated || pageCut;
   const records = [
     ...leading,
@@ -315,7 +416,8 @@ export async function readRuntimeLogPage(input: ReadRuntimeLogPageInput): Promis
     previous: query.previous,
     lastTime,
     lastHashes: lastHashes.slice(-16),
-    issuedAt: now(),
+    ...(sanitized.pemOpen === undefined ? {} : { pemOpen: sanitized.pemOpen, pemAfterTime }),
+    issuedAt: readStartedAt,
   };
   return Object.freeze({
     revisionId: description.revisionId,

@@ -964,7 +964,7 @@ test("mutations are attributable and authorization failures never leak credentia
 });
 
 // Agent runtime status and log reads. Status (tier 1) needs Agent operate + read and
-// revision read; log text (tier 2) needs Agent administer + read and revision read.
+// revision read; log text (tier 2) needs Agent read_logs (or administer) + read.
 // Every request is re-authorized, including cursor polls, and a denial never reaches
 // the Compute Driver.
 function runtimeLogLine(index, raw = `gateway output ${index}`) {
@@ -1155,6 +1155,48 @@ test("a delegated read_logs principal reads and downloads logs without administe
   assert.equal(revoked.status, 403);
 });
 
+test("an Agent-level read_logs grant covers every revision, including later deployments", async () => {
+  const fixture = await createRuntimeLogFixture();
+  const target = await fixture.deployAgent();
+  fixture.computeDriver.state.lines = [runtimeLogLine(1)];
+  // No per-revision grant: log text is delegated on the exact Agent alone.
+  const delegate = await fixture.createPrincipal("runtime-log-agent-only", target, [
+    { action: "read_logs", resourceKind: "agent" },
+    { action: "read", resourceKind: "agent" },
+  ]);
+  const first = await fixture.request("GET", target.logsPath(), { session: delegate.session });
+  assert.equal(first.status, 200, first.text);
+  assert.equal(first.data.records[0].message, "gateway output 1");
+
+  // A new deployment creates a new revision; the same Agent grant still reads its logs.
+  const redeployed = await fixture.request(
+    "POST",
+    `/namespaces/${target.namespace.id}/agents/${target.agent.id}/deploy`,
+  );
+  assert.equal(redeployed.status, 202, redeployed.text);
+  assert.notEqual(redeployed.data.id, target.revisionId);
+  const secondPath = `/namespaces/${target.namespace.id}/agents/${target.agent.id}/deployments/${redeployed.data.id}/runtime/logs?source=gateway`;
+  const second = await fixture.request("GET", secondPath, { session: delegate.session });
+  assert.equal(second.status, 200, second.text);
+
+  // Runtime status keeps its revision requirement, and a revision of another Agent is
+  // never reachable through this Agent's path.
+  const status = await fixture.request("GET", target.runtimePath, { session: delegate.session });
+  assert.equal(status.status, 403);
+  const sibling = await fixture.deployAgent("runtime-log-agent-only-sibling");
+  const crossed = await fixture.request(
+    "GET",
+    `/namespaces/${target.namespace.id}/agents/${target.agent.id}/deployments/${sibling.revisionId}/runtime/logs?source=gateway`,
+    { session: delegate.session },
+  );
+  assert.notEqual(crossed.status, 200);
+  const reads = driverReads(fixture).length;
+  delegate.revoke("read_logs", "agent");
+  const revoked = await fixture.request("GET", secondPath, { session: delegate.session });
+  assert.equal(revoked.status, 403);
+  assert.equal(driverReads(fixture).length, reads);
+});
+
 test("runtime log cursors bind one principal and view and are re-authorized on every poll", async () => {
   const fixture = await createRuntimeLogFixture();
   const target = await fixture.deployAgent();
@@ -1233,10 +1275,19 @@ test("runtime log cursors bind one principal and view and are re-authorized on e
   assert.equal(views().length, 3);
 
   // Cursors are bound to the principal, target and signature.
+  const cursorParts = first.data.cursor.split(".");
+  const originalMac = cursorParts[2];
+  const tamperedMac = `${originalMac[0] === "A" ? "B" : "A"}${originalMac.slice(1)}`;
+  const tamperedCursor = `${cursorParts[0]}.${cursorParts[1]}.${tamperedMac}`;
+  assert.equal(
+    Buffer.from(originalMac, "base64url").equals(Buffer.from(tamperedMac, "base64url")),
+    false,
+    "the tamper control must change decoded MAC bytes",
+  );
   const readsBefore = driverReads(fixture).length;
   for (const [label, forged, session] of [
     ["foreign principal", first.data.cursor, other.session],
-    ["tampered", `${first.data.cursor.slice(0, -2)}AA`, viewer.session],
+    ["tampered", tamperedCursor, viewer.session],
     ["another source", first.data.cursor.replace("v1.", "v1.e"), viewer.session],
   ]) {
     const rejected = await fixture.request(
@@ -1272,6 +1323,90 @@ test("runtime log cursors bind one principal and view and are re-authorized on e
   });
   assert.equal(revoked.status, 403);
   assert.equal(driverReads(fixture).length, readsBefore);
+});
+
+test("minLevel filters log lines on the server and a cursor still resumes after hidden lines", async () => {
+  const fixture = await createRuntimeLogFixture();
+  const target = await fixture.deployAgent();
+  const state = fixture.computeDriver.state;
+  const codex = (index, level, fields, span) =>
+    runtimeLogLine(
+      index,
+      JSON.stringify({
+        timestamp: "2026-10-01T07:49:44.100970Z",
+        level,
+        fields,
+        target: span === undefined ? "codex_app_server" : "codex_exec_server::local_file_system",
+        ...(span === undefined ? {} : { span, spans: [] }),
+      }),
+    );
+  state.lines = [
+    codex(1, "INFO", { message: "new" }, { name: "fs.read_file" }),
+    codex(2, "WARN", { message: "retrying model request" }),
+    runtimeLogLine(3, "plain wrapper text"),
+    codex(4, "INFO", { message: "close" }, { name: "fs.read_file" }),
+  ];
+  const views = () =>
+    fixture.auditSink.events.filter(({ action }) => action === "openclaw.agents.runtime_logs.view");
+  const shown = (page) =>
+    page.data.records.map((record) =>
+      record.type === "line" ? `${record.level} ${record.message}` : record.type,
+    );
+
+  const all = await fixture.request("GET", target.logsPath("source=gateway"));
+  assert.equal(all.status, 200, all.text);
+  assert.deepEqual(shown(all), [
+    "debug span new fs.read_file",
+    "warn retrying model request",
+    "unknown plain wrapper text",
+    "debug span close fs.read_file",
+  ]);
+
+  // Lines of unknown level stay: the server cannot tell they are below the floor.
+  const info = await fixture.request("GET", target.logsPath("source=gateway&minLevel=info"));
+  assert.equal(info.status, 200, info.text);
+  assert.deepEqual(shown(info), ["warn retrying model request", "unknown plain wrapper text"]);
+  assert.equal(views().length, 2);
+
+  // A poll at the same level is the same view and resumes after the last line read,
+  // including the hidden debug line, so lowering the level later never replays it.
+  state.lines.push(
+    codex(5, "INFO", { message: "new" }, { name: "fs.get_metadata" }),
+    codex(6, "ERROR", { message: "model request failed" }),
+  );
+  const next = await fixture.request(
+    "GET",
+    target.logsPath(`source=gateway&minLevel=info&cursor=${encodeURIComponent(info.data.cursor)}`),
+  );
+  assert.equal(next.status, 200, next.text);
+  assert.deepEqual(shown(next), ["error model request failed"]);
+  assert.equal(views().length, 2);
+  const after = await fixture.request(
+    "GET",
+    target.logsPath(`source=gateway&cursor=${encodeURIComponent(next.data.cursor)}`),
+  );
+  assert.equal(after.status, 200, after.text);
+  assert.deepEqual(shown(after), []);
+
+  // The download applies the same floor.
+  const download = await fixture.request(
+    "GET",
+    target.logsPath("source=gateway&minLevel=error&download=true"),
+  );
+  assert.equal(download.status, 200, download.text);
+  assert.deepEqual(
+    download.text
+      .trim()
+      .split("\n")
+      .slice(1)
+      .map((line) => line.split(" ").slice(1, 2)[0]),
+    ["UNKNOWN", "ERROR"],
+  );
+
+  const reads = driverReads(fixture).length;
+  const invalid = await fixture.request("GET", target.logsPath("source=gateway&minLevel=unknown"));
+  assert.equal(invalid.status, 400, invalid.text);
+  assert.equal(driverReads(fixture).length, reads);
 });
 
 test("an expired runtime log cursor starts a new audited view with a labelled gap", async () => {
