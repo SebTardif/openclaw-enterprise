@@ -8,7 +8,7 @@ status: Proposed
 - **Owner:** freeqaz (proposal and auth review). CI and Local Setup review: OCE maintainers.
 - **Created:** 2026-10-03
 - **Last updated:** 2026-10-03
-- **RFC PR:** _pending_
+- **RFC PR:** [#1117](https://github.com/openclaw/openclaw-enterprise/pull/1117)
 - **Related:** [RFC-0042](0042-oidc-sign-in.md) (generic OIDC sign-in; implementation
   [#790](https://github.com/openclaw/openclaw-enterprise/pull/790));
   [OIDC sign-in guide](../../docs/guides/deploy/oidc-sign-in.md); in-cluster IdP egress note
