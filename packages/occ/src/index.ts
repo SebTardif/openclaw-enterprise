@@ -139,6 +139,7 @@ import {
   RuntimeLogsForbiddenByClusterError,
   RuntimeLogsSandboxNotFoundError,
   ScopeViolationError,
+  SecretValueError,
 } from "./errors.ts";
 import {
   readRuntimeLogPage,
@@ -239,6 +240,7 @@ export {
   RuntimeLogsSandboxNotFoundError,
   SandboxRevisionUnsupportedError,
   ScopeViolationError,
+  SecretValueError,
   TransientDependencyError,
   type ActivationPendingCode,
   type RuntimeLogsErrorCode,
@@ -4049,7 +4051,10 @@ export class OpenClawController {
           throw new AgentDeletingError();
         }
         if (agent.executionMode !== "dedicated") {
-          throw new NotImplementedError("Device login requires a dedicated Agent.");
+          throw new NotImplementedError(
+            "agent_device_authorization",
+            "Device login requires a dedicated Agent.",
+          );
         }
       }
     });
@@ -4065,7 +4070,10 @@ export class OpenClawController {
     await this.authorize(principalId, "create", { kind: "secret", id: namespaceId, namespaceId });
     if (harnessId !== "codex") {
       // Permanent: retrying cannot help, so this is not reported as a provider outage.
-      throw new NotImplementedError("Device login is available only for the Codex Harness.");
+      throw new NotImplementedError(
+        "agent_device_authorization",
+        "Device login is available only for the Codex Harness.",
+      );
     }
     const compute = this.selectedDriver("compute");
     const secrets = this.secretDriver();
@@ -4076,6 +4084,7 @@ export class OpenClawController {
       !secrets.compareAndSwap
     ) {
       throw new NotImplementedError(
+        "agent_device_authorization",
         "Device authorization is unavailable for the selected Drivers.",
       );
     }
@@ -4126,7 +4135,10 @@ export class OpenClawController {
     }
     const driver = this.secretDriver(secret.driverId);
     if (!driver.withValue || !driver.compareAndSwap) {
-      throw new NotImplementedError("Device authorization is unavailable for the Secret Driver.");
+      throw new NotImplementedError(
+        "agent_device_authorization",
+        "Device authorization is unavailable for the Secret Driver.",
+      );
     }
     const value = await this.secretOperation(() =>
       driver.withValue!(secret, async (value) => value),
@@ -4285,7 +4297,10 @@ export class OpenClawController {
     await this.read((state) => this.exactNamespace(state, namespaceId));
     const driver = this.selectedDriver("compute");
     if (!driver.discoverHarnessModels) {
-      throw new NotImplementedError("Model discovery is unavailable. Enter a model ID manually.");
+      throw new NotImplementedError(
+        "agent_models.discovery",
+        "Model discovery is unavailable. Enter a model ID manually.",
+      );
     }
     // Discovery performs no platform writes and must not hold a transaction over provider I/O.
     try {
@@ -5658,7 +5673,7 @@ export class OpenClawController {
       // Installation defaults were seeded by Namespace creation, so deletion removes
       // them only while they still match the defaults; edited copies block above.
       for (const preset of seededPresets) {
-        await this.deletePresetInState(state, principalId, namespace.id, preset.id);
+        const removed = await this.deletePresetInState(state, principalId, namespace.id, preset.id);
         await state.audit.append({
           id: `aud_${crypto.randomUUID()}`,
           installationId: this.installation.id,
@@ -5670,7 +5685,11 @@ export class OpenClawController {
           action: "openclaw.presets.delete",
           resource: { kind: "preset", id: preset.id, namespaceId: namespace.id },
           outcome: "success",
-          details: { source: "namespace-deletion" },
+          // Like a direct Preset delete, name the AccessBindings removed with it.
+          details: {
+            source: "namespace-deletion",
+            ...(removed.length === 0 ? {} : { removedAccessBindings: removed }),
+          },
         });
       }
       const deleting = await state.namespaces.transitionNamespaceStatus(
@@ -7204,16 +7223,18 @@ export class OpenClawController {
   }
 
   private validateSecretValue(value: unknown): asserts value is string {
+    const message =
+      "The Secret value must be nonempty UTF-8, without NUL, and at most 65536 bytes.";
     if (
       typeof value !== "string" ||
       value.length === 0 ||
       value.includes("\u0000") ||
-      /[\uD800-\uDFFF]/u.test(value) ||
-      Buffer.byteLength(value, "utf8") > 65_536
+      /[\uD800-\uDFFF]/u.test(value)
     ) {
-      throw new ScopeViolationError(
-        "The Secret value must be nonempty UTF-8, without NUL, and at most 65536 bytes.",
-      );
+      throw new SecretValueError("INVALID_VALUE", message);
+    }
+    if (Buffer.byteLength(value, "utf8") > 65_536) {
+      throw new SecretValueError("TOO_LONG", message);
     }
   }
 

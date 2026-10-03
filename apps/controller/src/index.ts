@@ -539,7 +539,19 @@ function requiredPermissions(operation: OccApiRoute): readonly RequiredPermissio
       },
       {
         action: "read",
+        resourceKind: "credential_source",
+        scope: "request_body",
+        condition: "iam_binding_target",
+      },
+      {
+        action: "read",
         resourceKind: "namespace",
+        scope: "request_body",
+        condition: "iam_binding_target",
+      },
+      {
+        action: "read",
+        resourceKind: "preset",
         scope: "request_body",
         condition: "iam_binding_target",
       },
@@ -3600,5 +3612,3 @@ export function createControllerApp(options: ControllerAppOptions): ControllerAp
     },
   };
 }
-
-export const createOccApi = createControllerApp;

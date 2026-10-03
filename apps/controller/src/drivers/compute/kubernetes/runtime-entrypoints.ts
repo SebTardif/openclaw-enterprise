@@ -907,6 +907,12 @@ async function waitForPeerPluginRuntimeStatus() {
   }
 }
 
+function samePluginIds(left, right) {
+  const leftIds = new Set(left ?? []);
+  const rightIds = new Set(right ?? []);
+  return leftIds.size === rightIds.size && [...leftIds].every((id) => rightIds.has(id));
+}
+
 function samePluginFailures(left, right) {
   return JSON.stringify([...(left ?? [])].sort((a, b) => a.pluginId.localeCompare(b.pluginId))) ===
     JSON.stringify([...(right ?? [])].sort((a, b) => a.pluginId.localeCompare(b.pluginId)));
@@ -1831,20 +1837,26 @@ function probeOpenClawAuthenticationFailureCode() {
 // authenticates before validating, so only 401 means rejection. Anything else
 // (400, an error, the 10 s limit) proves nothing and the full probe decides,
 // so acceptance still needs a real model turn. A configured endpoint, API,
-// headers or request option other than allowPrivateNetwork, or an Anthropic
-// setup token, skips this request.
+// headers or request option other than allowPrivateNetwork, a model whose API or
+// endpoint differs from the provider's, or an Anthropic setup token, skips this
+// request. The request goes to the
+// path of the configured API: a key may be scoped to one endpoint, and OpenAI
+// answers 401 for a missing scope.
 const UPFRONT_ENDPOINTS = {
-  openai: ["https://api.openai.com/v1", "/responses", ["openai-responses", "openai-completions"], (key) => ({ authorization: "Bearer " + key })],
-  anthropic: ["https://api.anthropic.com", "/v1/messages", ["anthropic-messages"], (key) => !key.startsWith("sk-ant-oat") && { "x-api-key": key, "anthropic-version": "2023-06-01" }],
+  openai: ["https://api.openai.com/v1", { "openai-responses": "/responses", "openai-completions": "/chat/completions" }, (key) => ({ authorization: "Bearer " + key })],
+  anthropic: ["https://api.anthropic.com", { "anthropic-messages": "/v1/messages" }, (key) => !key.startsWith("sk-ant-oat") && { "x-api-key": key, "anthropic-version": "2023-06-01" }],
 };
 function credentialRejectedUpfront(provider, fragment, key, stage) {
   fragment ??= {};
-  const [base, path, apis, authorize] = UPFRONT_ENDPOINTS[provider] ?? [];
+  const [base, paths, authorize] = UPFRONT_ENDPOINTS[provider] ?? [];
   const headers = authorize?.(key.trim());
+  const api = fragment.api ?? Object.keys(paths ?? {})[0];
   if (!headers || Object.keys(fragment).some((name) => !["baseUrl", "api", "models", "request"].includes(name)) ||
     Object.keys(fragment.request ?? {}).some((name) => name !== "allowPrivateNetwork") ||
-    String(fragment.baseUrl ?? base).replace(/\/+$/, "") !== base || !apis.includes(fragment.api ?? apis[0]) ||
-    JSON.stringify(fragment.models ?? []).includes('"headers"')) return false;
+    String(fragment.baseUrl ?? base).replace(/\/+$/, "") !== base || !Object.hasOwn(paths, api) ||
+    JSON.stringify(fragment.models ?? []).includes('"headers"') ||
+    (Array.isArray(fragment.models) && fragment.models.some((model) => (model?.api !== undefined && model.api !== api) || model?.baseUrl !== undefined))) return false;
+  const path = paths[api];
   stage("preflight");
   return require("node:child_process").spawnSync(process.execPath, ["-e",
     'fetch(process.env.U,{method:"POST",headers:JSON.parse(process.env.H),body:"{}",signal:AbortSignal.timeout(8000)}).then((r)=>process.exit(r.status===401?3:0),()=>process.exit(0))',
@@ -2384,6 +2396,7 @@ let childRunning = false;
 let childExited;
 let respawning = false;
 let waitingForPeerDuringOutage = false;
+let verifyingServingReplacement = false;
 let stoppingContainer = false;
 let gatewayGeneration = 0;
 
@@ -2418,7 +2431,7 @@ function startGatewayProcess() {
         process.exit(1);
         return;
       }
-      if (gatewayTerminating || ((!respawning || waitingForPeerDuringOutage) && spawned === child)) {
+      if (gatewayTerminating || ((!respawning || waitingForPeerDuringOutage || verifyingServingReplacement) && spawned === child)) {
         process.exit(code ?? (signal === "SIGTERM" ? 0 : 1));
       }
     });
@@ -2554,6 +2567,7 @@ if (followsPeerStatus) {
   const peerChanged = (current) =>
     current.startupId !== peerStatus.startupId ||
     current.podUid !== peerStatus.podUid ||
+    !samePluginIds(current.successfulPluginIds, peerStatus.successfulPluginIds) ||
     !samePluginFailures(current.failures, pluginResult.failures);
   // Stop the native Gateway within its drain budget; one that outlives SIGKILL
   // leaves only the container restart.
@@ -2574,7 +2588,7 @@ if (followsPeerStatus) {
     if (timedOut) throw new Error("The native Gateway did not stop.");
   };
   // Serving means the new process answers its own readiness endpoint; the
-  // plugin status stays "starting", so the Pod stays unready, until then.
+  // plugin status stays "starting" until the peer is rechecked.
   const waitForGatewayServing = async () => {
     const deadline = Date.now() + GATEWAY_RESPAWN_READY_TIMEOUT_MS;
     while (childRunning && Date.now() < deadline) {
@@ -2583,19 +2597,22 @@ if (followsPeerStatus) {
           "http://127.0.0.1:" + process.env.OPENCLAW_GATEWAY_PORT + "/readyz",
           { signal: AbortSignal.timeout(2_000), redirect: "error" },
         );
-        if (response.status === 200 && childRunning) return true;
+        if (response.status === 200 && childRunning) {
+          verifyingServingReplacement = true;
+          return true;
+        }
       } catch {}
       await pluginRuntimeDelay(GATEWAY_RESPAWN_READY_POLL_MS);
     }
     return false;
   };
-  // A changed Harness peer invalidates the app-server credential and possibly
-  // the plugin result the Gateway was configured with. Respawn only the native
-  // process: the container, its volumes and runtime assets stay, and there is
-  // no kubelet crash-loop backoff.
+  // A changed Harness peer requires a new credential for the replacement and
+  // may change the configured plugin result. Respawn only the native process:
+  // the container, its volumes and runtime assets stay, and there is no kubelet
+  // crash-loop backoff.
   const respawnForPeerStatus = async (current) => {
     respawning = true;
-    // Readiness drops first; nothing routes to this Gateway until it is replaced.
+    // Mark plugin status unready before replacing the native Gateway.
     publishPluginRuntimeStatus({ phase: "starting", ...pluginResult });
     const respawnStartedAt = Date.now();
     logStartupPhase("peer-status-changed", startupPhaseOrigin);
@@ -2606,7 +2623,8 @@ if (followsPeerStatus) {
         waitingForPeerDuringOutage = true;
         const returned = await waitForPeerPluginRuntimeStatus();
         waitingForPeerDuringOutage = false;
-        if (!peerChanged(returned) && childRunning) {
+        if (gatewayTerminating || !childRunning) return;
+        if (!peerChanged(returned)) {
           publishPluginRuntimeStatus({ phase: "ready", ...pluginResult });
           logStartupPhase("peer-status-restored", respawnStartedAt);
           return;
@@ -2628,12 +2646,31 @@ if (followsPeerStatus) {
         if (gatewayTerminating) return;
         const spawnedAt = startGatewayProcess();
         resetWorkspaceNodeTracking(configured.workspaceNodeId, spawnedAt);
-        if (await waitForGatewayServing()) break;
+        const serving = await waitForGatewayServing();
+        if (gatewayTerminating) return;
+        if (serving) break;
         if (attempt >= GATEWAY_RESPAWN_ATTEMPTS) {
           throw new Error("The respawned native Gateway did not become ready.");
         }
         await stopGatewayProcess();
         await pluginRuntimeDelay(1_000 * 2 ** (attempt - 1));
+      }
+      // Recheck the Harness before marking the replacement ready.
+      let verifiedPeer;
+      try {
+        verifiedPeer = await readPeerPluginRuntimeStatus();
+      } catch {
+        verifiedPeer = undefined;
+      } finally {
+        verifyingServingReplacement = false;
+      }
+      if (gatewayTerminating || !childRunning) return;
+      if (verifiedPeer === undefined) {
+        throw new Error("The Harness peer became unavailable during Gateway startup.");
+      }
+      if (peerChanged(verifiedPeer)) {
+        logStartupPhase("peer-verification-changed", respawnStartedAt, "failed");
+        throw new Error("The Harness peer changed during Gateway startup.");
       }
       publishPluginRuntimeStatus({ phase: "ready", ...pluginResult });
       logStartupPhase("gateway-respawn", respawnStartedAt);
@@ -2642,6 +2679,7 @@ if (followsPeerStatus) {
       stopContainer();
     } finally {
       waitingForPeerDuringOutage = false;
+      verifyingServingReplacement = false;
       respawning = false;
     }
   };
