@@ -6,15 +6,19 @@ rfc: index.md
 
 This FAQ accompanies [RFC-0056](index.md). The decision is to keep one OCC Token
 Service implementation with pluggable TokenDrivers. OpenShell is not a
-replaceable backend for that service. OpenShell users can manage credentials
-entirely through OpenShell, or use OCC as a credential supplier to OpenShell.
-The latter is an integration direction, not a delivered feature of this RFC.
+replaceable backend for that service. OCE must manage the lifecycle of
+platform-minted credentials, including repository tokens; OpenShell may directly
+manage user-supplied credentials. OCC supplying platform-minted credentials to
+OpenShell is an integration direction, not a delivered feature of this RFC.
 
 ## What overlaps with OpenShell?
 
-Both systems keep real credentials away from Agent processes and manage their
-lifetime. OpenShell providers associate credentials with Sandbox access policy;
-its proxy resolves credential placeholders for allowed requests. OpenShell also
+Both systems keep upstream provider credentials away from Agent processes and
+manage their lifetime. The OCC Agent does receive a usable broker bearer: its
+possessor can authenticate to the repository gateway within current grants. It
+is not an OpenShell credential placeholder. OpenShell providers associate
+credentials with Sandbox access policy; its proxy resolves credential
+placeholders for allowed requests. OpenShell also
 supports provider refresh, including storing OAuth refresh material at its
 gateway and replacing access tokens before expiry. See its
 [provider documentation](https://github.com/NVIDIA/OpenShell/blob/ec49209da25be39840742df29b64ec694d159c2f/docs/how-it-works/providers/overview.mdx)
@@ -42,18 +46,19 @@ Drivers, is a separate platform concept; this decision does not remove it.
 
 ## How can an OpenShell deployment manage credentials?
 
-Choose one of these paths for the credentials in question:
+Ownership depends on the credential source:
 
-| Path                                   | OCC responsibility                                                                                             | OpenShell responsibility                                                                                                  |
-| -------------------------------------- | -------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| OpenShell manages credentials directly | Do not use the OCC token broker for these credentials. Other OCC platform capabilities can still be used.      | Configure providers and their credential sources, own refresh where configured, and enforce Sandbox access and injection. |
-| OCC supplies credentials to OpenShell  | Issue or obtain the scoped credential and deliver it through an authenticated integration to OpenShell itself. | Receive the credential as a trusted service, expose placeholders to the Agent, and enforce provider policy at egress.     |
+| Credential source                                        | OCC responsibility                                                                                                            | OpenShell responsibility                                                                                                    |
+| -------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| User-supplied credentials managed directly by OpenShell  | These credentials do not use the OCC token broker. Other OCC platform capabilities can still be used.                         | Configure providers and credential sources, own refresh where configured, and enforce Sandbox access and injection.         |
+| Platform-minted credentials, including repository tokens | Own authorization, issuance, renewal, and cleanup. A future authenticated handoff may supply credentials to OpenShell itself. | Receive supplied credentials as a trusted service, expose placeholders to the Agent, and enforce provider policy at egress. |
 
-In the second path, OpenShell is a trusted credential recipient. The Agent does
-not receive a raw token from OCC. This expands custody to OpenShell, so OCC's
-memory-only storage and broker revocation guarantees cannot automatically be
-claimed for the copy OpenShell holds. Revoking an OCC bearer alone does not
-invalidate a credential already supplied to OpenShell.
+Platform-minted credentials must not fall back to OpenShell-owned issuance.
+Until the handoff exists, keep repository access through the OCC repository
+gateway. The proposed handoff expands upstream-token custody to OpenShell, not
+to the Agent. OCC's memory-only storage and broker revocation guarantees cannot
+automatically be claimed for OpenShell's copy: revoking an OCC bearer alone does
+not invalidate a credential already supplied to OpenShell.
 
 The handoff must define recipient authentication, Namespace/Workspace ownership,
 allowed credential scope, replacement, expiry, and withdrawal. It is separate
@@ -63,15 +68,25 @@ handoff requires a follow-up contract and implementation.
 
 ## Which system refreshes the token when both are used?
 
-Assign one refresh owner per credential. When OCC supplies short-lived tokens,
-OCC owns obtaining replacements and the integration updates OpenShell before
-expiry; OpenShell uses the supplied credential for injection. It must not also
-run an independent refresh loop for that same credential.
+For platform-minted credentials, OCC owns issuer acquisition and refresh,
+authorization, leases, and cleanup. OpenShell may schedule requests for replacement
+credentials from OCC and cache the supplied result for injection. That delivery
+loop must not independently refresh with the upstream issuer or bypass OCC's
+current grants. An external-token-service refresh strategy is one possible
+integration; it would not replace the OCC lifecycle engine.
 
-When OpenShell owns an OAuth refresh grant, OpenShell owns its access-token
-refresh and recovery. Supplying bootstrap material is a separate role from
-leasing each resulting access token through OCC. The current RFC neither adds
-persistent OAuth refresh-token custody nor implements that bootstrap handoff.
+Pushing ordinary provider updates alone does not prove seamless renewal.
+OpenShell's [static update behavior](https://github.com/NVIDIA/OpenShell/blob/ec49209da25be39840742df29b64ec694d159c2f/docs/how-it-works/providers/overview.mdx#manage-providers)
+leaves existing processes holding revision-scoped references to the old value.
+The future handoff must prove replacement without restarting running Agents,
+expiry handling, and withdrawal of cached credentials and retained references.
+The protocol and choice of push versus pull remain follow-up work.
+
+When OpenShell owns a user-supplied OAuth refresh grant, OpenShell owns its
+access-token refresh and recovery. Supplying bootstrap material is a separate
+role from leasing each resulting access token through OCC. The current RFC
+neither adds persistent OAuth refresh-token custody nor implements that bootstrap
+handoff.
 
 ## Does OCC already supply secrets to OpenShell?
 

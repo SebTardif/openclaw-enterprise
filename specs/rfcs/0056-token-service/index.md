@@ -44,11 +44,13 @@ interactive OAuth login, raw-token delivery, and a general public token API are 
 delivery. OAuth below demonstrates the extension seam; it is not a second
 promised integration without a supported caller.
 
-The broker backend is not pluggable. OpenShell users either manage credentials
-without the OCC broker or use OCC to supply credentials to OpenShell itself.
-The latter requires a separate trusted-service handoff; it does not enable raw
-Agent delivery in this RFC. See the [OpenShell FAQ](faq.md) for overlap,
-refresh ownership, and integration limits.
+The broker backend is not pluggable. OCE owns the lifecycle of platform-minted
+credentials, including repository tokens. OpenShell may directly manage
+user-supplied credentials. Supplying platform-minted credentials to OpenShell
+requires a separate trusted-service handoff from OCC; until it exists, retain
+the OCC repository gateway path rather than delegate issuance to OpenShell.
+This does not enable raw Agent delivery. See the [OpenShell FAQ](faq.md) for
+overlap, refresh ownership, and integration limits.
 
 Remove OCE-managed Git hooks and `pushRefAllowlist` in this refactor. The
 [current push-ref guardrail](../../../docs/reference/repository-credentials/push-ref-guardrail.md)
@@ -355,6 +357,15 @@ See [deployment and recovery](deployment.md) for credential delivery and handove
 Do not share token generations between leases in first delivery. Revision changes
 need not rotate an otherwise valid Agent bearer, but its permissions always come
 from the current active admission. Retiring a grant preserves its cleanup debt.
+
+Unknown disposal of old GitHub tokens alone must not block Agent deployment or
+activation of replacement grants. Continue to require current authorization and
+confirmed termination or fencing of the old workload and any predecessor service.
+Repository operations may remain unavailable while acquisition is blocked by
+recovery eligibility, rate limits, or outstanding-debt caps; do not make that
+credential availability a deployment or grant-handover gate. Preserve the old
+obligations and accounting across handover.
+
 Audit records contain Agent, revision provenance, admission generation, grant,
 Driver, and outcome identifiers, never credentials. Per-operation and bounded
 consumer deadlines retain elapsed-time checks; managed access no longer has a
@@ -439,7 +450,9 @@ fail-closed until an equivalent bounded recovery contract is reviewed and proven
 
 Create a separate plan after interface review. First delivery extracts the engine,
 integrates `GitHubTokenDriver`, Agent-scoped bearer ownership, repository and
-operator callers, and delivers the [independent service and control boundary](deployment.md).
+operator callers, and delivers the [independent service and control boundary](deployment.md)
+through a published, versioned Token Service image with the bundled GitHub Driver.
+Standard installation uses release packaging without requiring users to build an image.
 Update references, flows, Installation parsing, and Kubernetes packaging together. Historical RFCs remain unchanged. Retire the old
 configuration path when the canonical replacement ships; no compatibility shim
 is proposed.
@@ -472,8 +485,12 @@ Through the regular Agent workflow, verify duplicate-binding selection, stale
 binding generations, revision replacement with an Agent-scoped bearer, rejected
 destinations, and uncertain mutations. Verify stopped Agents are denied, inactive revisions never become authority,
 current grants override old authority, and missing workload identity does not
-prevent valid bearer authentication. Reject the removed managed
-`sessionDurationSeconds` setting.
+prevent valid bearer authentication. Redeploy with unresolved old GitHub-token
+cleanup: after fencing the old workload, activate the authorized replacement
+grants while retaining that debt. Repeat with exhausted issuance limits: deployment
+still completes, while repository operations report temporary unavailability.
+Unknown workload or predecessor-service termination must still block handover.
+Reject the removed managed `sessionDurationSeconds` setting.
 Verify Git operations without OCE hooks, ordinary user-hook execution, and rejection
 of removed `pushRefAllowlist` configuration.
 
@@ -496,8 +513,9 @@ The following capabilities are outside first delivery:
   package example illustrates the extension contract; it is not a shipped Driver.
 - **Custom TokenDrivers.** Support authoring and operating additional Drivers
   through the package extension contract, with documented configuration,
-  lifecycle requirements, and integration verification. First delivery defines
-  that contract and ships the GitHub implementation.
+  packaging, distribution, lifecycle requirements, and integration verification.
+  First delivery defines that contract and ships the GitHub implementation; it
+  does not require users to package custom Drivers or build a broker image.
 - **ChatGPT service-account TokenDriver.** Define the supported service-account
   credential source, permitted consumers, and token lifecycle before adding a
   dedicated Driver.
@@ -513,9 +531,10 @@ The following capabilities are outside first delivery:
   lifecycle/security work for every issuer. Extracting only a minting helper
   fails to integrate ownership, recovery, and the real Agent caller.
 - A pluggable broker backend would require translating OCC authorization,
-  lease, and recovery contracts into another engine. For OpenShell, use direct
-  credential management or OCC-to-OpenShell credential supply instead, as
-  described in the [FAQ](faq.md).
+  lease, and recovery contracts into another engine. OpenShell may manage
+  user-supplied credentials directly; platform-minted credentials remain
+  OCE-owned and require the future trusted-service handoff, as described in
+  the [FAQ](faq.md).
 - Encrypted persistent custody enables token recovery after restart but adds
   storage and key management. It is excluded from this refactor.
 - **Platform maintainers** should confirm the independent service, authenticated

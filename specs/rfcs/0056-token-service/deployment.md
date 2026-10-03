@@ -276,6 +276,11 @@ inherit this GitHub-specific recovery policy.
 
 ## Deployment and verification
 
+Publish a versioned Token Service image containing the bundled GitHub Driver.
+Release packaging must install that image without a user build; local builds
+remain a development option. Custom Driver packaging and distribution are
+[future work](index.md#future-work).
+
 Ship a separate Deployment and stable Service endpoints, with one active instance
 and `Recreate` replacement. Worker scaling must not create more Token Service
 instances. Stop the old instance before activating its replacement; ambiguous
@@ -310,8 +315,9 @@ Extend real Agent and PostgreSQL integration proof to cover:
   persisted rate limit; concurrent first requests reserve only one recovery.
 - Ambiguous predecessor termination blocking issuance; no automatic replay of
   uncertain pushes/API mutations; other Drivers and standalone remain fail-closed.
-- Packaged service placement, listener separation, enforced network policies,
-  and issuer credentials confined to the service.
+- Installation from release packaging using the published image without a local
+  build; service placement, listener separation, enforced network policies, and
+  issuer credentials confined to the service.
 
 These are implementation acceptance requirements, not proof delivered by this RFC.
 Update the current RepoDriver session/files contract and Compute ownership to
