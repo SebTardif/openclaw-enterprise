@@ -875,11 +875,13 @@ async function startInClusterControllers(
   };
   context.after(() => worker.stop());
   await once(logs, "spawn");
+  let activeApiPod = pods[0];
   return {
     pod: pods[0],
     url: forwarding.url,
     worker,
     async restart() {
+      const previousUid = activeApiPod.metadata.uid;
       const port = Number(new URL(forwarding.url).port);
       await forwarding.stop();
       await kubectl("rollout", "restart", `deployment/${name}`, "--namespace", platformNamespace);
@@ -895,7 +897,8 @@ async function startInClusterControllers(
         const current = await resources("pods", platformNamespace);
         return current.find(
           ({ metadata, status }) =>
-            metadata.uid !== pods[0].metadata.uid &&
+            metadata.uid !== previousUid &&
+            metadata.deletionTimestamp === undefined &&
             Object.entries(labels).every(([key, value]) => metadata.labels?.[key] === value) &&
             status.conditions?.some(({ type, status }) => type === "Ready" && status === "True"),
         );
@@ -905,6 +908,7 @@ async function startInClusterControllers(
         `pod/${pod.metadata.name}`,
         `${port}:18080`,
       );
+      activeApiPod = pod;
       return { pod, url: forwarding.url };
     },
   };
@@ -2964,13 +2968,15 @@ async function assertStartupFailureDeploymentStatusDurable(context, topology, op
     failed,
     "failed deployment status must survive native Pod deletion and restart opportunities",
   );
-  await topology.restartControllerApi();
-  const afterControllerRestart = await deploymentStatus(topology, failure.revision.id);
-  assert.deepEqual(
-    afterControllerRestart,
-    failed,
-    "failed deployment status must survive controller API restart",
-  );
+  for (let restart = 1; restart <= 2; restart += 1) {
+    await topology.restartControllerApi();
+    const afterControllerRestart = await deploymentStatus(topology, failure.revision.id);
+    assert.deepEqual(
+      afterControllerRestart,
+      failed,
+      `failed deployment status must survive controller API restart ${restart}`,
+    );
+  }
   context.diagnostic(
     `startup failure durability: ${failure.revision.id} plugins ${
       options.pluginsEnabled ? "enabled" : "disabled"
