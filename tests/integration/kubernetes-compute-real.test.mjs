@@ -2852,16 +2852,55 @@ test(
       });
     }
 
-    app = await composePostgresDevelopment(
-      {
-        mode: "development",
-        host: "127.0.0.1",
-        databaseUrl,
-        authSecret,
-        authBaseURL,
-      },
-      drivers,
-    );
+    const developmentConfig = {
+      mode: "development",
+      host: "127.0.0.1",
+      databaseUrl,
+      authSecret,
+      authBaseURL,
+    };
+    // Both supported startup callers must reject old storage before admitting
+    // API writes or claiming work, even when running the development profile.
+    const legacyOwner = namespace("dev-upgrade");
+    const legacyName = `oce-gateways-${sha256Hex(legacyOwner.id, 24)}`;
+    await kubectl("create", "namespace", legacyName);
+    try {
+      await kubectl(
+        "label",
+        "namespace",
+        legacyName,
+        "app.kubernetes.io/managed-by=openclaw-enterprise",
+        `openclaw.dev/gateway-namespace=${legacyOwner.id}`,
+      );
+      await kubectl(
+        "annotate",
+        "namespace",
+        legacyName,
+        `openclaw.dev/namespace-id=${legacyOwner.id}`,
+      );
+      const before = await resource("namespace", legacyName);
+      await assert.rejects(async () => {
+        const unexpected = await composePostgresDevelopment(developmentConfig, drivers);
+        await unexpected.close();
+      }, /Existing split-layout Gateway storage/);
+      const rejectedWorker = createControllerWorker({
+        pool: new pg.Pool({ connectionString: databaseUrl, max: 2 }),
+        drivers,
+        emit: () => {},
+      });
+      try {
+        await assert.rejects(rejectedWorker.start(), /Existing split-layout Gateway storage/);
+      } finally {
+        await rejectedWorker.stop();
+      }
+      const after = await resource("namespace", legacyName);
+      assert.equal(after.metadata.uid, before.metadata.uid);
+      assert.deepEqual(after.metadata.labels, before.metadata.labels);
+      assert.equal(await missing("namespace", kubernetesNamespaceName(legacyOwner.id)), true);
+    } finally {
+      await kubectl("delete", "namespace", legacyName, "--wait=true");
+    }
+    app = await composePostgresDevelopment(developmentConfig, drivers);
     const session = await signInToControllerApp(app, adminCredentials);
 
     async function request(method, url, payload, options = {}) {

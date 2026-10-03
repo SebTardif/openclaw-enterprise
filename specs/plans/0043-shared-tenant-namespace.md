@@ -49,6 +49,8 @@ inequality. Ownership, Secret UID and revision guards continue to apply.
 - [x] Reject an unsafe in-place split-layout upgrade in API/worker startup preflight,
       before tenant reconciliation can add a duplicate storage label or create empty
       replacement state. Inspect all namespace pages and document retained resources.
+- [x] Cover configured development API composition and all worker starts through
+      optional Compute preflight, with real PostgreSQL/Kubernetes caller regressions.
 - [x] Use explicit upgrade refusal, as permitted by the repository's compatibility
       boundary. Automatic transfer of existing volumes and UID-bound references
       remains unsupported; the guard and operator instructions state that limit.
@@ -70,8 +72,16 @@ is 410.6 seconds. The old implementation fails both new conformance regressions:
 HTTP 409 for identical concurrent password creation and missing rejection of
 legacy storage on a later namespace page. The real-cluster lifecycle case also
 fails with missing expected rejection when run against the old preflight.
-Historical native model receipts below
-predate this merge; these current fixtures do not prove native model execution.
+Configured development API and worker startup also run optional Compute
+preflight. Real PostgreSQL/Kubernetes caller checks reject the old layout before
+admission, preserving its namespace UID and labels and creating no tenant target.
+The three other real-cluster scenarios pass in the follow-up run; the API/worker
+scenario passes separately in 165.6 seconds after shortening an invalid synthetic
+label value. Production bootstrap, authentication, restart and revocation tests
+also pass (two tests, no skips). Reverting API and worker startup separately
+causes the caller regression to fail at its respective missing-rejection assertion;
+fixed sources were restored and their local/VM hashes match. Historical native model receipts below predate
+this merge; these current fixtures do not prove native model execution.
 
 ## Verification
 

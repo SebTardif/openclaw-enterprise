@@ -107,7 +107,8 @@ native dedicated transport token depends on that configuration.
 See the [harness authentication flow](native-service-account-credential-delivery.md)
 for admission, immutable source snapshots, and worker reauthorization.
 
-Production API composition and worker startup call `KubernetesComputeDriver.preflight`
+Configured API composition, including development, and worker startup call
+`KubernetesComputeDriver.preflight` through the optional Compute contract
 before tenant reconciliation. In a single cluster it checks every page of storage
 namespaces and refuses a legacy split target without altering its labels or state.
 The [upgrade requirements](../reference/drivers/kubernetes-compute.md#existing-split-layout-installations)
@@ -311,6 +312,8 @@ owns claim sizes, mount paths, StorageClass requirements, and final teardown.
 [keep this for the user to add notes. do not change between edits]
 
 ## Changelog
+
+- 2026-10-03 16:02: Run configured development API and worker Compute preflight before admitting work. (01a0fe72-58b2-7cc3-b770-7310f5401deb - c04093189f2ba6240f8dc431847c2f487afd11de)
 
 - 2026-10-03 15:38: Refuse unsafe split-layout upgrades and converge concurrent legacy password creation. (01a0fe72-58b2-7cc3-b770-7310f5401deb - 94364ae9)
 
