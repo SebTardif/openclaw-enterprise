@@ -8,11 +8,11 @@ status_note: "Retroactive record. Every decision below is already implemented on
 - **ID:** RFC-0045
 - **Owner:** freeqaz (record). Auth design review: needed.
 - **Created:** 2026-10-01
-- **Last updated:** 2026-10-01
-- **Source baseline:** `main` at `521549dff`. Every symbol and number below was read there.
+- **Last updated:** 2026-10-03
+- **Source baseline:** `main` at `521549dff`. Every symbol and number below was read there; rechecked at `04d01d02e`.
 - **Related:** [RFC 31](31-human-federated-sign-in/index.md) owns GitHub sign-in, the attempt,
   receipt and session-key design, and the original sign-in admission section, which this record
-  supersedes for password sign-in. [RFC-0042](0042-oidc-sign-in.md) owns generic OIDC. Current
+  supersedes for password and external sign-in. [RFC-0042](0042-oidc-sign-in.md) owns generic OIDC. Current
   behavior: [authentication](../../docs/reference/authentication.md),
   [external sign-in](../../docs/reference/authentication/external-sign-in.md).
 
@@ -89,7 +89,7 @@ moved the external-provider profile's `/oce/password` onto it from attempt-count
 [#728](https://github.com/openclaw/openclaw-enterprise/pull/728),
 [#760](https://github.com/openclaw/openclaw-enterprise/pull/760)):
 
-- Every successful sign-in (external only when the account has a password) sets `__Host-occ_known_device`: HttpOnly, `SameSite=Strict`, host-only, 90 days,
+- Every successful sign-in (external only when the account has a password) sets `__Host-occ_known_device` (`occ_known_device` when cookies are not Secure, as on an HTTP base URL): HttpOnly, `SameSite=Strict`, host-only, 90 days,
   up to three `v2` entries. Each entry is a MAC over a hash of the email, the issue time and a
   nonce, plus a second MAC binding it to the account's password state (user, password method,
   that method's `authentication_version`; in the guarded profile only enrolled, enabled
@@ -195,6 +195,10 @@ for new browsers; without it a distributed attacker guesses each email freely.
 - `recovery-only` strands accounts without an external identity; startup only warns.
 - #797 ends sessions on next use; an unused stale session never authenticates but stays until
   it expires.
+- `recovery-only` gates new password sign-ins only. Existing password sessions keep working for
+  up to 8 hours (`session.expiresIn`), as does the former holder's after the recovery
+  designation moves; revoke or `purge-sessions` ends them
+  ([#891](https://github.com/openclaw/openclaw-enterprise/pull/891) documents this).
 - Evidence is source review and PostgreSQL integration tests in each PR. There is no live
   GitHub App test. A dogfood install exercised OIDC sign-in against Keycloak and the #797
   session end; the lockout trade-offs above have not been load-tested.
