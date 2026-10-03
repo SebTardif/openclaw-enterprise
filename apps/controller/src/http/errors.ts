@@ -4,12 +4,16 @@ import {
   AgentDeletingError,
   AgentPrincipalAuthorizationError,
   AuthorizationDeniedError,
+  DeletionRetryOwnedError,
   ChannelDirectoryError,
   ChannelCredentialError,
   ConfigurationHarnessError,
   CredentialGatewayNotConfiguredError,
   DependencyUnavailableError,
+  DeviceAuthorizationStartError,
   IAMAccessBindingRoleError,
+  IAMPolicyValidationError,
+  IAMRoleInUseError,
   ModelDiscoveryError,
   PluginDiscoveryError,
   NamespaceNotEmptyError,
@@ -19,8 +23,10 @@ import {
   PluginPolicyValidationError,
   PostgresCommitOutcomeUnknownError,
   ResourceConflictError,
+  ResourceStateConflictError,
   RuntimeLogsError,
   ScopeViolationError,
+  SecretValueError,
   type RuntimeLogsErrorCode,
 } from "@openclaw-enterprise/occ";
 import {
@@ -63,6 +69,10 @@ export function failure(
   details?: readonly ErrorDetail[],
 ): RequestFailure {
   return new RequestFailure(status, code, message, details);
+}
+
+export function dependencyUnavailable(): RequestFailure {
+  return failure(503, "DEPENDENCY_UNAVAILABLE", "A required platform dependency is unavailable.");
 }
 
 export function jsonPointer(segment: string): string {
@@ -303,6 +313,17 @@ export function requestFailure(error: unknown): RequestFailure {
         );
     }
   }
+  if (error instanceof DeviceAuthorizationStartError) {
+    // Device login starts at auth.openai.com from the API Pods, which the chart's default
+    // network policy does not allow, so name that cause when no connection was made.
+    return failure(
+      503,
+      "DEPENDENCY_UNAVAILABLE",
+      error.reason === "unreachable"
+        ? "OCC could not reach the sign-in service at auth.openai.com. An operator must allow HTTPS egress from the API Pods to it (Helm api.modelDiscoveryCidrs or the cluster's egress policy), then try again."
+        : "The sign-in service could not start device login. Try again.",
+    );
+  }
   if (error instanceof PluginDiscoveryError) {
     switch (error.reason) {
       case "credentials_rejected":
@@ -336,8 +357,19 @@ export function requestFailure(error: unknown): RequestFailure {
       { path: "/roleId", code: "INVALID_VALUE" },
     ]);
   }
+  if (error instanceof IAMPolicyValidationError) {
+    return failure(400, "INVALID_REQUEST", error.message, [
+      { path: error.path, code: "INVALID_VALUE" },
+    ]);
+  }
+  if (error instanceof IAMRoleInUseError) {
+    return failure(409, "RESOURCE_CONFLICT", error.message);
+  }
   if (error instanceof CredentialGatewayNotConfiguredError) {
     return failure(409, "CREDENTIAL_GATEWAY_NOT_CONFIGURED", error.message);
+  }
+  if (error instanceof SecretValueError) {
+    return failure(400, "INVALID_REQUEST", error.message, [{ path: "/value", code: error.code }]);
   }
   if (error instanceof ConfigurationHarnessError) {
     return failure(400, "INVALID_REQUEST", error.message);
@@ -385,11 +417,18 @@ export function requestFailure(error: unknown): RequestFailure {
   if (isDependencyUnavailable(error)) {
     return failure(503, "DEPENDENCY_UNAVAILABLE", "A required platform dependency is unavailable.");
   }
+  if (error instanceof ResourceStateConflictError) {
+    return failure(409, "RESOURCE_CONFLICT", error.message);
+  }
   if (error instanceof ResourceConflictError) {
     return failure(409, "RESOURCE_CONFLICT", "The requested platform resource already exists.");
   }
   if (error instanceof ScopeViolationError) {
     return failure(404, "NOT_FOUND", "The requested platform resource was not found.");
+  }
+  if (error instanceof DeletionRetryOwnedError) {
+    // The caller holds delete on this exact resource; only the retry condition is named.
+    return failure(403, "FORBIDDEN", error.message);
   }
   if (error instanceof AgentPrincipalAuthorizationError) {
     // Only the Agent's own principal is named; caller denials stay generic below.
