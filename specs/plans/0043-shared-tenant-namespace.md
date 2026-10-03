@@ -1,7 +1,7 @@
 # Implementation plan: one tenant namespace in a single cluster
 
 - **ID:** TASK-0043
-- **Delivery status:** Completed
+- **Delivery status:** In progress
 - **Owner:** Kimi Yu
 - **Authority:** [Platform architecture](../../docs/design.md)
 - **Source baseline:** b9613e5d1b7b55f02c685fb61a2ff2a2f1edc968
@@ -18,6 +18,8 @@ control target. This supersedes the same-cluster namespace allocation in
 Namespace workload managers are trusted for both roles. Namespace quotas and
 namespace-wide operations cover both roles; this change adds no admission system.
 Existing split-layout resources and volumes are not migrated or deleted.
+Single-cluster startup refuses that layout before tenant reconciliation; see
+[upgrade requirements](../../docs/reference/drivers/kubernetes-compute.md#existing-split-layout-installations).
 
 ## Contract and source touchpoints
 
@@ -37,6 +39,39 @@ inequality. Ownership, Secret UID and revision guards continue to apply.
 - [x] Extend existing credential, ownership and real-cluster lifecycle tests.
 - [x] Update current architecture, references, guides and topology flow.
 - [x] Run focused conformance, type/lint/format/docs and real-cluster checks.
+
+## Review follow-up
+
+- [x] Merge `ad15e741` without reverting single-cluster placement; preserve the
+      bounded runtime-image observation and worker liveness checks from main.
+- [x] Handle concurrent legacy password creation by accepting only an exact-owned
+      Secret with identical bytes; retain refusal of foreign or conflicting sources.
+- [x] Reject an unsafe in-place split-layout upgrade in API/worker startup preflight,
+      before tenant reconciliation can add a duplicate storage label or create empty
+      replacement state. Inspect all namespace pages and document retained resources.
+- [x] Use explicit upgrade refusal, as permitted by the repository's compatibility
+      boundary. Automatic transfer of existing volumes and UID-bound references
+      remains unsupported; the guard and operator instructions state that limit.
+- [x] Run the selected real-cluster proof and focused local checks for the merged
+      implementation; required GitHub CI is checked separately before merge.
+
+The namespace tradeoff remains unchanged: namespace workload managers are trusted
+for both roles. This follow-up does not restore a separate single-cluster target.
+
+### Review follow-up verification
+
+The merged implementation passes 271 focused contracts with zero failures and
+one macOS argument-size skip. Typecheck, focused lint/format, workspace/module
+boundaries, flow structure, docs and spec checks pass. All four real Kubernetes
+fixture cases pass without skips on disposable K3s 1.35.8 and PostgreSQL, including
+legacy-layout startup refusal, lifecycle/network isolation, adopted namespace
+preservation, provisioning and authenticated API/worker deployment. Total runtime
+is 410.6 seconds. The old implementation fails both new conformance regressions:
+HTTP 409 for identical concurrent password creation and missing rejection of
+legacy storage on a later namespace page. The real-cluster lifecycle case also
+fails with missing expected rejection when run against the old preflight.
+Historical native model receipts below
+predate this merge; these current fixtures do not prove native model execution.
 
 ## Verification
 

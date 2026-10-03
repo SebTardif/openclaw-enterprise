@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
-import { promisify } from "node:util";
+import { isDeepStrictEqual, promisify } from "node:util";
 import pg from "pg";
 import { NativeIAMDriver } from "../../packages/iam/src/index.ts";
 import { PostgresPlatformState } from "../../packages/occ/src/index.ts";
@@ -27,7 +27,10 @@ import { createGatewayNodeEnrollment } from "../../apps/controller/src/gateway/n
 import { authenticatedHeaders, signInToControllerApp } from "../helpers/auth-session.mjs";
 import { ensureDevelopmentBootstrap } from "../helpers/bootstrap-installation.mjs";
 import {
+  assertProbeDenied,
   createKubernetesFixtureHarnessAuth,
+  inlineProbeCommand,
+  retryKubectlRead,
   validateExplicitK3dLoopbackContext,
 } from "../helpers/kubernetes-real.mjs";
 import { createInstallationDriverConfiguration } from "../helpers/installation-driver-configuration.mjs";
@@ -54,6 +57,10 @@ const requiresKubernetesAndPostgres = {
 
 const driverPath = "../../apps/controller/src/drivers/compute/kubernetes/index.ts";
 const configurationIds = new Map();
+const probeSource = await readFile(
+  new URL("../fixtures/kubernetes/probe.mjs", import.meta.url),
+  "utf8",
+);
 const harnessAuthentication = new Map();
 const sharedWorkspaceSize = "40Gi";
 
@@ -70,16 +77,23 @@ async function kubectl(...args) {
   return stdout;
 }
 
+// A get, or an exec that only reads, survives a dropped API server or kubelet
+// stream (finding 308: an exec into a Ready gateway Pod failed with
+// "error: EOF"). Commands that change state stay single-shot.
+function kubectlRead(...args) {
+  return retryKubectlRead(() => kubectl(...args));
+}
+
 async function resource(kind, name, namespace) {
   const args = ["get", kind, name, "-o", "json"];
   if (namespace !== undefined) {
     args.push("--namespace", namespace);
   }
-  return JSON.parse(await kubectl(...args));
+  return JSON.parse(await kubectlRead(...args));
 }
 
 async function resources(kind, namespace) {
-  return JSON.parse(await kubectl("get", kind, "--namespace", namespace, "-o", "json")).items;
+  return JSON.parse(await kubectlRead("get", kind, "--namespace", namespace, "-o", "json")).items;
 }
 
 async function missing(kind, name, namespace) {
@@ -518,7 +532,7 @@ async function assertReadyGateway(namespaceName, agentId, namespaceId, snapshot)
     "the Agent's single gateway Pod must be ready",
   );
   if (snapshot !== undefined) {
-    const mountedDocument = await kubectl(
+    const mountedDocument = await kubectlRead(
       "exec",
       gatewayPods[0].metadata.name,
       "--namespace",
@@ -652,7 +666,7 @@ async function createDriver(overrides = {}, selection = {}) {
 
 async function workloadPod(namespaceName, selector) {
   const pods = JSON.parse(
-    await kubectl(
+    await kubectlRead(
       "get",
       "pods",
       "--namespace",
@@ -666,8 +680,8 @@ async function workloadPod(namespaceName, selector) {
   return pods.find((pod) => pod.status.phase === "Running" && pod.status.podIP !== undefined);
 }
 
-async function probe(namespaceName, podName, operation, target, port) {
-  return kubectl(
+function probeArguments(namespaceName, podName, operation, target, port) {
+  return [
     "exec",
     podName,
     "--namespace",
@@ -678,19 +692,34 @@ async function probe(namespaceName, podName, operation, target, port) {
     operation,
     target,
     ...(port === undefined ? [] : [String(port)]),
+  ];
+}
+
+// Every probe only reads, so a dropped exec stream is retried. A probe that
+// ran and failed (including a denial) is thrown to the caller.
+async function probe(namespaceName, podName, operation, target, port) {
+  return kubectlRead(...probeArguments(namespaceName, podName, operation, target, port));
+}
+
+// Passes only when the probe itself reports a refused, unreachable, or
+// unanswered connection (finding 334): a dropped exec stream, a missing probe
+// script, or a DNS failure is not proof that a NetworkPolicy denied traffic.
+async function assertDeniedTraffic(description, namespaceName, podName, operation, target, port) {
+  await assertExecDenied(
+    description,
+    probeArguments(namespaceName, podName, operation, target, port),
   );
 }
 
-async function assertDeniedTraffic(description, namespaceName, podName, operation, target, port) {
+// Runs one `kubectl exec` of the probe that a NetworkPolicy must block.
+async function assertExecDenied(description, execArguments) {
   try {
-    await probe(namespaceName, podName, operation, target, port);
-    assert.fail(`${description} unexpectedly succeeded`);
+    await assertProbeDenied(description, () => kubectl(...execArguments));
   } catch (error) {
     if (error.code === "ERR_ASSERTION") {
       error.openclawCiDiagnostic = { kind: "network-policy", stage: description };
-      throw error;
     }
-    assert.equal(error.code, 1, `${description} must be denied by enforced NetworkPolicies`);
+    throw error;
   }
 }
 
@@ -790,28 +819,27 @@ async function createDnsTrafficFixture(context, peer) {
       }),
     ),
   );
-  const script = await readFile(
-    new URL("../fixtures/kubernetes/probe.mjs", import.meta.url),
-    "utf8",
-  );
-  const query = (source, target, protocol, port) =>
-    kubectl(
-      "exec",
-      source.metadata.name,
-      "-n",
-      source.metadata.namespace,
-      "--",
-      "node",
-      "--input-type=module",
-      "-e",
-      script,
-      "probe.mjs",
+  const queryArguments = (source, target, protocol, port) => [
+    "exec",
+    source.metadata.name,
+    "-n",
+    source.metadata.namespace,
+    "--",
+    ...inlineProbeCommand(
+      probeSource,
       `dns-${protocol}`,
       target.status.podIP,
-      String(port),
+      port,
       "openshift-dns.example.test",
+    ),
+  ];
+  const query = (source, target, protocol, port) =>
+    kubectlRead(...queryArguments(source, target, protocol, port));
+  const assertQueryDenied = (description, source, target, protocol, port) =>
+    assertProbeDenied(description, () =>
+      kubectl(...queryArguments(source, target, protocol, port)),
     );
-  return { selected, unselected, control, query };
+  return { selected, unselected, control, query, assertQueryDenied };
 }
 
 async function assertExplicitNetworkProfile(context, namespaceName, sourcePod) {
@@ -1106,6 +1134,36 @@ test(
     assert.equal(driver.implementation, "kubernetes-local");
     // The production preflight must observe the real API server through the same scoped identity
     // used for Namespace lifecycle without reporting the CI-supported 1.35 family as advisory.
+    assert.deepEqual(await driver.preflight(), { warnings: [] });
+
+    // Refuse an existing split layout before controller startup can mutate tenant
+    // labels or create empty replacement state in another namespace.
+    const legacyOwner = namespace("split-upgrade");
+    const legacyName = `oce-gateways-${sha256Hex(legacyOwner.id, 24)}`;
+    await kubectl("create", "namespace", legacyName);
+    try {
+      await kubectl(
+        "label",
+        "namespace",
+        legacyName,
+        "app.kubernetes.io/managed-by=openclaw-enterprise",
+        `openclaw.dev/gateway-namespace=${legacyOwner.id}`,
+      );
+      await kubectl(
+        "annotate",
+        "namespace",
+        legacyName,
+        `openclaw.dev/namespace-id=${legacyOwner.id}`,
+      );
+      const before = await resource("namespace", legacyName);
+      await assert.rejects(driver.preflight(), /Existing split-layout Gateway storage/);
+      const after = await resource("namespace", legacyName);
+      assert.equal(after.metadata.uid, before.metadata.uid);
+      assert.deepEqual(after.metadata.labels, before.metadata.labels);
+      assert.equal(await missing("namespace", kubernetesNamespaceName(legacyOwner.id)), true);
+    } finally {
+      await kubectl("delete", "namespace", legacyName, "--wait=true");
+    }
     assert.deepEqual(await driver.preflight(), { warnings: [] });
 
     const first = namespace("first");
@@ -2964,7 +3022,7 @@ test(
       executionMode = "dedicated",
     ) {
       const placement = placements.get(namespaceId);
-      const output = await kubectl(
+      const output = await kubectlRead(
         "exec",
         `deployment/${executionMode === "embedded" ? gatewayName(agentId) : revisionName(candidate)}`,
         "--namespace",
@@ -3240,50 +3298,70 @@ test(
         const placement = placements.get(namespaceId);
         await assertReadyGateway(placement, agent.id, namespaceId, candidate);
         const imagePath = `/namespaces/${namespaceId}/agents/${agent.id}/runtime-images`;
-        const imageRead = await request("GET", imagePath);
-        assert.equal(imageRead.status, 200, JSON.stringify(imageRead.error));
-        assert.equal(imageRead.data.status, "observed");
-        const observedPods = (
-          await Promise.all(
-            [...new Set([placement, placements.get(namespaceId)])].map((namespace) =>
-              resources("pods", namespace),
-            ),
-          )
-        )
-          .flat()
-          .filter(
-            (pod) =>
-              pod.metadata.labels?.["openclaw.dev/agent"] === agent.id &&
-              pod.metadata.labels?.["openclaw.dev/revision"] === candidate.id &&
-              !pod.metadata.deletionTimestamp,
-          );
-        const expectedImages = observedPods.flatMap((pod) =>
-          [
-            [pod.spec.containers, pod.status.containerStatuses],
-            [pod.spec.initContainers, pod.status.initContainerStatuses],
-            [pod.spec.ephemeralContainers, pod.status.ephemeralContainerStatuses],
-          ].flatMap(([containers = [], statuses = []]) =>
-            containers.map((container) => ({
-              workload: `${pod.metadata.namespace}/${pod.metadata.name}`,
-              container: container.name,
-              image: container.image,
-              imageId: statuses.find((state) => state.name === container.name)?.imageID ?? null,
-            })),
-          ),
-        );
-        assert.ok(expectedImages.length > 0);
         const byContainer = (a, b) =>
           `${a.workload}/${a.container}`.localeCompare(`${b.workload}/${b.container}`);
-        assert.deepEqual(
-          imageRead.data.images
-            .map(({ commit, openclawCommit, ...identity }) => {
-              assert.ok(commit === null || /^[a-f0-9]{40}$/.test(commit));
-              assert.ok(openclawCommit === null || /^[a-f0-9]{40}$/.test(openclawCommit));
-              return identity;
-            })
-            .sort(byContainer),
-          expectedImages.sort(byContainer),
-        );
+        const podImages = async () =>
+          (await resources("pods", placement))
+            .filter(
+              (pod) =>
+                pod.metadata.labels?.["openclaw.dev/agent"] === agent.id &&
+                pod.metadata.labels?.["openclaw.dev/revision"] === candidate.id &&
+                !pod.metadata.deletionTimestamp,
+            )
+            .flatMap((pod) =>
+              [
+                [pod.spec.containers, pod.status.containerStatuses],
+                [pod.spec.initContainers, pod.status.initContainerStatuses],
+                [pod.spec.ephemeralContainers, pod.status.ephemeralContainerStatuses],
+              ].flatMap(([containers = [], statuses = []]) =>
+                containers.map((container) => ({
+                  workload: `${pod.metadata.namespace}/${pod.metadata.name}`,
+                  container: container.name,
+                  image: container.image,
+                  // Kubernetes reports an unknown image ID as "", which the API returns as null.
+                  imageId: statuses.find((state) => state.name === container.name)?.imageID || null,
+                })),
+              ),
+            )
+            .sort(byContainer);
+        // The read lists live Pods through the Kubernetes API on every call, and its
+        // contract reports a failed Kubernetes read as 503 DEPENDENCY_UNAVAILABLE for
+        // the caller to retry, so activation cannot make a single read infallible.
+        // Pod snapshots taken before and after each read bound what it could see:
+        // when they agree the Pods did not change, and the API must match exactly.
+        const imagesDeadline = Date.now() + 60_000;
+        for (;;) {
+          const before = await podImages();
+          const imageRead = await request("GET", imagePath);
+          const after = await podImages();
+          const retry = Date.now() < imagesDeadline;
+          if (
+            retry &&
+            imageRead.status === 503 &&
+            imageRead.error?.code === "DEPENDENCY_UNAVAILABLE"
+          ) {
+            await delay(500);
+            continue;
+          }
+          assert.equal(imageRead.status, 200, JSON.stringify(imageRead.error));
+          assert.equal(imageRead.data.status, "observed");
+          if (retry && !isDeepStrictEqual(before, after)) {
+            await delay(500);
+            continue;
+          }
+          assert.ok(after.length > 0);
+          assert.deepEqual(
+            imageRead.data.images
+              .map(({ commit, openclawCommit, ...identity }) => {
+                assert.ok(commit === null || /^[a-f0-9]{40}$/.test(commit));
+                assert.ok(openclawCommit === null || /^[a-f0-9]{40}$/.test(openclawCommit));
+                return identity;
+              })
+              .sort(byContainer),
+            after,
+          );
+          break;
+        }
         assert.equal((await request("GET", imagePath, undefined, { session: false })).status, 401);
         if (runtimeImage !== undefined) {
           // These bytes came through normal HTTP creation, PostgreSQL and the worker;
@@ -3333,7 +3411,7 @@ test(
               ),
             );
             const script = `const expected=${JSON.stringify(agent.boundSecretValue)};process.stdout.write(process.env.BOUND_SENTINEL===expected?"matched":"missing")`;
-            const observedSecret = await kubectl(
+            const observedSecret = await kubectlRead(
               "exec",
               pod.metadata.name,
               "--namespace",
@@ -3421,14 +3499,12 @@ test(
           [dns.selected, 5354],
           [dns.unselected, 5353],
         ]) {
-          await assert.rejects(
-            dns.query(source, target, protocol, port),
-            (error) => {
-              assert.equal(error.code, 1);
-              assert.match(error.stderr, /ETIMEOUT|ETIMEDOUT|timed out|ECONNREFUSED/);
-              return true;
-            },
-            `${source.metadata.name} must not reach ${target.metadata.name} over ${protocol} port ${port}`,
+          await dns.assertQueryDenied(
+            `DNS from ${source.metadata.name} to ${target.metadata.name} over ${protocol} port ${port}`,
+            source,
+            target,
+            protocol,
+            port,
           );
         }
         assert.equal(
@@ -3569,26 +3645,27 @@ test(
       const env = firstGateway.spec.template.spec.containers[0].env;
       const transportUrl = env.find(({ name }) => name === "APP_SERVER_URL").value;
       assert.equal(new URL(transportUrl).hostname, `${agentName(first.id)}.${dataTarget}.svc`);
-      async function connectFromGateway(target) {
-        return kubectl(
-          "exec",
-          `deployment/${gatewayName(first.id)}`,
-          "--namespace",
-          gatewayTarget,
-          "-c",
-          "gateway",
-          "--",
-          "node",
-          "-e",
-          `const net=require('node:net'); const s=net.connect({host:${JSON.stringify(target)},port:18790}); s.setTimeout(3000); s.on('connect',()=>{s.destroy();process.exit(0)}); s.on('timeout',()=>process.exit(1)); s.on('error',()=>process.exit(1));`,
-        );
-      }
-      await connectFromGateway(new URL(transportUrl).hostname);
-      for (const forbidden of [
-        `${agentName(second.id)}.${dataTarget}.svc`,
-        `${agentName(separateTenant.id)}.${placements.get(namespaceIds[1])}.svc`,
+      const gatewayConnectArguments = (target) => [
+        "exec",
+        `deployment/${gatewayName(first.id)}`,
+        "--namespace",
+        gatewayTarget,
+        "-c",
+        "gateway",
+        "--",
+        ...inlineProbeCommand(probeSource, "tcp", target, 18790),
+      ];
+      await kubectlRead(...gatewayConnectArguments(new URL(transportUrl).hostname));
+      // Finding 335: only the probe's own refused or unanswered connection is a
+      // denial, never a DNS error or a dropped exec stream.
+      for (const [description, forbidden] of [
+        ["same-tenant gateway-to-Agent traffic", `${agentName(second.id)}.${dataTarget}.svc`],
+        [
+          "cross-tenant gateway-to-Agent traffic",
+          `${agentName(separateTenant.id)}.${placements.get(namespaceIds[1])}.svc`,
+        ],
       ]) {
-        await assert.rejects(connectFromGateway(forbidden), (error) => error.code === 1);
+        await assertExecDenied(description, gatewayConnectArguments(forbidden));
       }
     }
 
@@ -3790,7 +3867,7 @@ test(
       ),
     );
     assert.equal(
-      await kubectl(
+      await kubectlRead(
         "exec",
         restartedPod.metadata.name,
         "--namespace",
@@ -3899,7 +3976,7 @@ test(
       replacementClaim.metadata.uid,
     );
     assert.equal(
-      await kubectl(
+      await kubectlRead(
         "exec",
         `deployment/${revisionName(replacement)}`,
         "-n",
@@ -3990,7 +4067,7 @@ test(
         replacementClaim.metadata.uid,
       );
       assert.equal(
-        await kubectl(
+        await kubectlRead(
           "exec",
           `deployment/${revisionName(recovered)}`,
           "-n",

@@ -723,6 +723,7 @@ async function startInClusterControllers(
                   ].includes(name),
                 ),
                 { name: "OCC_WORKER_READINESS_PATH", value: "/var/run/openclaw/ready" },
+                { name: "OCC_WORKER_LIVENESS_PATH", value: "/var/run/openclaw/alive" },
                 {
                   name: "OCC_WORKER_POLL_INTERVAL_MS",
                   value: String(workerOptions.pollIntervalMs),

@@ -3,7 +3,7 @@ title: OpenClaw Enterprise architecture
 authors:
   - Kevin Lin
 created: 2026-07-08
-last_updated: 2026-09-29
+last_updated: 2026-10-03
 ---
 
 # OpenClaw Enterprise architecture
@@ -23,8 +23,8 @@ supported behavior and limits. Source implementation is not proof that a
 particular deployment enforces its networking, storage, or placement requirements.
 
 The API, console, durable worker, PostgreSQL persistence, and Kubernetes packaging
-are implemented. Dedicated Kubernetes execution separates Gateway and Harness
-namespaces, identities, and storage. External access-gateway admission, workload
+are implemented. Single-cluster Kubernetes execution places Gateway and Harness in one tenant
+namespace with separate Pods, identities and storage. External access-gateway admission, workload
 token authentication to OCC, and general credential-free model inference remain
 planned. The two-cluster profile is experimental.
 
@@ -63,7 +63,7 @@ The API serves the console and authorized resource operations. An independent
 worker claims durable work and invokes selected Drivers. PostgreSQL stores
 platform state, IAM policy, controller work, and audit evidence.
 
-The diagram shows implemented Kubernetes relationships. Each Agent chooses
+The diagram shows implemented single-cluster Kubernetes relationships. Each Agent chooses
 embedded or dedicated execution. Optional and experimental integrations are
 described below rather than implied by the diagram.
 
@@ -92,10 +92,8 @@ flowchart TB
         WORKER["<b>Controller worker</b><br/>Reconciliation"]
         COMPUTE["<b>Compute Driver</b><br/>Runtime lifecycle"]
     end
-    subgraph CP["Tenant control-plane runtime namespace"]
+    subgraph TENANT["Tenant namespace"]
         GATEWAY["<b>Dedicated Gateway</b><br/>Private state and identity"]
-    end
-    subgraph DP["Tenant data-plane namespace"]
         HARNESS["<b>Dedicated Harness</b><br/>Workspace and model credential"]
         EMBEDDED["<b>Embedded OpenClaw</b><br/>Gateway and Harness"]
     end
@@ -116,8 +114,7 @@ flowchart TB
     class GATEWAY,HARNESS,EMBEDDED runtime
     class USER external
     style OCC fill:#fafafa,stroke:#b7bec6,stroke-width:1px
-    style CP fill:#fafafa,stroke:#b7bec6,stroke-width:1px
-    style DP fill:#fafafa,stroke:#b7bec6,stroke-width:1px
+    style TENANT fill:#fafafa,stroke:#b7bec6,stroke-width:1px
 ```
 
 ## Platform resources

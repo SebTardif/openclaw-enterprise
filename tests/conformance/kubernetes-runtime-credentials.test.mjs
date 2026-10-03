@@ -357,6 +357,54 @@ test("legacy combined credentials remain usable without removing the serving Gat
   );
 });
 
+test("concurrent legacy password delivery accepts only an identical owned source", async () => {
+  for (const outcome of ["identical", "different", "foreign", "disappeared", "unavailable"]) {
+    const initial = credentialFixture();
+    const name = `transport-${digest(agent.id)}`;
+    const secrets = {
+      [name]: runtimeSecret(initial.driver, initial.namespaceName, "transport", {
+        "app-server-token": "legacy-transport",
+        "gateway-password": "legacy-password",
+      }),
+    };
+    const fixture = credentialFixture({ secrets });
+    const { core } = await fixture.driver.apiClients;
+    const create = core.createNamespacedSecret.bind(core);
+    core.createNamespacedSecret = async (request) => {
+      if (outcome === "unavailable") {
+        throw httpError(503);
+      }
+      if (outcome !== "disappeared") {
+        const competitor = structuredClone(request);
+        if (outcome === "different") {
+          competitor.body.data["gateway-password"] = encode("another-password");
+        }
+        if (outcome === "foreign") {
+          competitor.body.metadata.labels["openclaw.dev/agent"] = "another-agent";
+          competitor.body.metadata.annotations["openclaw.dev/agent-id"] = "another-agent";
+        }
+        await create(competitor);
+      }
+      throw httpError(409);
+    };
+    const original = structuredClone(secrets[name]);
+    const delivery = () =>
+      fixture.driver.ensureLegacyGatewayPassword(
+        { namespaceId: namespace.id, agentId: agent.id },
+        { name: fixture.namespaceName, plane: "control" },
+      );
+    if (outcome === "identical") {
+      await delivery();
+      assert.deepEqual(secrets[`gateway-password-${digest(agent.id)}`].data, {
+        "gateway-password": original.data["gateway-password"],
+      });
+    } else {
+      await assert.rejects(delivery());
+    }
+    assert.deepEqual(secrets[name], original, `${outcome}: preserve the serving Gateway source`);
+  }
+});
+
 test("mocked Kubernetes client deletes every owned Agent runtime credential Secret idempotently", async () => {
   const first = credentialFixture();
   const secrets = {

@@ -22,7 +22,8 @@ import { loadTestSuites } from "./test-suites.mjs";
 import { cleanupResourceIds } from "./cleanup.mjs";
 import { captureK3dDiagnostics, k3dHostMetrics } from "./k3d-diagnostics.mjs";
 import { prepareGatewayRouting } from "./routing.mjs";
-import { prepareLogging } from "./logging.mjs";
+import { prepareLogging, readDefaultCollectorImage } from "./logging.mjs";
+import { pullImage } from "./image-pull.mjs";
 import {
   prepareRepositoryCredentials,
   prepareRepositoryCredentialsFile,
@@ -50,6 +51,12 @@ const fixtureLanes = new Set([
   "k3d-fixture-state",
   "k3d-fixture-plugins",
 ]);
+// Ordinary k3d lanes pin the K3s node image by digest so cluster creation
+// never depends on k3d's online release-channel lookup (update.k3s.io). Bump
+// it deliberately to a newer v1.35 patch; OPENCLAW_CI_K3S_IMAGE still
+// overrides it with another immutable reference.
+const defaultK3sImage =
+  "docker.io/rancher/k3s:v1.35.9-k3s1@sha256:ec9868c6a38d4e8c1869832fb5fd1eb8473c39794a0b44d2b952e7ba911951bc";
 const nativeIAMBarrierFile = "tests/integration/postgres-native-iam-policy-barrier.test.mjs";
 const productionUpgradeImages = {
   OCC_TEST_PRODUCTION_UPGRADE_CONTROLLER_IMAGE: "OCC_TEST_PRODUCTION_CONTROLLER_IMAGE",
@@ -627,6 +634,15 @@ function assertImmutableOptionalEnvImages(names, env = process.env) {
 
 async function validateLaneInputsBeforeSideEffects(lane, env = {}) {
   const name = laneName(lane);
+  // TODO: Remove this refusal once installed repository qualification can remove its
+  // remote branch and pull request only while they still match what the run created.
+  // Refuse before prerequisite checks so operators do not provision inputs for it. When
+  // removing it, restore the input-validation cases this refusal replaced in ci-prepare.test.mjs.
+  if (name === "repository-credentials-installed") {
+    throw new Error(
+      "Installed repository qualification is temporarily unavailable until safe remote cleanup is supported.",
+    );
+  }
   const prepare = lanePrepare(name);
   const effectiveEnv = effectiveLaneEnv(name, env);
   if (prepare.k3d && name !== "openshell" && effectiveEnv.OPENCLAW_CI_K3S_IMAGE) {
@@ -918,9 +934,9 @@ async function ensureK3dCluster(statePath, state) {
       `k3d-${cluster}-server-0`,
       ...(crossNodePluginStatus ? [`k3d-${cluster}-agent-0`] : []),
     ],
-    // An explicit digest bypasses k3d's online release-channel lookup. The
+    // A digest-pinned image bypasses k3d's online release-channel lookup. The
     // running API server must still satisfy the ordinary Kubernetes 1.35 gate.
-    ...(!openShell ? { nodeImage: process.env.OPENCLAW_CI_K3S_IMAGE || "+v1.35" } : {}),
+    ...(!openShell ? { nodeImage: process.env.OPENCLAW_CI_K3S_IMAGE || defaultK3sImage } : {}),
   });
   await writeState(statePath, state);
   if (openShell) {
@@ -1432,7 +1448,7 @@ async function ensureDockerSourceImage(state, image, envName) {
       throw error;
     }
   }
-  await execFile(process.env.OCC_DOCKER_BIN ?? "docker", ["pull", image]);
+  await pullImage(image, { execFile, docker: process.env.OCC_DOCKER_BIN ?? "docker" });
   if (!(await dockerImageHasRepoDigest(image))) {
     throw new Error(`${envName} pull did not materialize the requested registry digest.`);
   }
@@ -2237,8 +2253,29 @@ async function prepareLane({ lane, statePath }) {
       );
       break;
     }
+    case "logging-collector": {
+      // The tests start these containers themselves under a 120 s command
+      // timeout, so pull the pinned images here, where a slow or failed pull
+      // is retried. An unpinned local override is still pulled by the test.
+      const images = {
+        OCC_TEST_LOGGING_COLLECTOR_IMAGE: await readDefaultCollectorImage(),
+        OCC_TEST_LOGGING_NODE_IMAGE: effectiveLaneEnv(name, env).OCC_TEST_LOGGING_NODE_IMAGE,
+      };
+      await timedPreparation(name, "image-pulls", () =>
+        prepareTogether(
+          Object.entries(images)
+            .filter(([, image]) => immutableDigest(image))
+            .map(
+              ([variable, image]) =>
+                () =>
+                  ensureDockerSourceImage(state, image, variable),
+            ),
+          2,
+        ),
+      );
+      break;
+    }
     case "helper-timeout":
-    case "logging-collector":
       break;
   }
 
@@ -2419,7 +2456,7 @@ async function main() {
   );
 }
 
-export { prepareFile, prepareLane };
+export { defaultK3sImage, prepareFile, prepareLane };
 
 if (import.meta.url === `file://${process.argv[1]}`) {
   main().catch((error) => {
