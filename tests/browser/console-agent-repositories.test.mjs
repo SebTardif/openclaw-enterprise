@@ -1,9 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import test from "node:test";
-import { FilesystemConfigurationDriver } from "../../apps/controller/src/drivers/configuration/filesystem/index.ts";
 import {
   CodexPluginDriver,
   OCCPluginDriver,
@@ -19,6 +15,7 @@ import {
   newPage,
   pathRequests,
   repositoryCheckbox,
+  useFilesystemConfigurationDriver,
   waitForCondition,
 } from "./console-agents-browser-helpers.mjs";
 import {
@@ -330,11 +327,7 @@ test("Preset repository access and plugin policies remain independent during Age
   const pluginDriver = new OCCPluginDriver();
   fixture.controller.registerDriver(pluginDriver);
   fixture.controller.selectDriver("plugin", pluginDriver.id);
-  const root = await mkdtemp(join(tmpdir(), "occ-repository-plugin-preset-"));
-  t.after(() => rm(root, { recursive: true, force: true }));
-  const configurationDriver = new FilesystemConfigurationDriver(root);
-  fixture.controller.registerDriver(configurationDriver);
-  fixture.controller.selectDriver("configuration", configurationDriver.id);
+  await useFilesystemConfigurationDriver(t, fixture, "occ-repository-plugin-preset-");
   const secret = await fixture.createSecret(namespace.id, "Model key", "preset-plugin-model-key");
   const pluginId = "occ-plugin:diffs";
   const preset = await fixture.request("POST", `/namespaces/${namespace.id}/presets`, {
@@ -401,11 +394,7 @@ test("Repository recovery preserves and updates hosted plugin policy before retr
   const pluginDriver = new CodexPluginDriver();
   fixture.controller.registerDriver(pluginDriver);
   fixture.controller.selectDriver("plugin", pluginDriver.id);
-  const root = await mkdtemp(join(tmpdir(), "occ-repository-plugin-recovery-"));
-  t.after(() => rm(root, { recursive: true, force: true }));
-  const configurationDriver = new FilesystemConfigurationDriver(root);
-  fixture.controller.registerDriver(configurationDriver);
-  fixture.controller.selectDriver("configuration", configurationDriver.id);
+  await useFilesystemConfigurationDriver(t, fixture, "occ-repository-plugin-recovery-");
   const secret = await fixture.createSecret(namespace.id, "Model key", "preset-plugin-model-key");
   const pluginId = "codex-plugin:knowledge@openai-curated-remote";
   const initialPlugins = {

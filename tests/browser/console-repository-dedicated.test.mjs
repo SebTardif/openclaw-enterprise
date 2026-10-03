@@ -1,15 +1,12 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import test from "node:test";
-import { FilesystemConfigurationDriver } from "../../apps/controller/src/drivers/configuration/filesystem/index.ts";
 import { createConsoleRepositoryLaunchFixture } from "../helpers/console-repository-launch.mjs";
 import {
   login,
   newPage,
   repositoryCheckbox,
   setSlackSelection,
+  useFilesystemConfigurationDriver,
 } from "./console-agents-browser-helpers.mjs";
 import { openCreateSecretDialog } from "./console-agents-test-support.mjs";
 import { createHarnessConfiguration } from "../helpers/harness-configuration.mjs";
@@ -18,11 +15,7 @@ for (const issuesEnabled of [true, false]) {
   test(`one Dedicated Agent retains repository scope through Slack setup, credentials and deployment admission (issues ${issuesEnabled ? "on" : "off"})`, async (t) => {
     const { fixture, namespace, modelSecret, grantModelAccess } =
       await createConsoleRepositoryLaunchFixture(t);
-    const root = await mkdtemp(join(tmpdir(), "occ-repository-preset-"));
-    t.after(() => rm(root, { recursive: true, force: true }));
-    const configurationDriver = new FilesystemConfigurationDriver(root);
-    fixture.controller.registerDriver(configurationDriver);
-    fixture.controller.selectDriver("configuration", configurationDriver.id);
+    await useFilesystemConfigurationDriver(t, fixture, "occ-repository-preset-");
     const preset = await fixture.request("POST", `/namespaces/${namespace.id}/presets`, {
       body: {
         name: "Repository teammate",

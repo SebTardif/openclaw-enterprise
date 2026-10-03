@@ -1,10 +1,7 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-import { FilesystemConfigurationDriver } from "../../apps/controller/src/drivers/configuration/filesystem/index.ts";
 import {
   CodexPluginDriver,
   OCCPluginDriver,
@@ -29,6 +26,7 @@ import {
   secretPostRequests,
   selectSecret,
   trackSettledFetches,
+  useFilesystemConfigurationDriver,
   waitForInputValue,
   waitForSettledFetches,
 } from "./console-agents-browser-helpers.mjs";
@@ -44,11 +42,7 @@ import {
 
 test("Runtime-auth Presets retain OpenClaw when changing from Anthropic to OpenAI", async (t) => {
   const { fixture, namespace } = await createRuntimeAuthFixture(t, "Runtime Preset providers");
-  const root = await mkdtemp(join(tmpdir(), "occ-runtime-provider-preset-"));
-  t.after(() => rm(root, { recursive: true, force: true }));
-  const configurationDriver = new FilesystemConfigurationDriver(root);
-  fixture.controller.registerDriver(configurationDriver);
-  fixture.controller.selectDriver("configuration", configurationDriver.id);
+  await useFilesystemConfigurationDriver(t, fixture, "occ-runtime-provider-preset-");
   const primary = "anthropic/claude-runtime-model";
   const values = nativeValues("runtime-preset");
   values.agents.defaults.model = primary;
@@ -752,11 +746,7 @@ test("Agent creation edits Preset plugin policies through the modal and persists
   const pluginDriver = new CodexPluginDriver();
   fixture.controller.registerDriver(pluginDriver);
   fixture.controller.selectDriver("plugin", pluginDriver.id);
-  const root = await mkdtemp(join(tmpdir(), "occ-plugin-policy-preset-"));
-  t.after(() => rm(root, { recursive: true, force: true }));
-  const configurationDriver = new FilesystemConfigurationDriver(root);
-  fixture.controller.registerDriver(configurationDriver);
-  fixture.controller.selectDriver("configuration", configurationDriver.id);
+  await useFilesystemConfigurationDriver(t, fixture, "occ-plugin-policy-preset-");
   const namespace = await fixture.createNamespace("Plugin policy authoring", { ready: true });
   const secret = await fixture.createSecret(namespace.id, "Model key", "preset-plugin-model-key");
   const pluginId = "codex-plugin:knowledge@openai-curated-remote";
@@ -987,11 +977,7 @@ test("Plugin approval choices explain unsupported provider modes and preserve th
 test("API-key Presets keep their credential provider fixed while allowing model and runtime changes", async (t) => {
   const fixture = await createConsoleAppFixture(t);
   await fixture.bootstrap();
-  const root = await mkdtemp(join(tmpdir(), "occ-bound-provider-preset-"));
-  t.after(() => rm(root, { recursive: true, force: true }));
-  const configurationDriver = new FilesystemConfigurationDriver(root);
-  fixture.controller.registerDriver(configurationDriver);
-  fixture.controller.selectDriver("configuration", configurationDriver.id);
+  await useFilesystemConfigurationDriver(t, fixture, "occ-bound-provider-preset-");
   const namespace = await fixture.createNamespace("Bound provider Preset", { ready: true });
   const secret = await fixture.createSecret(namespace.id, "OpenAI model key", "preset-model-key");
   const harnessAuth = { method: "api_key", source: secret.ref };
@@ -1063,11 +1049,7 @@ test("API-key Presets keep their credential provider fixed while allowing model 
 test("Dedicated OpenClaw Presets preserve custom provider transport across execution mode changes", async (t) => {
   const fixture = await createConsoleAppFixture(t);
   await fixture.bootstrap();
-  const root = await mkdtemp(join(tmpdir(), "occ-dedicated-openclaw-preset-"));
-  t.after(() => rm(root, { recursive: true, force: true }));
-  const configurationDriver = new FilesystemConfigurationDriver(root);
-  fixture.controller.registerDriver(configurationDriver);
-  fixture.controller.selectDriver("configuration", configurationDriver.id);
+  await useFilesystemConfigurationDriver(t, fixture, "occ-dedicated-openclaw-preset-");
   const namespace = await fixture.createNamespace("Dedicated OpenClaw Preset", { ready: true });
   const secret = await fixture.createSecret(namespace.id, "OpenAI model key", "dedicated-key");
   const harnessAuth = { method: "api_key", source: secret.ref };
@@ -1151,11 +1133,7 @@ test("Dedicated OpenClaw Presets preserve custom provider transport across execu
 test("Partial Presets without a model policy retain the default Codex harness", async (t) => {
   const fixture = await createConsoleAppFixture(t);
   await fixture.bootstrap();
-  const root = await mkdtemp(join(tmpdir(), "occ-partial-preset-"));
-  t.after(() => rm(root, { recursive: true, force: true }));
-  const configurationDriver = new FilesystemConfigurationDriver(root);
-  fixture.controller.registerDriver(configurationDriver);
-  fixture.controller.selectDriver("configuration", configurationDriver.id);
+  await useFilesystemConfigurationDriver(t, fixture, "occ-partial-preset-");
   const namespace = await fixture.createNamespace("Partial model Preset", { ready: true });
   const preset = await fixture.request("POST", `/namespaces/${namespace.id}/presets`, {
     body: {
@@ -1204,12 +1182,8 @@ test("Presets render variables into independent Agent drafts and keep partial-sa
   const pluginDriver = new CodexPluginDriver();
   fixture.controller.registerDriver(pluginDriver);
   fixture.controller.selectDriver("plugin", pluginDriver.id);
-  const root = await mkdtemp(join(tmpdir(), "occ-preset-browser-"));
-  t.after(() => rm(root, { recursive: true, force: true }));
   // Use production Configuration admission, including native credential restrictions.
-  const configurationDriver = new FilesystemConfigurationDriver(root);
-  fixture.controller.registerDriver(configurationDriver);
-  fixture.controller.selectDriver("configuration", configurationDriver.id);
+  await useFilesystemConfigurationDriver(t, fixture, "occ-preset-browser-");
   const namespace = await fixture.createNamespace("Preset authoring", { ready: true });
   const secret = await fixture.createSecret(
     namespace.id,
@@ -1505,11 +1479,7 @@ test("Presets render variables into independent Agent drafts and keep partial-sa
 test("standard Codex password Preset creates one scoped Secret and reuses it after an Agent conflict", async (t) => {
   const fixture = await createConsoleAppFixture(t);
   await fixture.bootstrap();
-  const root = await mkdtemp(join(tmpdir(), "occ-password-preset-"));
-  t.after(() => rm(root, { recursive: true, force: true }));
-  const configurationDriver = new FilesystemConfigurationDriver(root);
-  fixture.controller.registerDriver(configurationDriver);
-  fixture.controller.selectDriver("configuration", configurationDriver.id);
+  await useFilesystemConfigurationDriver(t, fixture, "occ-password-preset-");
   const namespace = await fixture.createNamespace("Password Preset", { ready: true });
   await fixture.createAgent(namespace.id, "Existing Agent");
   const artifact = JSON.parse(
@@ -1594,11 +1564,7 @@ test("standard Codex password Preset creates one scoped Secret and reuses it aft
 test("Preset marks referenced variables without defaults as required before rendering", async (t) => {
   const fixture = await createConsoleAppFixture(t);
   await fixture.bootstrap();
-  const root = await mkdtemp(join(tmpdir(), "occ-required-preset-"));
-  t.after(() => rm(root, { recursive: true, force: true }));
-  const configurationDriver = new FilesystemConfigurationDriver(root);
-  fixture.controller.registerDriver(configurationDriver);
-  fixture.controller.selectDriver("configuration", configurationDriver.id);
+  await useFilesystemConfigurationDriver(t, fixture, "occ-required-preset-");
   const namespace = await fixture.createNamespace("Required Preset variables", { ready: true });
   const artifact = JSON.parse(
     await readFile(new URL("../../deploy/presets/standard-codex.json", import.meta.url), "utf8"),
@@ -1640,11 +1606,7 @@ test("Preset marks referenced variables without defaults as required before rend
 test("Preset with a prebound model Secret grants the created draft access", async (t) => {
   const fixture = await createConsoleAppFixture(t);
   await fixture.bootstrap();
-  const root = await mkdtemp(join(tmpdir(), "occ-bound-secret-preset-"));
-  t.after(() => rm(root, { recursive: true, force: true }));
-  const configurationDriver = new FilesystemConfigurationDriver(root);
-  fixture.controller.registerDriver(configurationDriver);
-  fixture.controller.selectDriver("configuration", configurationDriver.id);
+  await useFilesystemConfigurationDriver(t, fixture, "occ-bound-secret-preset-");
   const namespace = await fixture.createNamespace("Bound Secret Preset", { ready: true });
   const modelSecret = await fixture.createSecret(namespace.id, "Model token", "hidden-model-token");
   const artifact = JSON.parse(
@@ -1695,11 +1657,7 @@ test("Preset with a prebound model Secret grants the created draft access", asyn
 test("password Preset can reuse an existing Secret and retry an uncertain grant without duplicate writes", async (t) => {
   const fixture = await createConsoleAppFixture(t);
   await fixture.bootstrap();
-  const root = await mkdtemp(join(tmpdir(), "occ-existing-secret-preset-"));
-  t.after(() => rm(root, { recursive: true, force: true }));
-  const configurationDriver = new FilesystemConfigurationDriver(root);
-  fixture.controller.registerDriver(configurationDriver);
-  fixture.controller.selectDriver("configuration", configurationDriver.id);
+  await useFilesystemConfigurationDriver(t, fixture, "occ-existing-secret-preset-");
   const namespace = await fixture.createNamespace("Existing Secret Preset", { ready: true });
   const modelSecret = await fixture.createSecret(
     namespace.id,
@@ -1776,11 +1734,7 @@ test("password Preset can reuse an existing Secret and retry an uncertain grant 
 test("codex_pat password Preset creates one Secret and reuses it after an Agent conflict", async (t) => {
   const fixture = await createConsoleAppFixture(t);
   await fixture.bootstrap();
-  const root = await mkdtemp(join(tmpdir(), "occ-codex-pat-preset-"));
-  t.after(() => rm(root, { recursive: true, force: true }));
-  const configurationDriver = new FilesystemConfigurationDriver(root);
-  fixture.controller.registerDriver(configurationDriver);
-  fixture.controller.selectDriver("configuration", configurationDriver.id);
+  await useFilesystemConfigurationDriver(t, fixture, "occ-codex-pat-preset-");
   const namespace = await fixture.createNamespace("Codex PAT Preset", { ready: true });
   await fixture.createAgent(namespace.id, "Existing Codex Agent");
   const artifact = JSON.parse(
@@ -1836,11 +1790,7 @@ test("codex_pat password Preset creates one Secret and reuses it after an Agent 
 test("password Preset names the taken Secret when an earlier Agent left one with the same name", async (t) => {
   const fixture = await createConsoleAppFixture(t);
   await fixture.bootstrap();
-  const root = await mkdtemp(join(tmpdir(), "occ-secret-name-conflict-"));
-  t.after(() => rm(root, { recursive: true, force: true }));
-  const configurationDriver = new FilesystemConfigurationDriver(root);
-  fixture.controller.registerDriver(configurationDriver);
-  fixture.controller.selectDriver("configuration", configurationDriver.id);
+  await useFilesystemConfigurationDriver(t, fixture, "occ-secret-name-conflict-");
   const namespace = await fixture.createNamespace("Secret name conflict", { ready: true });
   // Deleting an Agent keeps its model Secret, which is named after the Agent.
   await fixture.createSecret(namespace.id, "Recreated Agent", "earlier-model-key");
@@ -1897,11 +1847,7 @@ test("password Preset names the taken Secret when an earlier Agent left one with
 test("method-only codex_pat Preset requires credential entry in the create form", async (t) => {
   const fixture = await createConsoleAppFixture(t);
   await fixture.bootstrap();
-  const root = await mkdtemp(join(tmpdir(), "occ-method-only-preset-"));
-  t.after(() => rm(root, { recursive: true, force: true }));
-  const configurationDriver = new FilesystemConfigurationDriver(root);
-  fixture.controller.registerDriver(configurationDriver);
-  fixture.controller.selectDriver("configuration", configurationDriver.id);
+  await useFilesystemConfigurationDriver(t, fixture, "occ-method-only-preset-");
   const namespace = await fixture.createNamespace("Method-only preset", { ready: true });
   const modelSecret = await fixture.createSecret(
     namespace.id,
@@ -2078,11 +2024,7 @@ test("Create Agent reuses its PAT Secret and resumes plugin prefetch after an Ag
 test("Preset Secret picker preserves existing mode on catalog failure and can switch to new", async (t) => {
   const fixture = await createConsoleAppFixture(t);
   await fixture.bootstrap();
-  const root = await mkdtemp(join(tmpdir(), "occ-catalog-failure-preset-"));
-  t.after(() => rm(root, { recursive: true, force: true }));
-  const configurationDriver = new FilesystemConfigurationDriver(root);
-  fixture.controller.registerDriver(configurationDriver);
-  fixture.controller.selectDriver("configuration", configurationDriver.id);
+  await useFilesystemConfigurationDriver(t, fixture, "occ-catalog-failure-preset-");
   const namespace = await fixture.createNamespace("Preset secret catalog failure", { ready: true });
   const artifact = JSON.parse(
     await readFile(new URL("../../deploy/presets/standard-codex.json", import.meta.url), "utf8"),
@@ -2255,11 +2197,7 @@ test("leaving a no-Preset creation form discards its in-progress state", async (
 test("unsaved Preset drafts retain unfinished edits across navigation until explicit discard", async (t) => {
   const fixture = await createConsoleAppFixture(t);
   await fixture.bootstrap();
-  const root = await mkdtemp(join(tmpdir(), "occ-preset-navigation-"));
-  t.after(() => rm(root, { recursive: true, force: true }));
-  const configurationDriver = new FilesystemConfigurationDriver(root);
-  fixture.controller.registerDriver(configurationDriver);
-  fixture.controller.selectDriver("configuration", configurationDriver.id);
+  await useFilesystemConfigurationDriver(t, fixture, "occ-preset-navigation-");
   const namespace = await fixture.createNamespace("Draft navigation", { ready: true });
   const artifact = JSON.parse(
     await readFile(new URL("../../deploy/presets/standard-codex.json", import.meta.url), "utf8"),

@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { chromium } from "playwright";
 
+import { FilesystemConfigurationDriver } from "../../apps/controller/src/drivers/configuration/filesystem/index.ts";
 import { watchBrowserContext } from "../helpers/browser-failure-diagnostics.mjs";
 import { keepRequestInterceptionEnabled } from "../helpers/browser-request-interception.mjs";
 import { createHarnessConfiguration } from "../helpers/harness-configuration.mjs";
@@ -243,6 +244,16 @@ export async function waitForSettledFetches(page, path, count) {
     ([target, expected]) => globalThis.settledFetchCount(target) >= expected,
     [path, count],
   );
+}
+
+// Production Configuration admission (including native credential restrictions): a filesystem
+// Configuration driver in a temporary directory, selected for the rest of the test.
+export async function useFilesystemConfigurationDriver(t, fixture, prefix) {
+  const root = await mkdtemp(join(tmpdir(), prefix));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const driver = new FilesystemConfigurationDriver(root);
+  fixture.controller.registerDriver(driver);
+  fixture.controller.selectDriver("configuration", driver.id);
 }
 
 export async function waitForCondition(predicate, message, timeoutMs = 5_000) {
