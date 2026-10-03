@@ -8,7 +8,7 @@ status: Proposed
 - **Owner:** freeqaz (proposal). Compute and worker review: Kubernetes Compute maintainers.
 - **Created:** 2026-10-03
 - **Last updated:** 2026-10-03
-- **RFC PR:** pending
+- **RFC PR:** [#1045](https://github.com/openclaw/openclaw-enterprise/pull/1045)
 - **Related:** [Dedicated Harness RWO workspace plan](../plans/38-harness-rwo-workspace-plan.md);
   [exclusive replacement contract](../../docs/reference/drivers/compute.md#production-revision-stages);
   [harness execution](../../docs/reference/harness-execution.md)
