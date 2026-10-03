@@ -253,13 +253,10 @@ OCC_TEST_HARNESS_K3D_REAL=1 OCC_TEST_SLACK_LIVE=0 \
 
 Five non-Slack runtime cases must pass: dedicated Codex, embedded OpenClaw,
 the extended Secret lifecycle case, and durable startup-failure status with
-plugins disabled and enabled. Both topologies use OCC Secret-backed
-Agent `harnessAuth` bindings. The Secret API case verifies native SecretRefs, exact grants and denial,
-shared Secrets, rotation, and redeployment. Same-revision Pod replacement retains
-its existing credential projection; explicit OCE deployment consumes updated
-canonical values. It prepares those Secrets and grants
-itself. Routing, Slack and OTLP cases live in separate files, so this invocation
-contains those five required runtime cases.
+plugins disabled and enabled. Both topologies use Secret-backed Agent `harnessAuth`. The Secret API case prepares
+its grants and tests native SecretRefs, denial, sharing and rotation. Pod recreation
+retains the admitted projection; OCE redeployment refreshes canonical values.
+Routing, Slack and OTLP suites live in separate files.
 
 Embedded cases run the production API and worker in the Node test process.
 Dedicated and routing cases run both as Kubernetes Deployments with separate
@@ -268,15 +265,26 @@ Helm. Missing prerequisites fail selected suites; unselected suites skip.
 The default Codex version is `0.158.0`; see
 [runtime settings](#kubernetes-real-runtime-test-environment) for alternate images.
 
+### Candidate Skill source lifecycle
+
+Use candidate images supporting paired-node Skill uploads and local `zip`:
+
+```sh
+OCC_TEST_SKILL_SOURCE_LIFECYCLE=1 node --env-file="$TEST_ENV_FILE" --test \
+  --test-name-pattern='candidate dedicated Skill source' \
+  tests/integration/harness-topology-k3d-real.test.mjs
+```
+
+Tests source replacement, denied writes preserving bytes/lockfiles and redeploy
+recovery. Unsupported images fail.
+
 ### Transcript persistence
 
-Both Harness topologies require a gateway image that stores transcripts in
-SQLite. The persistence cases query the test conversation through
-`session_nodes` and `transcript_events`, then verify its history and media after
-gateway Pod replacement. An older image that writes JSONL transcripts cannot
-exercise this storage path, even if it uses SQLite for authentication or memory.
-Setting `OCC_TEST_KUBERNETES_OPENCLAW_VERSION` alone does not verify transcript
-storage behavior.
+Both Harness topologies require SQLite transcripts. Persistence cases query
+`session_nodes` and `transcript_events`, then verify conversation history and media
+after gateway Pod replacement. Images with JSONL transcripts cannot exercise
+this path, even with SQLite authentication or memory.
+`OCC_TEST_KUBERNETES_OPENCLAW_VERSION` alone does not verify transcript storage.
 
 For Secret changes, run the API and PostgreSQL suites as well as the real
 Kubernetes runtime cases. Route/schema checks and documentation checks alone do
