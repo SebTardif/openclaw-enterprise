@@ -1,6 +1,6 @@
 ---
 status: Proposed
-status_note: "Retroactive record. The design below is implemented on main (PRs #696 through #811) and awaits human review. No acceptance decision has been recorded; Proposed is the closest allowed status."
+status_note: "Retroactive record. The design below is implemented on main (PRs #696 through #811, with follow-ups through #969) and awaits human review. No acceptance decision has been recorded; Proposed is the closest allowed status."
 ---
 
 # Proposal: Agent runtime status and log reads
@@ -8,14 +8,15 @@ status_note: "Retroactive record. The design below is implemented on main (PRs #
 - **ID:** RFC-0048
 - **Owner:** needs a human owner; this record was written from the landed PRs
 - **Created:** 2026-10-01
-- **Last updated:** 2026-10-01
+- **Last updated:** 2026-10-03
 - **RFC PR:** https://github.com/openclaw/openclaw-enterprise/pull/854
 - **Implementation:** [#696], [#711], [#726], [#730], [#737], [#739], [#741], [#742], [#745],
-  [#747], [#793], [#807], [#811] (with the event from [#806])
+  [#747], [#793], [#807], [#811] (with the event from [#806]). Follow-ups: [#863], [#869],
+  [#876], [#879], [#896], [#928], [#933], [#939], [#967], [#969]
 - **Related:** [Default production observability](36-production-observability.md) (the
   Collector boundary), [Agent access](36-agent-access.md) (native admin audience),
   [RFC-0042](0042-oidc-sign-in.md) (sign-in provider outages)
-- **Source baseline:** `main` at `521549dff`. Symbols below were checked there.
+- **Source baseline:** `main` at `04d01d02e`. Symbols below were checked there.
 
 <a id="problem-and-decision"></a>
 
@@ -78,8 +79,9 @@ and cluster error text never reaches a client.
   revision. OpenShell `NOT_FOUND` (absent, still provisioning, or concealed by Workspace
   membership) becomes `RUNTIME_LOGS_SANDBOX_NOT_FOUND` and never says which.
 - Helm `agentRuntimeLogs.enabled` (default `true`, in both charts) grants `pods/log get`
-  and `events get,list` to the tenant API and Gateway observer roles, and also `pods
-  get,list` to the execution tenant API role. Off, both routes answer `501`.
+  and `events get,list` to the tenant API, Gateway observer and execution tenant API
+  roles. Off, both routes answer `501`. Those roles hold `pods get,list` and `pods/proxy
+  get` either way, for diagnostics ([#967] for the execution role).
 
 ### Sanitization: one chokepoint
 
@@ -91,15 +93,19 @@ and the download writer
 accept only that type.
 
 - **Classify by allowlist.** Kept: runtime wrapper events with per-event fields; OpenClaw
-  JSON console records with a fixed key list; Codex tracing records; and plain text up to
-  4 KiB as `text`/`unknown`. Payload keys such as `prompt`, `content`, `messages`,
+  JSON console records with a fixed key list (without a `subsystem`, only at warn or
+  error: below that it is a `runtime.log` write such as a chat reply, [#869]); Codex
+  tracing records; and plain text up to 4 KiB as `text`/`unknown`. A Codex record keeps
+  its message only for reviewed operational targets (`CODEX_MESSAGE_TARGET`) and reviewed
+  fixed formats (`CODEX_FIXED_MESSAGES`); otherwise it reads `Codex message withheld`
+  ([#928], [#969]). Payload keys such as `prompt`, `content`, `messages`,
   `body` and `headers` are never kept. Any other JSON, including Codex JSON-RPC and
   pretty-printed JSON spread over several lines ([#742]), is withheld and counted.
 - **Redact every kept string.** PEM blocks are masked on every line, also across pages
   ([#741]). Also masked: auth and cookie headers, JWTs, known token prefixes, cloud keys,
   URL userinfo, all query values, credential-named key/value pairs, `Bearer` tokens and
-  base64 or hex runs of 40+ characters. Sandbox command lines also get argv credential
-  masking. Replacements are `[redacted:<pattern>]`, with nothing of the value kept.
+  base64 or hex runs of 40+ characters. Argv credentials (`-u user:pass`, `-p pass`) are
+  masked first, in every kept string ([#869]). Replacements are `[redacted:<pattern>]`, with nothing of the value kept.
 - **Content classes.** Container lines are `operational`, sandbox lines `activity`.
   `content` (prompts, responses, tool output) has no producer; the serializer throws on it.
 - **Bounds.** 32 KiB in and 8 KiB out per line, 1000 lines and 512 KiB per page, 10 s per
@@ -114,7 +120,11 @@ A page carries a cursor, HMAC-signed with the auth secret under purpose
 `occ-runtime-logs-cursor` and bound to principal, Agent, revision and source. It expires
 after 1 h ([packages/occ/src/runtime-logs/cursor.ts](../../packages/occ/src/runtime-logs/cursor.ts)).
 `@kubernetes/client-node` 2.0.0 has no `sinceTime` parameter, so `readRuntimeLogPage` resumes with
-`sinceSeconds` plus 2 s of overlap and drops already-seen lines by hash. Loss the API can
+`sinceSeconds` plus 2 s of overlap and drops already-seen lines by hash. A view that has
+delivered nothing resumes from its previous read, not the whole tail; the sandbox source
+floors its resume time at the first window's start ([#933]). A resumed page that fills the
+tail or is cut by the byte limit and starts after the cursor's line reports `window_exceeded`
+([#939]). Loss the API can
 see becomes a `gap` record: `stream_replaced`, `window_exceeded`, `cursor_expired`,
 `truncated`, or `buffer_lost` for the sandbox ring.
 
@@ -137,22 +147,30 @@ diagnostics.
   Unless `RUST_LOG` starts at `debug` or `trace`, it drops span `new`/`enter`/`exit`/`close`
   (except the `turn` span's `new`/`close`), loopback `websocket client connected` lines,
   repeats of the remote-control wait, and repeats of the macOS-only Unix-socket proxy
-  warning (the first per app-server is kept). It always drops Codex's startup ERROR that
+  warning (the first per app-server is kept). It also drops Codex's startup ERROR that
   bubblewrap is not on PATH: the image runs Codex's bundled `bwrap` on purpose, because a
-  `bwrap` on PATH triggers a namespace probe the seccomp profile denies. The classifier renders the turn span as
+  `bwrap` on PATH triggers a namespace probe the seccomp profile denies. Since [#876] it
+  drops the startup ERROR that project-local config is untrusted when the only folder it
+  names is the workspace's own `.codex`. The classifier renders the turn span as
   `turn started`/`turn completed` with model, IDs, token counts and busy time.
 - `minLevel` is a server-side floor (`runtimeLogPageAtLevel`). It is applied after the
   page is read, sanitized and its cursor signed. Lines of `unknown` level, gaps and
   withheld counts are always kept. The console reads `minLevel=info` by default, with an
   **Include debug** checkbox; the CLI has `--level`.
 
-### Collector export ([#793], [#811])
+### Collector export ([#793], [#811], [#863], [#879], [#896])
 
-The Collector boundary in RFC 36 is unchanged. Two bounded additions landed:
+The Collector boundary in RFC 36 is unchanged. These bounded additions landed:
 
 - `codex.turn` and `codex.tool_call` are exported with fixed bodies. A `codex.operational`
   body keeps Codex's own message only for `codex_app_server` targets and two fixed retry
-  messages, and only when it is short plain text with no credential words.
+  messages, and only when it is short plain text with no credential words, argv
+  credential flag or `user:password` pair ([#879]). A Codex warning without such a body
+  is dropped ([#863]).
+- `gateway.startup_failed` ([#879]) exports OpenClaw's subsystem-less `Gateway failed to
+  start:` error, its body kept under the same plain-text rules.
+- A failed `runtime.startup_phase` keeps its cause as `occ.code` ([#863]).
+  `runtime.gateway_settings_overridden` is exported as WARN with no attributes ([#896]).
 - `authentication.provider-unavailable-warning` (from [#806]) is allowlisted with
   `occ.sign_in.provider`, `step`, `cause` and `status`, each from a fixed value list. The
   provider instance ID and other fields stay in local Pod logs.
@@ -163,10 +181,10 @@ The Collector boundary in RFC 36 is unchanged. Two bounded additions landed:
 | --- | --- |
 | A reader sees another Agent's logs | Exact-Agent grants; the Driver reads only Pods carrying the revision's labels and re-checks them. RBAC cannot separate Agents, so this check carries the weight. |
 | Credentials in output | Allowlist classification, then pattern redaction. Canary tests run planted credentials in many shapes through the real handler and download. |
-| Chat content in output | Structured payload keys are dropped, Codex protocol output is withheld, and `content` has no producer. Plain text lines are still kept (see Known gaps). |
+| Chat content in output | Structured payload keys are dropped; Codex protocol output and subsystem-less OpenClaw records below warn are withheld; Codex messages keep text only for reviewed targets and formats; `content` has no producer. Plain text lines are still kept (see Known gaps). |
 | Forged or replayed cursors | HMAC binding to principal, Agent, revision and source; mismatch is `400`. |
 | Unaudited reads | Audit before the read; audit failure means no content. |
-| Lateral cluster actions | Read-only grants only: `pods/log get`, `events get,list`, OpenShell `sandbox:read`. |
+| Lateral cluster actions | Log reads add only read grants: `pods/log get`, `events get,list`, OpenShell `sandbox:read`. The roles' `pods get,list` and `pods/proxy get` serve diagnostics. |
 | Resource abuse | Byte, line and time bounds, plus the token bucket and the concurrency cap. |
 
 The `501` switch and the rate limiter run before authorization. A principal with no
@@ -199,11 +217,12 @@ grants learns only whether the feature is on, and spends only its own budget.
   fixture is derived from upstream source, not captured from a live OpenShell.
 - Kubernetes keeps only the current and previous container instance.
 - The Codex stderr filter is keyed to Codex 0.158 message shapes. A rename lets the noise
-  back rather than hiding other lines. Two records are suppressed on purpose: span
-  enter/exit lines and the error-level missing-bubblewrap startup record, which never
-  reaches the Pod log unless `RUST_LOG` is `debug` or `trace`.
+  back rather than hiding other lines. Unless `RUST_LOG` is `debug` or `trace`, three
+  records are suppressed on purpose: span enter/exit lines, the error-level
+  missing-bubblewrap startup record, and the untrusted workspace `.codex` startup record.
 - Rate and concurrency limits are per API replica.
-- Operators must refresh the Collector config Secret on upgrade to get [#793] and [#811].
+- Operators must refresh the Collector config Secret on upgrade to get the Collector
+  export changes above.
 
 ## Open questions for reviewers
 
@@ -250,3 +269,13 @@ grants learns only whether the feature is on, and spends only its own budget.
 [#806]: https://github.com/openclaw/openclaw-enterprise/pull/806
 [#807]: https://github.com/openclaw/openclaw-enterprise/pull/807
 [#811]: https://github.com/openclaw/openclaw-enterprise/pull/811
+[#863]: https://github.com/openclaw/openclaw-enterprise/pull/863
+[#869]: https://github.com/openclaw/openclaw-enterprise/pull/869
+[#876]: https://github.com/openclaw/openclaw-enterprise/pull/876
+[#879]: https://github.com/openclaw/openclaw-enterprise/pull/879
+[#896]: https://github.com/openclaw/openclaw-enterprise/pull/896
+[#928]: https://github.com/openclaw/openclaw-enterprise/pull/928
+[#933]: https://github.com/openclaw/openclaw-enterprise/pull/933
+[#939]: https://github.com/openclaw/openclaw-enterprise/pull/939
+[#967]: https://github.com/openclaw/openclaw-enterprise/pull/967
+[#969]: https://github.com/openclaw/openclaw-enterprise/pull/969
