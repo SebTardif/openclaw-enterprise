@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
+import { DEPLOYMENT_POLL_MS } from "../../apps/controller/src/console/agents/detail.mjs";
 import { FilesystemConfigurationDriver } from "../../apps/controller/src/drivers/configuration/filesystem/index.ts";
 import { CodexPluginDriver } from "../../apps/controller/src/drivers/plugin/index.ts";
 import { InMemoryAuditSink } from "../../packages/audit/src/index.ts";
@@ -77,7 +78,10 @@ test("Agent detail separates the current version, viewed version, and latest dep
               agentId: agent.id,
               status,
               error: null,
-              warnings: [],
+              warnings:
+                status === "succeeded"
+                  ? [{ code: "PLUGIN_AUTH_REQUIRED", pluginId: "linear@openai-curated-remote" }]
+                  : [],
               progress: status === "queued" ? pendingProgress : null,
             },
             meta: { requestId: "req_test_deployment_activity" },
@@ -144,6 +148,12 @@ test("Agent detail separates the current version, viewed version, and latest dep
   const versionRecord = page.locator(".version-deployment-record");
   await versionRecord.getByRole("heading", { name: "This version’s deployment record" }).waitFor();
   await versionRecord.getByText("Recorded outcome: succeeded").waitFor();
+  // D331: a startup warning says what happened to the plugin, not only its code.
+  await versionRecord
+    .getByText(
+      "linear@openai-curated-remote was disabled for this startup because it is not authenticated: Codex plugins need a ChatGPT login rather than an API key, and some also need their app connected to that account. (PLUGIN_AUTH_REQUIRED)",
+    )
+    .waitFor();
   const observations = page.locator(".version-diagnostics");
   await observations
     .getByText(/For Kubernetes Compute, Gateway checks cover only the Slack channel/)
@@ -988,7 +998,8 @@ test("Agent draft plugin browsing explains a missing hosted credential", async (
     namespace.id,
     "Hosted plugin Agent",
     nativeValues("plugin-discovery-auth", { harnessId: "codex" }),
-    { executionMode: "dedicated" },
+    // No API key: Codex serves plugins only to ChatGPT logins.
+    { executionMode: "dedicated", harnessAuth: null },
   );
   const { page } = await newPage(t, fixture);
   const requests = apiRequests(page, fixture.origin);
@@ -1010,6 +1021,42 @@ test("Agent draft plugin browsing explains a missing hosted credential", async (
   assert.equal(await page.getByLabel("Plugin selections JSON").isEnabled(), true);
 });
 
+test("Agent draft plugin picker warns that API-key Codex Agents cannot use plugins", async (t) => {
+  const fixture = await createConsoleAppFixture(t);
+  await fixture.bootstrap();
+  const driver = new CodexPluginDriver({ catalogSource: "openai-curated" });
+  fixture.controller.registerDriver(driver);
+  fixture.controller.selectDriver("plugin", driver.id);
+  const namespace = await fixture.createNamespace("API-key plugins", { ready: true });
+  const agent = await fixture.createAgent(
+    namespace.id,
+    "API-key plugin Agent",
+    nativeValues("api-key-plugins", { harnessId: "codex" }),
+    { executionMode: "dedicated" },
+  );
+  assert.equal(agent.harnessAuth.method, "api_key");
+  const { page } = await newPage(t, fixture);
+  const requests = apiRequests(page, fixture.origin);
+  const url = detailUrl(fixture, namespace.id, agent.id, "draft", "plugins");
+  await login(page, fixture, url.pathname + url.search);
+  await page
+    .getByText(
+      "Codex plugins need a ChatGPT login. This Agent uses an API key, so each selected plugin is disabled when it deploys (PLUGIN_AUTH_REQUIRED).",
+      { exact: false },
+    )
+    .waitFor();
+  await page.getByRole("button", { name: "Configure plugins", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "Configure plugins", exact: true });
+  await dialog.getByText("Plugin browsing is unavailable with API-key authentication.").waitFor();
+  assert.equal(await dialog.getByRole("button", { name: "Load plugins" }).isDisabled(), true);
+  assert.equal(
+    pathRequests(requests, "POST", `/namespaces/${namespace.id}/agents/${agent.id}/plugins`).length,
+    0,
+  );
+  await dialog.getByRole("button", { name: "Done" }).click();
+  assert.equal(await page.getByLabel("Plugin selections JSON").isEnabled(), true);
+});
+
 test("Agent draft browses the curated catalog without a saved Secret", async (t) => {
   const fixture = await createConsoleAppFixture(t);
   await fixture.bootstrap();
@@ -1021,7 +1068,8 @@ test("Agent draft browses the curated catalog without a saved Secret", async (t)
     namespace.id,
     "Curated plugin Agent",
     nativeValues("curated-revision", { harnessId: "codex" }),
-    { executionMode: "dedicated" },
+    // No API key: Codex serves plugins only to ChatGPT logins.
+    { executionMode: "dedicated", harnessAuth: null },
   );
   const { page } = await newPage(t, fixture);
   const requests = apiRequests(page, fixture.origin);
@@ -2351,6 +2399,105 @@ test("Agent detail opens native admin UI only after real API access checks pass"
   assert.deepEqual([...deniedTabWrites, ...nonAuthWriteRequests(requests)], []);
 });
 
+test("Agent detail rereads native admin access once when a pending deployment activates", async (t) => {
+  const cookieDomain = "oce.example.test";
+  const consoleHost = `console.${cookieDomain}`;
+  const nativeDomain = `agents.${cookieDomain}`;
+  const fixture = await createConsoleAppFixture(t, {
+    originHost: consoleHost,
+    publicOrigin: true,
+    authCookieDomain: cookieDomain,
+    development: { enabled: false },
+    https: true,
+    authSecureCookies: true,
+    nativeAdmin: { enabled: true, domain: nativeDomain, sharedCookieDomain: cookieDomain },
+    nativeAdminGatewayApiKey: async () => "native-admin-gateway-api-key",
+    computeDriver: nativeAdminComputeDriver(
+      "wss://private-gateway.example.invalid/namespaces/native-admin/agents/agent",
+    ),
+  });
+  await fixture.bootstrap();
+  const namespace = await fixture.createNamespace("Native admin follow", { ready: true });
+  const agent = await fixture.createAgent(
+    namespace.id,
+    "Native admin follow Agent",
+    nativeValues("follow-ui"),
+  );
+  // The first deployment requests running before any version is selected for service.
+  const pending = await fixture.deployAgent(namespace.id, agent.id);
+  const nativeAdminPath = `/namespaces/${namespace.id}/agents/${agent.id}/native-admin`;
+  const { page } = await newPage(t, fixture, {
+    args: [...fixture.browserArgs, `--host-resolver-rules=MAP ${consoleHost} 127.0.0.1`],
+  });
+  const requests = apiRequests(page, fixture.origin);
+  // Deployment activity reads a recorded status the worker would write; the native admin
+  // reads stay on the real API so the card reflects the Agent's actual active revision.
+  let deploymentStatus = "running";
+  await page.route(
+    `${fixture.origin}/namespaces/${namespace.id}/agents/${agent.id}/deployments/${pending.id}`,
+    (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          data: {
+            deploymentId: pending.id,
+            namespaceId: namespace.id,
+            agentId: agent.id,
+            status: deploymentStatus,
+            error: null,
+            warnings: [],
+            progress: null,
+          },
+          meta: { requestId: "req_test_native_admin_follow" },
+        }),
+      }),
+  );
+  await page.clock.install({ time: new Date("2026-10-03T12:00:00Z") });
+  const url = detailUrl(fixture, namespace.id, agent.id, pending.id, "configuration");
+  await login(page, fixture, `${url.pathname}${url.search}`);
+  await page.getByRole("heading", { name: "Native admin follow Agent" }).waitFor();
+  const activity = page.locator(".deployment-status");
+  const card = page.locator(".native-admin-access");
+  await activity.getByText("Recorded status: running").waitFor();
+  await card
+    .getByText(
+      "Native admin UI is unavailable because no version of this Agent is serving: a deployment is in progress or has failed. Check Deployment activity, then refresh access.",
+    )
+    .waitFor();
+  assert.equal(pathRequests(requests, "GET", nativeAdminPath).length, 1);
+
+  // The worker records success and selects the version for service while the page stays open.
+  await fixture.activateRevision(namespace.id, agent.id, pending.id);
+  deploymentStatus = "succeeded";
+  await page.clock.runFor(DEPLOYMENT_POLL_MS);
+  await activity.getByText("Recorded status: succeeded").waitFor();
+  await card
+    .getByText(
+      "Native admin UI is not enabled in this Agent’s current version. Someone who can edit its Configuration can enable it (see the native admin UI guide) and deploy a new version.",
+    )
+    .waitFor();
+  assert.equal(pathRequests(requests, "GET", nativeAdminPath).length, 2);
+
+  // Access is reread only when the serving version changes: Refresh deployment rereads the
+  // unchanged Agent through the same path without asking for native admin access again.
+  const agentReads = pathRequests(
+    requests,
+    "GET",
+    `/namespaces/${namespace.id}/agents/${agent.id}`,
+  ).length;
+  await activity.getByRole("button", { name: "Refresh deployment" }).click();
+  await waitForCondition(
+    () =>
+      pathRequests(requests, "GET", `/namespaces/${namespace.id}/agents/${agent.id}`).length >
+      agentReads,
+    "Refresh deployment did not reread the Agent",
+  );
+  // The button returns from "Refreshing..." only after the reread Agent was applied.
+  await activity.getByRole("button", { name: "Refresh deployment", disabled: false }).waitFor();
+  assert.equal(pathRequests(requests, "GET", nativeAdminPath).length, 2);
+});
+
 for (const [dmPolicy, groupPolicy, enterpriseOrgInstall] of [
   ["pairing", "allowlist"],
   ["open", "open"],
@@ -3173,6 +3320,53 @@ test("a read-only viewer is denied saved settings and native admin once per tab,
   await unavailable.waitFor();
   await waitForCondition(() => reads(configurationPath) === 2, "saved settings reread");
   assert.equal(denials("openclaw.configurations.read"), 2);
+});
+
+test("a failed native admin status read keeps the card, its error and Refresh access", async (t) => {
+  const fixture = await createConsoleAppFixture(t);
+  await fixture.bootstrap();
+  const namespace = await fixture.createNamespace("Native admin outage", { ready: true });
+  const agent = await fixture.createAgent(namespace.id, "Outage Agent", nativeValues("outage"));
+  const { page } = await newPage(t, fixture);
+  const requests = apiRequests(page, fixture.origin);
+  const nativeAdminPath = `/namespaces/${namespace.id}/agents/${agent.id}/native-admin`;
+  let failures = 1;
+  await page.route(`${fixture.origin}${nativeAdminPath}`, async (route) => {
+    if (failures > 0) {
+      failures -= 1;
+      await route.fulfill({
+        status: 503,
+        contentType: "application/json",
+        body: JSON.stringify({
+          error: {
+            code: "DEPENDENCY_UNAVAILABLE",
+            message: "A required platform dependency is unavailable.",
+          },
+          meta: { requestId: "req_test_native_admin_outage" },
+        }),
+      });
+      return;
+    }
+    await route.continue();
+  });
+  const detail = detailUrl(fixture, namespace.id, agent.id, "draft", "configuration");
+  await login(page, fixture, `${detail.pathname}${detail.search}`);
+  await page.getByRole("heading", { name: "Outage Agent" }).waitFor();
+
+  // An outage is not a denial: the card stays, names the failure and can be retried.
+  const card = page.locator(".native-admin-access");
+  await card.getByRole("alert").getByText("Service unavailable", { exact: false }).waitFor();
+  assert.equal(await card.isVisible(), true);
+  const reload = card.getByRole("button", { name: "Refresh access" });
+  assert.equal(await reload.isEnabled(), true);
+
+  // A later answer still decides visibility: this Installation has native admin disabled.
+  const reads = () => requests.filter((request) => request.path === nativeAdminPath).length;
+  const before = reads();
+  await reload.click();
+  await waitForCondition(() => reads() === before + 1, "native admin status reread");
+  await card.waitFor({ state: "hidden" });
+  await expectNativeAdminHidden(page);
 });
 
 test("Agent sharing rejects emails locally and names an unknown Principal ID", async (t) => {

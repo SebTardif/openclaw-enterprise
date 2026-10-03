@@ -154,6 +154,21 @@ function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// Failed provisioning codes that a retry of the same job cannot fix: the worker rejected
+// the request (a taken name, a scope or authorization rejection, a Namespace or Agent
+// lifecycle change) or the job was cancelled. Every other code, including the worker's
+// PROVISIONING_FAILED and PROVISIONING_WORK_NOT_FOUND, keeps Retry.
+const PERMANENT_PROVISIONING_CODES = new Set(["PROVISIONING_REJECTED", "PROVISIONING_CANCELLED"]);
+
+function canRetryFailedProvisioning(job) {
+  // A rejection after the job created its Agent (stopped, no versions) still owns that name;
+  // only the job's retry can finish it.
+  return (
+    !PERMANENT_PROVISIONING_CODES.has(job.error?.code) ||
+    (job.error?.code === "PROVISIONING_REJECTED" && typeof job.agentId === "string")
+  );
+}
+
 async function waitForProvisioning({ request, status, first }) {
   let current = first.provisioning ?? first;
   const jobUrl = current?.url;
@@ -170,7 +185,8 @@ async function waitForProvisioning({ request, status, first }) {
   if (current?.status !== "succeeded") {
     const error = new Error(current?.error?.message ?? "Provisioning did not complete.");
     error.provisioningTerminal = true;
-    error.canRetryProvisioning = current?.status === "failed";
+    error.provisioningFailed = current?.status === "failed";
+    error.canRetryProvisioning = error.provisioningFailed && canRetryFailedProvisioning(current);
     error.provisioningUrl = current?.url ?? jobUrl;
     throw error;
   }
@@ -788,7 +804,13 @@ function renderAgentForm(context, rendered, presetOptions = {}, draft = {}) {
   const plugins = element("textarea", { id: "agent-plugins", rows: "4", spellcheck: "false" });
   plugins.value = JSON.stringify(agent.plugins ?? {}, null, 2);
   let pluginDiscoveryCredential = null;
+  // Codex serves curated plugins only to ChatGPT logins; API-key Agents get them disabled.
+  const apiKeyCodex = () =>
+    harness.value === "codex" && (binding?.method ?? authMethod.value) === "api_key";
   function discoveryCredential() {
+    if (apiKeyCodex()) {
+      return null;
+    }
     if (harness.value === "codex" && pluginDiscoveryCredential === "none") {
       return {};
     }
@@ -825,9 +847,11 @@ function renderAgentForm(context, rendered, presetOptions = {}, draft = {}) {
     isPending: () => pending,
     requestBody: (body) => ({ ...discoveryCredential(), ...body }),
     unavailableMessage: () =>
-      pluginDiscoveryCredential === "none"
-        ? "Choose the Codex harness to browse this Installation's curated plugin catalog."
-        : "For discovery, choose ChatGPT OAuth (Experimental) and sign in, or choose Service Accounts with the Codex harness and select a Secret or enter a preview token.",
+      apiKeyCodex()
+        ? "Codex plugins need a ChatGPT login. With an OpenAI API key, each selected plugin is disabled when the Agent deploys (PLUGIN_AUTH_REQUIRED). Choose Service Accounts or ChatGPT OAuth to browse and use plugins."
+        : pluginDiscoveryCredential === "none"
+          ? "Choose the Codex harness to browse this Installation's curated plugin catalog."
+          : "For discovery, choose ChatGPT OAuth (Experimental) and sign in, or choose Service Accounts with the Codex harness and select a Secret or enter a preview token.",
     availableMessage: () =>
       pluginDiscoveryCredential === "none"
         ? "Load the installation's curated plugin catalog. Access and tool availability are checked separately."
@@ -890,7 +914,7 @@ function renderAgentForm(context, rendered, presetOptions = {}, draft = {}) {
   let capabilityDiscoveryFailed = false;
   const provisionableExecutionModes = new Set();
   let nativeWorkersAvailable = false;
-  const provisioningRequestId = createClientRequestId();
+  let provisioningRequestId = createClientRequestId();
   let provisioningAttempt = null;
   const capabilityStatus = element(
     "p",
@@ -1537,9 +1561,11 @@ function renderAgentForm(context, rendered, presetOptions = {}, draft = {}) {
             ? "Outcome unknown. Retry resubmits the same request ID and saved references."
             : error.provisioningTerminal && error.canRetryProvisioning
               ? `${error.message} Retry uses the accepted provisioning job.`
-              : error.status === undefined && error.message
-                ? error.message
-                : message(error, mutationStarted);
+              : error.provisioningFailed
+                ? `${error.message} Select Create Agent to submit a new request.`
+                : error.status === undefined && error.message
+                  ? error.message
+                  : message(error, mutationStarted);
       feedback.textContent = detail + (error.requestId ? ` Request ID: ${error.requestId}` : "");
       if (error.provisioningTerminal && error.canRetryProvisioning) {
         provisioningAttempt = {
@@ -1548,6 +1574,10 @@ function renderAgentForm(context, rendered, presetOptions = {}, draft = {}) {
         };
       } else if (!outcomeUnknown) {
         provisioningAttempt = null;
+        if (error.provisioningFailed) {
+          // The failed job keeps this request ID; an edited form needs a new one.
+          provisioningRequestId = createClientRequestId();
+        }
       }
     } finally {
       if (context.isCurrent()) {
