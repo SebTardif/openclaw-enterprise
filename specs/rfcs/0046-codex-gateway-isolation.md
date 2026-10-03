@@ -8,11 +8,11 @@ status_note: "Retroactive record. #808, #814 and #824 landed on 2026-10-01 and i
 - **ID:** RFC-0046
 - **Owner:** freeqaz (implementation PRs). Decision review: maintainers of the Kubernetes Compute Driver and the Harness runtime.
 - **Created:** 2026-10-01
-- **Last updated:** 2026-10-01
+- **Last updated:** 2026-10-03
 - **RFC PR:** [#853](https://github.com/openclaw/openclaw-enterprise/pull/853)
-- **Implementation:** landed [#808][pr-808], [#814][pr-814], [#824][pr-824]; open [#830][pr-830]. Related Harness hardening: [#765][pr-765], [#796][pr-796].
+- **Implementation:** landed [#808][pr-808], [#814][pr-814], [#824][pr-824]; open [#830][pr-830]. Follow-ups: [#874][pr-874], [#895][pr-895], [#896][pr-896]. Related Harness hardening: [#765][pr-765], [#796][pr-796].
 - **Related:** [Gateway–Harness storage split](28-gateway-harness-storage-split.md), [Harness authentication bindings](30-harness-auth-binding.md), [Dedicated Harness RWO workspace plan](../plans/38-harness-rwo-workspace-plan.md), [Workspace files flow](../../docs/flows/workspace-files.md).
-- **Source baseline:** `main` at `521549dff`; OpenClaw runtime pin `9d9c8568c` (`deploy/runtime/Dockerfile`).
+- **Source baseline:** `main` at `04d01d02e`; OpenClaw runtime pin `9d9c8568c` (`deploy/runtime/Dockerfile`).
 
 <a id="problem-and-decision"></a>
 
@@ -86,7 +86,7 @@ only when `APP_SERVER_URL` names a remote Codex Harness.
    `CODEX_API_KEY` or `OPENAI_API_KEY`); a literal `CODEX_API_KEY` is admitted
    today.
    With transport overrides gone, those rows no longer make Codex declare
-   `fallbackRuntime: "openclaw"`. A malformed block fails the Gateway start.
+   `fallbackRuntime: "openclaw"`.
 4. **Persist Codex threads on the Harness volume (#808).** In
    `apps/controller/src/drivers/compute/kubernetes/index.ts`,
    `HARNESS_CODEX_SESSIONS_CATEGORY` mounts subPath `codex-sessions` of the
@@ -96,6 +96,17 @@ only when `APP_SERVER_URL` names a remote Codex Harness.
    OAuth revision and `codex-home` for a non-OAuth one. The changed Deployment
    template is expected to roll existing Harness Pods once on a controller
    upgrade; a stop/start on a controller built from #808 was not verified.
+5. **Report the rewrite and refuse what it cannot apply (#874, #895, #896).**
+   `logOverriddenSettings` writes one `runtime.gateway_settings_overridden`
+   stderr event at start naming, never valuing, the replaced settings.
+   `occ agent logs` shows it as a warning; the Collector exports only the event
+   name, as WARN. Deployment admission runs `requireCodexGatewayConfigurationShape`
+   for dedicated Codex and refuses a shape the entrypoint cannot rewrite with
+   400 `INVALID_REQUEST` naming the setting path: a non-list
+   `codexDynamicToolsExclude`, a non-object Codex plugin `config`, `cron`,
+   `cron.triggers`, `models` or `models.providers`, or a `codex`/`openai` row
+   that is not an object or whose `models` is not a list of objects. The
+   entrypoint still fails the start on such a block admitted before #874.
 
 Related Harness-side hardening landed in the same window:
 
@@ -202,8 +213,9 @@ The `openai` default-transport case was not run live.
 - **Reject unsafe Configurations at admission.** Admission checks only part of
   OpenClaw's config (`resolveConfiguredHarnessId` does not read
   `agents.defaults.modelPolicy`), and every new key would need a rule there
-  too. Rewriting at Gateway start also covers config that was admitted earlier,
-  at the cost of dropping owner settings without a refusal.
+  too. Rewriting at Gateway start also covers config that was admitted earlier.
+  Since #874 admission refuses only shapes the rewrite cannot handle; a
+  well-formed unsafe setting is still admitted and then rewritten.
 - **Persist all of `CODEX_HOME` for non-OAuth logins.** It holds the login; the
   revision's credential should stay Pod-local and be re-delivered. Only
   `sessions` is needed for resume.
@@ -240,9 +252,10 @@ The `openai` default-transport case was not run live.
 - **Memory flush.** Per #808, upstream memory-flush runs use OpenClaw
   `read`/`write` regardless of `codexDynamicToolsExclude`. Not checked on
   dedicated Codex.
-- **Silent rewrite.** `excludeGatewayLocalCodexTools` and
-  `pinCodexProviderTransport` log nothing about the settings they drop; only
-  the Gateway's effective config shows it.
+- **Rewrite warns, not refuses.** Admission accepts a well-formed setting the
+  entrypoint will drop. The owner learns of it only from the
+  `runtime.gateway_settings_overridden` warning at start; no Agent condition
+  records it.
 - **Upstream drift.** The exclusion list and kept-key sets match OpenClaw
   `9d9c8568c`; new upstream tools or transport fields need matching changes.
 
@@ -263,7 +276,9 @@ The `openai` default-transport case was not run live.
    Gateways. **Implemented today:** they keep their rows unless the provider is
    `codex` or `openai`.
 4. **Should dropped settings be surfaced** (log line or Agent condition)?
-   **Implemented today:** silent rewrite; a malformed block fails the start.
+   **Implemented today:** a `runtime.gateway_settings_overridden` warning with
+   setting names at each start, no Agent condition; admission refuses shapes
+   the rewrite cannot handle with a 400.
 5. **Should `agents.defaults.params` be refused at admission?** It cannot work
    on these Agents. **Implemented today:** admitted; every Codex turn then fails
    in the Gateway.
@@ -274,3 +289,6 @@ The `openai` default-transport case was not run live.
 [pr-814]: https://github.com/openclaw/openclaw-enterprise/pull/814
 [pr-824]: https://github.com/openclaw/openclaw-enterprise/pull/824
 [pr-830]: https://github.com/openclaw/openclaw-enterprise/pull/830
+[pr-874]: https://github.com/openclaw/openclaw-enterprise/pull/874
+[pr-895]: https://github.com/openclaw/openclaw-enterprise/pull/895
+[pr-896]: https://github.com/openclaw/openclaw-enterprise/pull/896
