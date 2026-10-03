@@ -1,6 +1,6 @@
 ---
 status: Proposed
-status_note: "Retroactive record. The design is already implemented on main (PRs below, merged 2026-09-29 to 2026-10-01). Proposed means the decision still awaits human review, not that the code is pending."
+status_note: "Retroactive record. The design is already implemented on main (PRs below, merged 2026-09-29 to 2026-10-03). Proposed means the decision still awaits human review, not that the code is pending."
 ---
 
 # Proposal: First-deploy activation for dedicated Agents on Kubernetes
@@ -8,7 +8,7 @@ status_note: "Retroactive record. The design is already implemented on main (PRs
 - **ID:** RFC-0047
 - **Owner:** Kubernetes Compute Driver and runtime entrypoints. Review: Compute and security owners.
 - **Created:** 2026-10-01
-- **Last updated:** 2026-10-01
+- **Last updated:** 2026-10-03
 - **RFC PR:** this PR (retroactive record, not an approval)
 - **Related:** superseded plan [Workspace enrollment without a Harness restart](../plans/40-workspace-enrollment-without-harness-restart.md);
   [Harness RWO workspace plan](../plans/38-harness-rwo-workspace-plan.md); current contracts in
@@ -16,7 +16,7 @@ status_note: "Retroactive record. The design is already implemented on main (PRs
   [Kubernetes storage](../../docs/reference/drivers/kubernetes-compute/storage-and-credentials.md) and
   [networking](../../docs/reference/drivers/kubernetes-compute/networking-and-isolation.md);
   open, unlanded proposal on activation evidence: [#458](https://github.com/openclaw/openclaw-enterprise/pull/458).
-- **Source baseline:** `main` at `521549dff`. Symbols are in the driver
+- **Source baseline:** `main` at `04d01d02e`. Symbols are in the driver
   [`kubernetes/index.ts`][index] or the wrappers [`runtime-entrypoints.ts`][entry] unless named.
 
 <a id="problem-and-decision"></a>
@@ -74,7 +74,10 @@ Redeploy serving continuity (D67) is not solved; see the open questions.
   polls it every second and hot-applies it, changing only `plugins.*` / `cloudWorkers.*`. It
   reports `workspaceNodeId` only after OpenClaw lists `file-transfer` as active in a newer plugin
   registry. Activation waits up to 20 s (`WORKSPACE_NODE_BINDING_ACK_TIMEOUT_MS`) and fails at
-  once on a reported cause such as `RELOAD_NOT_CONFIRMED`.
+  once on a reported cause such as `RELOAD_NOT_CONFIRMED`. Since [#877] the 20 s is a budget per
+  revision and node across activation attempts (`workspaceNodeBindingAckSpentMs`); once spent,
+  each attempt reads the status once. Since [#857] the wrapper asks the running Gateway for
+  `plugins.list` over its Gateway SDK connection, not a CLI subprocess.
 - **S4b, Gateway alongside the Harness ([#652]).** With no Gateway yet and a Deployment-backed
   Codex Harness (`initialDedicatedCodexGateway`), pass 1 reconciles the revision-scoped agent
   Service, the Agent network policies, the Harness route, the Gateway, then the Harness. The wrapper's
@@ -104,6 +107,10 @@ Activation still re-checks readiness, the ack and the node connection.
 memory (`workspaceNodePairingSpentMs`, at most 1,024 entries). A node that never pairs costs one
 8 s wait per setup, not 8 s on every pass of the single serial worker (D88).
 
+[#892]: both waits also end after at least one read when another Agent's Work could be claimed
+(`computeWorkWaiting`, backed by `PostgresWorkQueue.claimableWorkWaiting`). Preparation then ends
+pending and activation is retried; unspent time stays in the budgets (D221).
+
 ```mermaid
 sequenceDiagram
   participant W as Worker (serial)
@@ -115,7 +122,7 @@ sequenceDiagram
   W->>H: Gateway Ready: create setup Secret, annotate Pod
   H->>G: node pairs (W waits up to 8 s per setup)
   W->>G: write binding ConfigMap, annotate Pod
-  G-->>W: activation reads workspaceNodeId ack (20 s cap)
+  G-->>W: activation reads workspaceNodeId ack (20 s budget)
 ```
 
 _Implemented flow: first dedicated Codex deploy with status-proxy CIDRs set._
@@ -134,14 +141,20 @@ _Implemented flow: first dedicated Codex deploy with status-proxy CIDRs set._
   `RUNTIME_AUTHENTICATION_FAILED` (`processRevision`, recorded by `finalizeRevision`) when
   runtime status reports `AUTHENTICATION_FAILED`, which the
   entrypoints publish only for provider 401/403 or invalid-key rejection, instead of waiting for
-  the 900 s deadline. [#838]: the OpenClaw probe first sends one empty `POST` to the default OpenAI
-  or Anthropic endpoint (`credentialRejectedUpfront`). Only a 401 fails; anything else runs the
-  full probe. A non-default endpoint or API, extra provider or request options, model headers, other
+  the 900 s deadline. Starved CPU already failed at once; [#871] extends this to every code the
+  entrypoints hold until restart (`HELD_RUNTIME_FAILURE_CODES` in `worker.ts`): a probe timeout or
+  failure, a failed Codex login and a missing probe or invalid approver configuration each fail
+  with their own code. Unknown codes still wait for the deadline. [#838]: the OpenClaw probe first sends one
+  empty `POST` to the default OpenAI or Anthropic base URL, at the configured API's path since
+  [#932] (`/responses`, `/chat/completions` or `/v1/messages`; `credentialRejectedUpfront`). Only
+  a 401 fails; anything else runs the full probe. A non-default base URL or unsupported API,
+  extra provider or request options, model headers, a model with its own API or base URL, other
   providers and Anthropic setup tokens skip it.
 - **Resources.** [#683]: Gateway, Harness and namespace-default CPU limits are `"4"` in the profile
   renderer and production example, requests stay `100m`, and an unquoted quantity names its
-  field. [#841]: Gateways request `1280Mi` (limit `2Gi`) in the renderer, production example and
-  dev launcher, from measured use of 0.8-1.2 GiB (dedicated) and up to 1.64 GiB (embedded).
+  field. [#841]: Gateways request `1280Mi` in the renderer, production example and dev launcher,
+  from measured use of 0.8-1.2 GiB (dedicated) and up to 1.64 GiB (embedded). [#866] raised the
+  Gateway memory limit from `2Gi` to `3Gi` in all three.
 
 ## Measured effect
 
@@ -193,15 +206,17 @@ tested on a fake clock only.
 - **Upgrade restarts.** #580 restarts every Gateway and Harness once; #616 re-renders every
   Codex Harness once; #640 replaces every dedicated Codex Gateway once where the status proxy is
   set. In-place upgrades keep the old Installation, so they get neither #791's CIDR (D81) nor
-  #841's request (D97) without a manual edit.
+  #841's request (D97) or #866's limit without a manual edit.
 - **Hot apply is not zero-disruption.** OpenClaw reloads the Codex plugin runtime with
   `file-transfer`, so the app-server session is re-established at activation.
-- **Serial worker hold.** A normal first deploy's last pass holds the worker 9-11 s (pairing plus
-  the ack). A node that boots in more than 8 s under load gets single reads after its budget.
+- **Serial worker hold.** On an idle worker a first deploy's last pass still holds it 9-11 s
+  (pairing plus the ack). Since #892 the waits end when other Agents' Work is claimable, so they
+  no longer delay it, but that Work still runs one item at a time. A node that boots in more than
+  8 s under load gets single reads after its budget.
 - **Unbounded peer wait (#652).** A Gateway whose Harness never reports holds its PVC and
   scheduling slot until the 900 s deadline.
-- **Remaining runtime time.** Node host boot (3.3-12 s) and the wrapper's two `plugins.list`
-  CLI calls around the hot reload.
+- **Remaining runtime time.** Node host boot (3.3-12 s) and the wrapper's `plugins.list` reads
+  around the hot reload.
 - **Stale comments.** Two driver comments still describe the old flow: "Enrolling the workspace
   node replaces the Harness and restarts its Gateway" and "Node enrollment updates the initial
   Harness after its Gateway starts".
@@ -226,8 +241,9 @@ tested on a fake clock only.
    for explicit security sign-off.
 4. **Cluster-wide `patch` on `pods`.** **Default:** granted in both charts. Alternative: a
    namespaced Role per tenant namespace.
-5. **Pairing wait on the serial worker.** **Default:** 8 s per setup, in memory, granted again
-   after a controller restart. Alternative: a non-serial path for enrollment waits.
+5. **Pairing wait on the serial worker.** **Default:** 8 s per setup and 20 s per binding, in
+   memory, granted again after a controller restart, and ended early when other Work is
+   claimable (#892). Remaining alternative: dispatch different Agents' Work concurrently.
 6. **CPU overcommit.** **Default:** limit `"4"`, request `100m`. A `limits.cpu` quota counts the
    whole limit, and bursts can overcommit nodes.
 
@@ -251,6 +267,12 @@ tested on a fake clock only.
 [#821]: https://github.com/openclaw/openclaw-enterprise/pull/821
 [#838]: https://github.com/openclaw/openclaw-enterprise/pull/838
 [#841]: https://github.com/openclaw/openclaw-enterprise/pull/841
+[#857]: https://github.com/openclaw/openclaw-enterprise/pull/857
+[#866]: https://github.com/openclaw/openclaw-enterprise/pull/866
+[#871]: https://github.com/openclaw/openclaw-enterprise/pull/871
+[#877]: https://github.com/openclaw/openclaw-enterprise/pull/877
+[#892]: https://github.com/openclaw/openclaw-enterprise/pull/892
+[#932]: https://github.com/openclaw/openclaw-enterprise/pull/932
 
 - Volume refresh measurement: [#612](https://github.com/openclaw/openclaw-enterprise/pull/612).
 - Enrollment client: [`node-enrollment-client.ts`](../../apps/controller/src/gateway/node-enrollment-client.ts);
