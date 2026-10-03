@@ -1,7 +1,7 @@
 ---
 created: 2026-09-08
-updated: 2026-09-30
-last_updated_session: authoring-run/bf3b8146-9d72-42a4-84e5-2293581c890c
+updated: 2026-10-01
+last_updated_session: codex/01a0b0e4-839a-71b3-9ec1-3b1000b5d06a
 ---
 
 # Agent Plugin Deployment Flow
@@ -199,9 +199,9 @@ authentication. Transport loss, timeouts, signals, malformed responses,
 discovery failures, and policy failures retain ordinary startup failure
 behavior. Provider-owned Harnesses keep their existing startup path.
 
-After configuration verification, the runtime exposes private startup status.
-Kubernetes Compute validates workload, revision, startup instance, selection
-keys, and warning codes for readiness, recomputing status on restart.
+After verification, runtime exposes private startup status. Kubernetes Compute
+validates workload, revision, startup instance, selection keys, and warning
+codes for readiness; restart recomputes status.
 
 Dedicated Codex runs separately and receives runtime-binary reads even without
 plugins. Startup symlinks
@@ -220,11 +220,16 @@ boundary.
 
 The Agent and gateway derive an app-server credential from the transport Secret,
 revision ID, and Agent startup ID. The gateway receives it after matching status
-and rendering exclusions. After restart, the old gateway cannot authenticate
-while its supervisor awaits status. A changed peer makes the supervisor publish
-non-ready status and restart only OpenClaw, reporting ready once it serves.
-While peer status is unavailable, the gateway stays unready; if it exits during
-that wait, the wrapper exits so the container can recover.
+and rendering exclusions. After a Harness restart, the old credential cannot open
+a new authenticated app-server WebSocket to the replacement Harness. It does not
+revoke access to a still-running old Harness or an established connection. For a
+changed peer, the supervisor publishes non-ready, restarts only OpenClaw and
+rechecks peer startup, Pod, successes and failures after it serves. Changed or
+unavailable peers trigger container restart.
+During an outage, the supervisor reports unready. Kubernetes propagates that
+state asynchronously, so the signal alone is not a per-request traffic fence.
+If OpenClaw exits while the supervisor waits for its peer, the wrapper exits
+for container recovery.
 
 ### 5. Complete revision reconciliation
 
@@ -241,14 +246,18 @@ Successful completion reports `REVISION_ACTIVATED` or `REVISION_ALREADY_ACTIVE`.
 A candidate pointer alone is not readiness evidence. Agent turns use native
 policy; the workspace and gateway database remain Agent-owned.
 
-The worker stores current plugin warnings in the successful work result under its
-live claim; the [worker flow](controller-worker.md#7-defer-retry-or-stop-and-hand-off-the-next-iteration)
-explains persistence and the deployment status projection. Claim loss prevents a stale completion write; a later worker reads
-current readiness again. There is no receipt acknowledgment, failed-plugin
-shutdown, or permanent failure latch. Saved deployment warnings describe the
-completed deployment attempt rather than ongoing runtime health.
+The worker saves plugin warnings with successful work under its live claim; the
+[worker flow](controller-worker.md#7-defer-retry-or-stop-and-hand-off-the-next-iteration)
+covers persistence and deployment status. Claim loss blocks stale completion;
+later workers recheck readiness. No receipt acknowledgment, failed-plugin
+shutdown, or permanent failure latch exists. Warnings describe deployment completion, not ongoing health.
 
 ## Debugging and Verification
+
+The bounded OpenClaw model probe samples one cumulative CPU-wait counter: PSI
+when initially available, otherwise throttled time. Missing, nonfinite or reset
+samples leave wait unavailable, without establishing starvation or changing the
+deadline.
 
 - Compare `Agent.plugins` with the active revision snapshot and deployment status.
   A successful Agent write alone is not runtime installation evidence.
@@ -258,9 +267,8 @@ completed deployment attempt rather than ongoing runtime health.
 - Check missing native packages, release drift, connector authentication, and
   effective policy when readiness fails; preserve credential values in protected
   runtime state rather than copying them into logs.
-- With SSH Compute, any nonempty requested plugin map or Agent default plugin
-  approver policy should fail before host effects. Clear both on the Agent or
-  deploy through a compatible Kubernetes runtime.
+- Before host effects, SSH Compute rejects nonempty requested Agent plugin maps or
+  default plugin approver policies. Clear both or use compatible Kubernetes.
 - For plugin warnings, check deployment status for `PLUGIN_INSTALL_FAILED` or
   `PLUGIN_AUTH_REQUIRED` and the admitted `pluginId`. Confirm the corresponding
   runtime and gateway entries are disabled. Do not infer plugin attribution
@@ -268,9 +276,9 @@ completed deployment attempt rather than ongoing runtime health.
 - Prove behavior with a model-chosen plugin call in a normal Agent turn, then
   disable or remove the plugin and verify another Agent is unchanged. Source or
   fixture tests are not native runtime proof.
-- Use the opt-in real-runtime lane in [Agent plugin testing](../testing/plugins.md)
-  for Kubernetes, database, credential, native-runtime, and historical proof
-  details. A skipped native lane is not proof.
+- The opt-in [Agent plugin testing](../testing/plugins.md) real-runtime lane covers
+  Kubernetes, database, credential, native-runtime, and historical proof. Skipped
+  native tests are not proof.
 
 ## Related docs
 
@@ -287,6 +295,12 @@ completed deployment attempt rather than ongoing runtime health.
 [keep this for the user to add notes. do not change between edits]
 
 ## Changelog
+
+- 2026-10-01 00:57: Reconcile peer recovery with current runtime. (codex/01a0b0e4-839a-71b3-9ec1-3b1000b5d06a - e57e777238104b1de0d3bee5c6c631722c4af575)
+
+- 2026-09-30 13:32: Clarify readiness and routing propagation. (codex/01a0b0e4-839a-71b3-9ec1-3b1000b5d06a - a0ca6376)
+
+- 2026-09-30 02:10: Recheck the peer before replacement readiness. (authoring-run/fc09b5f8-3fc8-4144-ac80-8bfd8ef24f52 - ed69e6eee87ca004d2970069e8e18cf4cce29a32)
 
 - 2026-09-30 00:33: Propagate Gateway exits while awaiting peer recovery. (authoring-run/bf3b8146-9d72-42a4-84e5-2293581c890c - 0d72f6a4e4e3003d457c4498e81e7de414f85649)
 

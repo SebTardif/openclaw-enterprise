@@ -9,8 +9,9 @@ Separate Agents receive separate service principals, even when they share a
 Namespace. The service principal is immutable, belongs to its exact Agent and
 Namespace, and remains the same across every revision of that Agent.
 
-An Agent service principal does not inherit your permissions, session cookie,
-provider credentials, or another Agent's identity. It has the same
+Inheriting the creator's identity, permissions, session cookie, or provider
+credentials is not yet supported. An Agent service principal cannot assume
+another Agent's identity. It has the same
 role-granted capabilities as a human Principal: an appropriately scoped Role
 and AccessBinding can grant any platform action, including administrative
 actions and access to another Agent in the same Namespace. Its Namespace scope,
@@ -107,9 +108,9 @@ an account's selected credential reference affect only future deployments. A
 snapshot freezes a Secret reference, not the value stored at that reference.
 
 The separate PostgreSQL controller worker prepares the exact Agent gateway and
-revision, activates its route, retires its predecessor, and sets
-`activeRevisionId`. Each Agent owns its gateway; sibling Agents never share
-one. Kubernetes Compute supports managed authentication; SSH Compute supports
+revision, sets `activeRevisionId`, activates its route, and retires its
+predecessor; see [activation order](#the-active-revision-after-a-failed-deployment).
+Each Agent owns its gateway; sibling Agents never share one. Kubernetes Compute supports managed authentication; SSH Compute supports
 embedded OpenClaw with [operator-managed runtime credentials](../drivers/ssh-compute.md#credentials-and-supported-boundaries).
 Docker rejects authentication bindings. Each Driver rejects unsupported bindings
 and topologies before deployment. Kubernetes Compute starts either an Agent-owned gateway plus a dedicated
@@ -142,6 +143,53 @@ grant. When only the Agent principal's grant is missing, the `403` names that
 `servicePrincipalId`, the action, and the exact Secret or credential source,
 for example `The Agent service principal <id> is not authorized to operate
 secret <id>`. Denials of your own permissions stay generic.
+
+### Pending deployment progress
+
+While a revision is not ready, deployment `progress.lastAttempt.code` says why
+when Compute knows. Kubernetes reports `REVISION_UNSCHEDULABLE` when a live Pod
+of the revision has `PodScheduled` `False` with reason `Unschedulable`, for
+example for want of node memory, and `WORKSPACE_NODE_PENDING` when the Harness
+and gateway are ready and only the workspace node's gateway connection is
+outstanding. Activation of a dedicated revision reports
+`WORKSPACE_NODE_BINDING_PENDING` while the gateway has not yet applied the
+workspace node it was handed, and `WORKSPACE_NODE_PENDING` while that node has
+not connected. Otherwise the code is `REVISION_INCOMPLETE`. These codes change no
+outcome: the revision stays pending until it is ready, a held runtime failure
+ends it, or the convergence deadline passes. The worker rechecks an unready
+revision after 500 ms, growing with the deployment's age to 5 s at 200 s.
+
+A dependency that fails while it converges is pending too.
+`AGENT_GATEWAY_UNAVAILABLE` means the worker could not reach the new gateway
+through its route yet (for example, the route answers 404 until the gateway
+proxy has the new route, or 503 until it has the ready Pod), and
+`KUBERNETES_API_UNAVAILABLE` means a Kubernetes API request timed out, could not
+connect, or got 429 or 5xx. Both codes apply during preparation and
+activation alike. The worker retries on the same cadence without
+spending its `OCC_WORKER_MAX_ATTEMPTS` budget. A dependency still failing at the
+convergence deadline fails the deployment with its own code.
+
+### The active revision after a failed deployment
+
+`activeRevisionId` names the revision the worker last committed to run. Stop
+shuts it down first, coordinated runtime upgrades require it, and runtime
+inspection reads its containers. It is not a health result; each revision's [deployment status](../agents.md#deployment-status)
+is. Unless Compute activates before commit, the worker sets the pointer before
+activation finishes.
+
+If a revision fails before the worker sets the pointer, the pointer is
+unchanged. After a failed first deployment, the Agent has no active revision.
+With [exclusive replacement](../drivers/compute.md#production-revision-stages),
+the unchanged pointer names a predecessor that was already stopped.
+Kubernetes embedded replacement reports ready while the predecessor still
+serves, so the worker sets the pointer first. Activation then replaces the
+shared gateway, and the new gateway runs the startup model probe. If that
+probe rejects the credential, the deployment fails with
+`RUNTIME_AUTHENTICATION_FAILED` (or, for a probe that timed out after its retries,
+`RUNTIME_MODEL_PROBE_TIMEOUT`). The failed revision stays active because its
+workload is the only one left; the predecessor has already been replaced. OCC
+never rolls back to an earlier revision. To recover, correct the cause and
+deploy a new revision, or stop the Agent.
 
 Revision list and read operations are scoped beneath the exact Namespace and
 Agent. Each returned revision requires its own authorized read; substituting a

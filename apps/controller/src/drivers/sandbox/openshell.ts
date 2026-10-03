@@ -296,7 +296,7 @@ function environment(requirements: HarnessWorkloadRequirements): Record<string, 
     if ("valueFrom" in entry) {
       throw new SandboxRevisionUnsupportedError(
         "SANDBOX_SECRET_ENVIRONMENT_UNSUPPORTED",
-        `OpenShell v0.1.0 cannot receive secretKeyRef environment ${entry.name}; upstream Secret projection support is required.`,
+        `OpenShell v0.1.3-pre.1 cannot receive secretKeyRef environment ${entry.name}; upstream Secret projection support is required.`,
       );
     }
     result[nonempty(entry.name, "Environment variable name")] = entry.value;
@@ -1307,6 +1307,12 @@ export class OpenShellSandboxDriver implements SandboxDriver {
     }
   }
 
+  harnessResource(
+    context: Pick<SandboxHarnessContext, "namespace" | "revision">,
+  ): SandboxResourceRef {
+    return this.sandboxRef(context);
+  }
+
   private sandboxRef(
     context: Pick<SandboxHarnessContext, "namespace" | "revision">,
   ): SandboxResourceRef {
@@ -1319,11 +1325,4 @@ export class OpenShellSandboxDriver implements SandboxDriver {
       revisionId: context.revision.id,
     });
   }
-}
-
-export function createOpenShellSandboxDriver(
-  options: OpenShellSandboxDriverOptions,
-  selection: OpenShellSandboxDriverSelection,
-): OpenShellSandboxDriver {
-  return new OpenShellSandboxDriver(options, selection);
 }

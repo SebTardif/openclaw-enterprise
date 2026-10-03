@@ -9,15 +9,16 @@ function unavailableText(status) {
     case "stopped":
       return "Start this Agent before opening its native admin UI.";
     case "unsupported":
-      return "This Agent does not expose a supported native admin UI endpoint.";
+      return "Native admin UI is not enabled in this Agent’s current version. Someone who can edit its Configuration can enable it (see the native admin UI guide) and deploy a new version.";
     case "unavailable":
-      return "Native admin UI access is unavailable because OCE could not load an active AgentRevision. Check this Agent’s deployment, then refresh access.";
+      return "Native admin UI is unavailable because no version of this Agent is serving: a deployment is in progress or has failed. Check Deployment activity, then refresh access.";
     default:
       return "Native admin UI access is unavailable.";
   }
 }
 
 export function renderNativeAdminAccess(context, path) {
+  const statusPath = `${path}/native-admin`;
   const status = element("p", { className: "hint", role: "status" }, "Checking access…");
   const error = element("p", { className: "error", role: "alert" });
   const launch = element(
@@ -55,12 +56,19 @@ export function renderNativeAdminAccess(context, path) {
     if (!context.isCurrent() || pending) {
       return;
     }
+    // Native admin needs Agent administer; a 403 is audited, so this tab asks once per Agent.
+    if (context.deniedReads?.has(statusPath)) {
+      current = undefined;
+      status.textContent = "";
+      updateControls();
+      return;
+    }
     pending = true;
     error.textContent = "";
     status.textContent = "Checking access…";
     updateControls();
     try {
-      current = await context.request(`${path}/native-admin`);
+      current = await context.request(statusPath);
       if (!context.isCurrent()) {
         return;
       }
@@ -78,6 +86,9 @@ export function renderNativeAdminAccess(context, path) {
       if (cause.status === 401) {
         context.onExpired();
         return;
+      }
+      if (cause.status === 403) {
+        context.deniedReads?.remember(statusPath);
       }
       current = undefined;
       status.textContent = "";
