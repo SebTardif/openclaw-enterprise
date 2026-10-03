@@ -100,7 +100,10 @@ combined sources remain readable and retained for older Pods; workload delivery
 copies the same password to its separate owned source without changing the old
 Secret. Both mode-transition regressions failed before the change and pass after;
 compatibility coverage checks retained bytes, idempotence and conflicting sources.
-Network interruption affected the subsequent runtime batch, which must be rerun.
+A network interruption required a clean-database runtime rerun; the PR validation
+records its results separately from interrupted attempts. Plugin-status fixtures
+also provision the modern separate, owned credential sources so strict ownership
+validation exercises the same contract as production.
 
 ## Manual Notes
 
