@@ -45,7 +45,7 @@ token's `iss`.
 
 | IdP      | Values that fit                                                                                                                                                                  |
 | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Keycloak | Issuer `https://<host>/realms/<realm>`; endpoints `…/protocol/openid-connect/{auth,token,certs}` behind a TLS proxy on 443; a confidential client.                               |
+| Keycloak | Issuer `https://<host>/realms/<realm>`; endpoints `…/protocol/openid-connect/{auth,token,certs}`; a confidential client. Verified in CI; see [Keycloak](oidc-keycloak.md).       |
 | Okta     | Org server `https://<org>.okta.com` with `/oauth2/v1/…`, or a custom server `https://<org>.okta.com/oauth2/<id>` with `/oauth2/<id>/v1/…`.                                       |
 | Auth0    | Issuer `https://<tenant>.auth0.com/` (with the trailing slash) or the custom domain for all four values; the application must sign with RS256.                                   |
 | Entra ID | Tenant **v2** only: `https://login.microsoftonline.com/<tenant>/v2.0`, `/oauth2/v2.0/{authorize,token}`, `/discovery/v2.0/keys`. The v1 issuer `sts.windows.net` does not match. |
@@ -146,7 +146,8 @@ publish.
 
 OCE identifies an IdP account only by the ID token's `sub` claim for this issuer.
 
-- **Keycloak:** the user's ID on the user's **Details** page in the admin console.
+- **Keycloak:** the user's ID on the user's **Details** page in the admin console; see
+  [Keycloak](oidc-keycloak.md#find-a-persons-subject).
 - **Okta:** the user ID (`00u…`) in the user's profile URL or the Users API.
 - **Auth0:** the `user_id` (for example `auth0|…`) on the user's page.
 - **Entra ID:** `sub` is pairwise per application and is not shown in the portal; OCE
@@ -191,5 +192,6 @@ account's sessions. The method's `providerId` starts with `oidc:`; detach it wit
 
 - [External sign-in reference](../../reference/authentication/external-sign-in.md)
 - [Google sign-in](google-sign-in.md)
+- [Keycloak for OIDC sign-in](oidc-keycloak.md)
 - [Sign-in maintenance](auth-maintenance.md)
 - [Production settings](../../reference/settings/production.md#oidc-sign-in)
