@@ -113,10 +113,10 @@ The line only helps when `/etc/hosts` is read before other resolvers. If
 The hosts step logs the resolver's answer (`Keycloak hosts: ...`) and whether it added
 a line. Observed behaviour:
 
-| Host                                                               | Answer for `keycloak.oce.localhost`            | Hosts line |
-| ------------------------------------------------------------------ | ---------------------------------------------- | ---------- |
-| Developer host, private network namespace with `hosts: files` only | `127.0.0.1` from the bind-mounted `/etc/hosts` | not added  |
-| `blacksmith-8vcpu-ubuntu-2404` runner                              | not yet recorded; read the job's prepare log   | pending    |
+| Host                                                               | Answer for `keycloak.oce.localhost`               | Hosts line           |
+| ------------------------------------------------------------------ | ------------------------------------------------- | -------------------- |
+| Developer host, private network namespace with `hosts: files` only | `127.0.0.1` from the bind-mounted `/etc/hosts`    | not added            |
+| `blacksmith-8vcpu-ubuntu-2404` runner                              | `127.0.0.1` and `::1`; `127.0.0.1` after the line | added with `sudo -n` |
 
 ## Troubleshooting
 
