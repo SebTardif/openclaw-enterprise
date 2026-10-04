@@ -76,6 +76,10 @@ func upK3d(ctx context.Context, opts Options, sandboxDriver string) (result erro
 	if err != nil {
 		return err
 	}
+	signIn, err := developmentSignIn(r.env)
+	if err != nil {
+		return err
+	}
 	browserPort := 0
 	if sandboxDriver == "none" {
 		browserPort, err = positiveSetting(r, "OCC_DEVELOPMENT_BROWSER_PORT", 8443, 65535)
@@ -106,10 +110,19 @@ func upK3d(ctx context.Context, opts Options, sandboxDriver string) (result erro
 		Cluster:           r.setting("OCC_DEVELOPMENT_KUBERNETES_CLUSTER", "occ-dev-"+strings.ToLower(rand.Text()[:10])),
 		KeyPath:           opts.KeyOutput,
 		KeyOwned:          opts.KeyOutput == "",
+		SignIn:            signIn,
 		directory:         directory,
 	}
 	if err := validateClusterName(state.Cluster); err != nil {
 		return err
+	}
+	if signIn == developmentSignInKeycloak {
+		if err := checkDevelopmentKeycloakHostPort(fmt.Sprintf("127.0.0.1:%d", developmentKeycloakHostPort)); err != nil {
+			return err
+		}
+		if _, _, err := readDevelopmentKeycloakFixtures(opts.Repository); err != nil {
+			return err
+		}
 	}
 	if !namespaceName.MatchString(state.PlatformNamespace) {
 		return fmt.Errorf("invalid OCC_DEVELOPMENT_KUBERNETES_NAMESPACE %q: the name must match %s", state.PlatformNamespace, namespaceName)
@@ -214,6 +227,9 @@ func upK3d(ctx context.Context, opts Options, sandboxDriver string) (result erro
 	if browserPort != 0 {
 		clusterArgs = append(clusterArgs, "--port", fmt.Sprintf("127.0.0.1:%d:30081@loadbalancer", browserPort))
 	}
+	if signIn == developmentSignInKeycloak {
+		clusterArgs = append(clusterArgs, developmentKeycloakPortArgs()...)
+	}
 	if sandboxDriver == "openshell" {
 		admissionPath, err := prepareOpenShellAdmission(directory)
 		if err != nil {
@@ -314,6 +330,11 @@ func upK3d(ctx context.Context, opts Options, sandboxDriver string) (result erro
 			return err
 		}
 	}
+	if signIn == developmentSignInKeycloak {
+		if err := r.installDevelopmentKeycloak(ctx, state, timeout); err != nil {
+			return err
+		}
+	}
 	apiURL := fmt.Sprintf("http://127.0.0.1:%d", apiPort)
 	if err := r.waitKubernetesAPI(ctx, apiURL, timeout); err != nil {
 		return err
@@ -351,6 +372,9 @@ func upK3d(ctx context.Context, opts Options, sandboxDriver string) (result erro
 		fmt.Fprintf(r.opts.Out, "Browser console: https://%s:%d/console/\nBrowser CA certificate: %s\n", consoleHost, state.BrowserPort, filepath.Join(directory, "browser-ca.crt"))
 	} else {
 		fmt.Fprintf(r.opts.Out, "Console: %s/console/\n", apiURL)
+	}
+	if signIn == developmentSignInKeycloak {
+		fmt.Fprintf(r.opts.Out, "Keycloak issuer: %s (sign-in is not wired to it yet)\nKeycloak CA certificate: %s\nKeycloak administrator password file: %s\nFor a browser, add to /etc/hosts: 127.0.0.1 %s\n", developmentKeycloakIssuer(state.Cluster), filepath.Join(directory, "gateway-ca.crt"), filepath.Join(directory, "keycloak-admin-password"), developmentKeycloakHost(state.Cluster))
 	}
 	if routingPodCIDR == "" {
 		fmt.Fprintln(r.opts.Out, "Note: this profile installs no private gateway routing, so dedicated Agent deployments fail with DEPENDENCY_UNAVAILABLE. See docs/guides/deploy/openshell-credential-sources.md.")
