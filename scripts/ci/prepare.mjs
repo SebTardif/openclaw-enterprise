@@ -1876,8 +1876,8 @@ async function prepareLane({ lane, statePath }) {
     case "postgres":
     case "postgres-application":
     case "postgres-auth":
-    // Keycloak's browser sign-in composes the production API on PostgreSQL.
     case "keycloak-oidc":
+      // keycloak-oidc composes the production API on PostgreSQL for browser sign-in.
       await ensurePostgresServer(resolvedStatePath, state);
       break;
     case "runtime-image-fixture":
