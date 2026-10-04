@@ -2,13 +2,21 @@ package occdev
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json/v2"
+	"fmt"
+	"io"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+	"time"
+
+	"go.yaml.in/yaml/v3"
 )
 
 func keycloakProfileEnv() map[string]string {
@@ -406,5 +414,357 @@ func TestStateRecordsKeycloakOnlyForTheRoutingProfile(t *testing.T) {
 		if _, err := readState(writePrivateState(t, state)); err == nil {
 			t.Errorf("%s: readState accepted sign-in state", name)
 		}
+	}
+}
+
+func TestKeycloakSubjectIsTheRealmUsersFixedID(t *testing.T) {
+	_, realm, err := readDevelopmentKeycloakFixtures(repositoryRoot(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	subject, err := developmentKeycloakSubject(realm, "alice")
+	if err != nil || subject != "6f1c1e9a-3d4b-4c55-9a2e-0a11ce000001" {
+		t.Fatalf("alice subject = %q, %v", subject, err)
+	}
+	if _, err := developmentKeycloakSubject(realm, "mallory"); err == nil {
+		t.Fatal("a user missing from the realm resolved to a subject")
+	}
+}
+
+// firstPassValues is the shape the first Helm pass writes in the routing
+// profile, plus a later edit (repository credentials) the second pass keeps.
+func firstPassValues(t *testing.T) []byte {
+	t.Helper()
+	data, err := json.Marshal(map[string]any{
+		"images":                map[string]string{"controller": "controller:dev"},
+		"auth":                  map[string]string{"baseUrl": "https://console.occ-dev-test.oce.localhost:8443"},
+		"agentNativeAdmin":      map[string]any{"enabled": true, "domain": "agents.occ-dev-test.oce.localhost", "sharedCookieDomain": "occ-dev-test.oce.localhost"},
+		"gatewayRouting":        map[string]any{"enabled": true, "gatewayClassName": "eg", "apiKeySecretName": "occ-private-gateway-key"},
+		"repositoryCredentials": map[string]any{"enabled": true},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return data
+}
+
+func TestKeycloakSignInValuesEnableOIDCForTheRecoveryAdministrator(t *testing.T) {
+	data, err := developmentKeycloakSignInValues(firstPassValues(t), "occ-dev-test", "user_Admin-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var values map[string]any
+	if err := json.Unmarshal(data, &values); err != nil {
+		t.Fatal(err)
+	}
+	issuer := "https://keycloak.occ-dev-test.oce.test/realms/oce"
+	want := map[string]any{
+		"baseUrl":        "https://console.occ-dev-test.oce.localhost:8443",
+		"recoveryUserId": "user_Admin-1",
+		"passwordSignIn": "recovery-only",
+		"oidc": map[string]any{
+			"enabled":          true,
+			"issuer":           issuer,
+			"authorizationUrl": issuer + "/protocol/openid-connect/auth",
+			"tokenUrl":         issuer + "/protocol/openid-connect/token",
+			"jwksUrl":          issuer + "/protocol/openid-connect/certs",
+			"secretName":       "occ-oidc-login",
+			"clientIdKey":      "client-id",
+			"clientSecretKey":  "client-secret",
+			"displayName":      "Keycloak",
+		},
+	}
+	if got := mustJSON(t, values["auth"]); string(got) != string(mustJSON(t, want)) {
+		t.Fatalf("auth = %s\nwant %s", got, mustJSON(t, want))
+	}
+	// The chart refuses OIDC beside native administration; a leftover shared
+	// cookie domain would not render either.
+	if got, _ := json.Marshal(values["agentNativeAdmin"]); string(got) != `{"enabled":false}` {
+		t.Fatalf("agentNativeAdmin = %s", got)
+	}
+	for _, key := range []string{"images", "gatewayRouting", "repositoryCredentials"} {
+		if values[key] == nil {
+			t.Errorf("the second pass dropped %s", key)
+		}
+	}
+	assertChartValues(t, values, "auth")
+	assertChartValues(t, values, "agentNativeAdmin")
+}
+
+func mustJSON(t *testing.T, value any) []byte {
+	t.Helper()
+	data, err := json.Marshal(value, json.Deterministic(true))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var normalized any
+	if err := json.Unmarshal(data, &normalized); err != nil {
+		t.Fatal(err)
+	}
+	data, err = json.Marshal(normalized, json.Deterministic(true))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return data
+}
+
+// assertChartValues proves the launcher sets only values the chart already
+// declares: RFC-0059 adds no chart surface.
+func assertChartValues(t *testing.T, values map[string]any, key string) {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(repositoryRoot(t), "deploy", "helm", "openclaw-enterprise", "values.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var chart map[string]any
+	if err := yaml.Unmarshal(data, &chart); err != nil {
+		t.Fatal(err)
+	}
+	var walk func(path string, set, declared any)
+	walk = func(path string, set, declared any) {
+		setMap, ok := set.(map[string]any)
+		if !ok {
+			return
+		}
+		declaredMap, ok := declared.(map[string]any)
+		if !ok {
+			t.Errorf("%s is not a map in the chart values", path)
+			return
+		}
+		for name, value := range setMap {
+			child, found := declaredMap[name]
+			if !found {
+				t.Errorf("%s.%s is not a chart value", path, name)
+				continue
+			}
+			walk(path+"."+name, value, child)
+		}
+	}
+	walk(key, values[key], chart[key])
+}
+
+func TestKeycloakSignInValuesRefuseAnHTTPConsoleOrAnInvalidUserID(t *testing.T) {
+	if _, err := developmentKeycloakSignInValues(firstPassValues(t), "occ-dev-test", "-bad id"); err == nil {
+		t.Fatal("an invalid recovery user ID was accepted")
+	}
+	plain, _ := json.Marshal(map[string]any{"auth": map[string]string{"baseUrl": "http://127.0.0.1:3000"}})
+	if _, err := developmentKeycloakSignInValues(plain, "occ-dev-test", "user1"); err == nil || !strings.Contains(err.Error(), "HTTPS") {
+		t.Fatalf("an HTTP base URL was accepted: %v", err)
+	}
+}
+
+func TestKeycloakInstructionsNameTheConsoleUserCAsAndHostsLine(t *testing.T) {
+	state := &developmentState{Cluster: "occ-dev-test", BrowserPort: 8443, directory: "/state"}
+	text := developmentKeycloakInstructions(state)
+	for _, want := range []string{
+		"https://console.occ-dev-test.oce.localhost:8443/console/",
+		"Continue with Keycloak",
+		"/state/keycloak-alice-password",
+		"/state/browser-ca.crt",
+		"/state/gateway-ca.crt",
+		"127.0.0.1 keycloak.occ-dev-test.oce.test",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("instructions lack %q:\n%s", want, text)
+		}
+	}
+}
+
+// fakeConsoleAPI imitates the API routes the sign-in pass uses, switching to
+// OIDC with recovery-only passwords once the fake helm has run.
+type fakeConsoleAPI struct {
+	t        *testing.T
+	origin   string
+	upgraded string
+	password string
+	sessions int
+	// attach records the attach request.
+	attachPath, attachOrigin, attachCookie string
+	attachBody                             map[string]any
+	accountReads                           int
+}
+
+func (f *fakeConsoleAPI) oidc() bool {
+	_, err := os.Stat(f.upgraded)
+	return err == nil
+}
+
+func (f *fakeConsoleAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	reply := func(status int, body string) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(status)
+		io.WriteString(w, body)
+	}
+	session, _ := r.Cookie("__Host-occ.session")
+	switch {
+	case r.Method == http.MethodGet && r.URL.Path == "/api/auth/providers":
+		on := f.oidc()
+		reply(200, fmt.Sprintf(`{"data":{"github":false,"google":false,"oidc":%t,"password":%t,"sessionBinding":%t}}`, on, !on, on))
+	case r.Method == http.MethodPost && r.URL.Path == "/api/auth/sign-in/email":
+		var body map[string]string
+		if err := json.UnmarshalRead(r.Body, &body); err != nil || r.Header.Get("Origin") != f.origin || body["email"] != "admin@development.openclaw.invalid" || body["password"] != f.password {
+			reply(401, `{"error":{"code":"UNAUTHENTICATED"}}`)
+			return
+		}
+		f.sessions++
+		http.SetCookie(w, &http.Cookie{Name: "__Host-occ.session", Value: fmt.Sprintf("s%d-oidc-%t", f.sessions, f.oidc()), Path: "/", Secure: true, HttpOnly: true})
+		reply(200, `{"data":{"authenticated":true,"sessionKey":"k"}}`)
+	case r.Method == http.MethodGet && r.URL.Path == "/api/auth/session":
+		if session == nil {
+			reply(200, `{"data":null}`)
+			return
+		}
+		reply(200, `{"data":{"authenticated":true,"sessionKey":"k","user":{"id":"user_admin1","email":"admin@development.openclaw.invalid","name":"Admin"}}}`)
+	case r.Method == http.MethodGet && r.URL.Path == "/api/auth/accounts/user_admin1":
+		// Account controls exist only once OIDC is on, and need the exact Origin.
+		if !f.oidc() || session == nil || r.Header.Get("Origin") != f.origin {
+			reply(409, `{"error":{"code":"RESOURCE_CONFLICT"}}`)
+			return
+		}
+		f.accountReads++
+		reply(200, `{"data":{"userId":"user_admin1","principalId":"p1","version":3,"disabled":false,"methods":[]}}`)
+	case r.Method == http.MethodPost && r.URL.Path == "/api/auth/accounts/user_admin1/providers/oidc":
+		f.attachPath, f.attachOrigin = r.URL.Path, r.Header.Get("Origin")
+		if session != nil {
+			f.attachCookie = session.Value
+		}
+		if err := json.UnmarshalRead(r.Body, &f.attachBody); err != nil {
+			f.t.Errorf("attach body: %v", err)
+		}
+		reply(200, `{"data":{"methodId":"m1","providerId":"oidc:abc"}}`)
+	default:
+		f.t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+		reply(404, `{"error":{"code":"NOT_FOUND"}}`)
+	}
+}
+
+func TestKeycloakSignInRunsTheSecondPassAndAttachesAlice(t *testing.T) {
+	directory := t.TempDir()
+	record := t.TempDir()
+	consoleHost, _, _ := developmentBrowserHosts("occ-dev-test")
+	if err := writeDevelopmentTLS(directory, "browser", "test browser CA", []string{consoleHost}); err != nil {
+		t.Fatal(err)
+	}
+	certificate, err := tls.LoadX509KeyPair(filepath.Join(directory, "browser-tls.crt"), filepath.Join(directory, "browser-tls.key"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	api := &fakeConsoleAPI{t: t, upgraded: filepath.Join(record, "upgraded"), password: "admin-password"}
+	server := httptest.NewUnstartedServer(api)
+	server.TLS = &tls.Config{Certificates: []tls.Certificate{certificate}}
+	server.StartTLS()
+	defer server.Close()
+	port := server.Listener.Addr().(*net.TCPAddr).Port
+	api.origin = fmt.Sprintf("https://%s:%d", consoleHost, port)
+
+	if err := os.WriteFile(filepath.Join(directory, "initial-admin-password"), []byte(api.password), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(directory, "helm-values.json"), firstPassValues(t), 0600); err != nil {
+		t.Fatal(err)
+	}
+	fakeEngine(t, "kubectl", `"apply -f "*) cp "$3" "`+record+`/applied-$(basename "$3")" ;;
+`)
+	fakeEngine(t, "helm", `"upgrade --install openclaw-enterprise "*) while [ $# -gt 0 ]; do [ "$1" = -f ] && cp "$2" "`+record+`/helm-values.json"; shift; done; touch "`+record+`/upgraded" ;;
+`)
+	_, realm, err := readDevelopmentKeycloakFixtures(repositoryRoot(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := &developmentState{Cluster: "occ-dev-test", PlatformNamespace: "oce-system", BrowserPort: port, directory: directory}
+	r := newRunner(Options{})
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := r.signInDevelopmentKeycloak(ctx, state, developmentKeycloakSecrets{ClientSecret: "client-secret-value"}, realm, 20*time.Second); err != nil {
+		t.Fatal(err)
+	}
+
+	// The attach request: alice's fixed subject, the read account version, the
+	// exact Origin and a session signed in after the second pass.
+	if api.attachOrigin != api.origin || !strings.HasSuffix(api.attachCookie, "-oidc-true") || api.accountReads != 1 {
+		t.Fatalf("attach origin %q, cookie %q, account reads %d", api.attachOrigin, api.attachCookie, api.accountReads)
+	}
+	if got := string(mustJSON(t, api.attachBody)); got != `{"expectedVersion":3,"subject":"6f1c1e9a-3d4b-4c55-9a2e-0a11ce000001"}` {
+		t.Fatalf("attach body = %s", got)
+	}
+	// The second pass ran on the recorded values with the administrator's ID.
+	upgraded, err := os.ReadFile(filepath.Join(record, "helm-values.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var values map[string]any
+	if err := json.Unmarshal(upgraded, &values); err != nil {
+		t.Fatal(err)
+	}
+	if field(t, values, "auth", "recoveryUserId") != "user_admin1" || field(t, values, "auth", "passwordSignIn") != "recovery-only" || field(t, values, "auth", "oidc", "enabled") != true {
+		t.Fatalf("second-pass values = %s", upgraded)
+	}
+	if recorded, _ := os.ReadFile(filepath.Join(directory, "helm-values.json")); string(recorded) != string(upgraded) {
+		t.Fatal("helm-values.json does not record the second pass")
+	}
+	var secret map[string]any
+	data, err := os.ReadFile(filepath.Join(record, "applied-oidc-login.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(data, &secret); err != nil {
+		t.Fatal(err)
+	}
+	if field(t, secret, "metadata", "name") != "occ-oidc-login" || field(t, secret, "metadata", "namespace") != "oce-system" ||
+		field(t, secret, "stringData", "client-id") != "oce-console" || field(t, secret, "stringData", "client-secret") != "client-secret-value" {
+		t.Fatalf("OIDC Secret = %s", data)
+	}
+}
+
+func TestKeycloakSignInStopsWhenThePasswordIsRefused(t *testing.T) {
+	directory := t.TempDir()
+	consoleHost, _, _ := developmentBrowserHosts("occ-dev-test")
+	if err := writeDevelopmentTLS(directory, "browser", "test browser CA", []string{consoleHost}); err != nil {
+		t.Fatal(err)
+	}
+	certificate, err := tls.LoadX509KeyPair(filepath.Join(directory, "browser-tls.crt"), filepath.Join(directory, "browser-tls.key"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	api := &fakeConsoleAPI{t: t, upgraded: filepath.Join(directory, "never"), password: "other"}
+	server := httptest.NewUnstartedServer(api)
+	server.TLS = &tls.Config{Certificates: []tls.Certificate{certificate}}
+	server.StartTLS()
+	defer server.Close()
+	port := server.Listener.Addr().(*net.TCPAddr).Port
+	api.origin = fmt.Sprintf("https://%s:%d", consoleHost, port)
+	if err := os.WriteFile(filepath.Join(directory, "initial-admin-password"), []byte("wrong"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	_, realm, err := readDevelopmentKeycloakFixtures(repositoryRoot(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := &developmentState{Cluster: "occ-dev-test", PlatformNamespace: "oce-system", BrowserPort: port, directory: directory}
+	err = newRunner(Options{}).signInDevelopmentKeycloak(context.Background(), state, developmentKeycloakSecrets{ClientSecret: "c"}, realm, time.Second)
+	if err == nil || !strings.Contains(err.Error(), "HTTP 401 UNAUTHENTICATED") || strings.Contains(err.Error(), "wrong") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestDevelopmentConsoleTrustsOnlyTheBrowserCA(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer server.Close()
+	directory := t.TempDir()
+	if err := writeDevelopmentTLS(directory, "browser", "test browser CA", []string{"example.com"}); err != nil {
+		t.Fatal(err)
+	}
+	ca, err := os.ReadFile(filepath.Join(directory, "browser-ca.crt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	address := server.Listener.Addr().String()
+	_, port, _ := net.SplitHostPort(address)
+	console, err := newDevelopmentConsole("https://example.com:"+port, address, ca)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := console.call(context.Background(), http.MethodGet, "/api/auth/providers", nil, nil); err == nil || !strings.Contains(err.Error(), "certificate") {
+		t.Fatalf("a certificate from another CA was trusted: %v", err)
 	}
 }
