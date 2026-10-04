@@ -19,6 +19,8 @@ CI uses [run-ci-lane](../../.github/actions/run-ci-lane/action.yml) for setup, t
 
 The non-required [First Agent smoke](first-agent-smoke.md) installs Local Setup and deploys two Agents against a stand-in model provider on every run.
 
+The non-required [Keycloak OIDC lane](keycloak.md), `keycloak-oidc`, runs a digest-pinned Keycloak on `127.0.0.1:443` and checks OIDC discovery and the JWKS against it on every run. It belongs to the `full` group, not `ci`.
+
 Full CI has fifteen required lanes. `checks-browser` owns browser tests; `postgres-auth` owns the longer authentication tests and its own PostgreSQL server; `images-model-probes` builds only the runtime image and runs model-probe tests without a cluster.
 
 Hosted image builds use separate controller/runtime caches. Packaging alone exports; model probes restore. Transfers time out after one minute, export failures are ignored, and builds load locally. Cache credentials stay in preparation. Local builds remain unchanged.
