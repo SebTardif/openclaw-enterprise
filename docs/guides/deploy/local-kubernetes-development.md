@@ -79,6 +79,26 @@ To enable GitHub repository credentials during a fresh start, prepare the
 [approved local repository inputs](local-repository-credentials.md#prepare-the-approved-inputs)
 before running the launcher.
 
+### Sign in through Keycloak
+
+Add `OCC_DEVELOPMENT_SIGN_IN=keycloak` to the profile above to sign in through a
+development Keycloak rather than the generated password. Host `127.0.0.1:443`
+must be free. k3d publishes that port at creation, so add or remove the variable
+only with `dev-down` and a fresh `dev-up`.
+
+Startup runs Keycloak with realm `oce` in Namespace `occ-development-keycloak`,
+on a volume that survives Pod restarts. It then upgrades OCE with
+[OIDC sign-in](oidc-sign-in.md), the administrator as the recovery account and
+recovery-only password sign-in, and attaches Keycloak user `alice` to the
+administrator. OIDC needs host-only cookies, so this profile turns off
+[Agent native administration](../../reference/agent-native-admin.md).
+
+To sign in, import both printed CAs into the browser (`browser-ca.crt` for the
+Console, `gateway-ca.crt` for Keycloak) and add the printed `/etc/hosts` line.
+Open the Console, choose **Continue with Keycloak**, and sign in as `alice` with
+the password in `keycloak-alice-password`. The administrator password still
+signs in, for recovery only. `dev-down` deletes Keycloak and its realm.
+
 ### Run OCC in Compose with Kubernetes compute
 
 To select the hybrid profile on a fresh state directory:
