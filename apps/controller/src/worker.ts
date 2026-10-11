@@ -383,6 +383,11 @@ interface RevisionDispatchResult extends DispatchResult {
   readonly supersededBy?: Readonly<AgentRevision>;
   readonly expectedActiveRevisionId?: string;
   readonly context?: ComputeRevisionContext;
+  /**
+   * The revision is already the active runtime. Fail this claim without the
+   * repository cleanup that would stop it, and keep its maintenance chain.
+   */
+  readonly preserveActiveRuntime?: true;
 }
 
 interface AgentStopDispatchResult extends DispatchResult {
@@ -3418,12 +3423,22 @@ export class ControllerWorker {
       }
       const denied = await this.authorizeRevision(claim, agent, revision);
       if (denied !== undefined) {
-        await this.finalizeRevision(claim, denied);
+        await this.finalizeRevision(
+          claim,
+          revision.repositoryCredentials === undefined
+            ? denied
+            : { ...denied, preserveActiveRuntime: true },
+        );
         return;
       }
       const backend = await this.resolveRevisionBackend(revision);
       if (backend !== undefined) {
-        await this.finalizeRevision(claim, backend);
+        await this.finalizeRevision(
+          claim,
+          revision.repositoryCredentials === undefined
+            ? backend
+            : { ...backend, preserveActiveRuntime: true },
+        );
         return;
       }
       // Authorization and the backend are decided again above on every pass. Once a stored
@@ -3660,8 +3675,9 @@ export class ControllerWorker {
           ) {
             throw error;
           }
-          // As for a lost repository credential authority, this ends a maintenance
-          // claim's chain too: the revision cannot activate without a new one.
+          // Activation failure ends this maintenance claim's chain: the revision
+          // cannot activate without a new one. An authority failure of the
+          // already-active runtime keeps that runtime and its next maintenance.
           if (
             error instanceof ActivationFailedError ||
             error instanceof CredentialSourceRevisionError
@@ -3718,8 +3734,9 @@ export class ControllerWorker {
       if (error instanceof RefusedCandidateStopError) {
         ({ result, logFields: failureLogFields } = error.pending());
       } else {
-        if (
-          error instanceof RepositoryCredentialAuthorityError ||
+        if (error instanceof RepositoryCredentialAuthorityError) {
+          result = { outcome: "permanent", code: error.code, preserveActiveRuntime: true };
+        } else if (
           error instanceof SandboxRevisionUnsupportedError ||
           error instanceof CredentialSourceRevisionError ||
           error instanceof ActivationFailedError
@@ -4383,13 +4400,23 @@ export class ControllerWorker {
         }
         resolved =
           error instanceof RepositoryCredentialAuthorityError
-            ? { outcome: "permanent", code: error.code }
+            ? { outcome: "permanent", code: error.code, preserveActiveRuntime: true }
             : { outcome: "retry", code: "DEPENDENCY_UNAVAILABLE" };
       }
     }
     if (
       resolved.outcome === "retry" &&
       claim.attemptCount >= this.maxAttempts &&
+      (await this.continueExhaustedActiveRevision(claim, resolved.code))
+    ) {
+      return;
+    }
+    // An authority failure before this revision is active still retires it.
+    // Once it is the running active revision, keep that runtime and its
+    // maintenance chain, as an exhausted dependency outage does.
+    if (
+      resolved.outcome === "permanent" &&
+      resolved.preserveActiveRuntime === true &&
       (await this.continueExhaustedActiveRevision(claim, resolved.code))
     ) {
       return;
@@ -4564,7 +4591,11 @@ export class ControllerWorker {
           throw error;
         }
         if (error instanceof RepositoryCredentialAuthorityError) {
-          await this.finalizeRevision(claim, { outcome: "permanent", code: error.code });
+          await this.finalizeRevision(claim, {
+            outcome: "permanent",
+            code: error.code,
+            preserveActiveRuntime: true,
+          });
           return;
         }
         if (error instanceof ComputeStopYieldedError) {
@@ -5033,7 +5064,11 @@ export class ControllerWorker {
           throw error;
         }
         if (error instanceof RepositoryCredentialAuthorityError) {
-          await this.finalizeRevision(claim, { outcome: "permanent", code: error.code });
+          await this.finalizeRevision(claim, {
+            outcome: "permanent",
+            code: error.code,
+            preserveActiveRuntime: true,
+          });
           return;
         }
         throw error;
@@ -5084,7 +5119,8 @@ export class ControllerWorker {
   // deadline, and the next pass re-checks authority before any new material.
   // The same holds for a deployment that already published the active pointer
   // (for example one recovered after its lease expired): its last retry fails
-  // the deployment without retiring the runtime it activated.
+  // the deployment without retiring the runtime it activated. An authority
+  // failure of that already-active runtime uses this same continuation.
   private async continueExhaustedActiveRevision(
     claim: ClaimedWork,
     code: string,

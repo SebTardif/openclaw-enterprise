@@ -315,6 +315,77 @@ test(
 );
 
 test(
+  "a lost deploy grant during repository maintenance keeps the active runtime",
+  { ...requiresPostgres, timeout: 60_000 },
+  async (context) => {
+    const repository = repositoryBoundary();
+    const fixture = await setup(context, { repoDriver: repository.driver });
+    const { owner, candidate } = await fixture.admitInitialRevision(
+      "repository-maintenance-authority",
+      { revision: { repositoryCredentials: repository.snapshot } },
+    );
+    const stopped = [];
+    const compute = {
+      ...fixture.compute,
+      async stopRevision(revision) {
+        stopped.push(revision.id);
+        return fixture.compute.stopRevision(revision);
+      },
+    };
+    await fixture.start(compute);
+    await fixture.work(candidate, "succeeded");
+    await fixture.stop();
+
+    // The deploying actor loses deploy after the revision is already active.
+    await fixture.observerPool.query(
+      `INSERT INTO occ.iam_restrictions
+         (id, namespace_id, action, resource_kind, resource_id, effect)
+       VALUES ($1, $2, 'deploy', 'agent', $3, 'deny')`,
+      [`restriction-${randomUUID()}`, fixture.namespace.id, owner.id],
+    );
+    const maintenance = await fixture.advanceMaintenance(candidate);
+    assert.equal(maintenance.rowCount, 1);
+    const denied = { id: candidate.id, idempotencyKey: maintenance.rows[0].idempotency_key };
+    await fixture.start(compute, { pool: fixture.createWorkerPool() });
+    await fixture.work(denied, "failed_permanent");
+    await fixture.stop();
+    const failed = await fixture.observerPool.query(
+      "SELECT reason_code FROM occ.controller_work WHERE idempotency_key = $1",
+      [denied.idempotencyKey],
+    );
+    assert.equal(failed.rows[0].reason_code, "AUTHORIZATION_DENIED");
+    const retirement = await fixture.observerPool.query(
+      `SELECT idempotency_key FROM occ.controller_work
+       WHERE revision_id = $1 AND idempotency_key LIKE $2`,
+      [candidate.id, `agent_revision:${candidate.id}:repository_cleanup:retire:%`],
+    );
+    assert.equal(retirement.rowCount, 0, "a lost deploy grant must not retire the active runtime");
+    assert.deepEqual(stopped, []);
+    const agent = await fixture.currentAgent(owner);
+    assert.equal(agent.activeRevisionId, candidate.id);
+    assert.equal(agent.desiredRuntimeState, "running");
+
+    // The next observation is still scheduled, and it still does not stop the runtime.
+    const next = await fixture.advanceMaintenance(candidate);
+    assert.equal(next.rowCount, 1);
+    assert.notEqual(next.rows[0].idempotency_key, denied.idempotencyKey);
+    await fixture.start(compute, { pool: fixture.createWorkerPool() });
+    await fixture.work(
+      { id: candidate.id, idempotencyKey: next.rows[0].idempotency_key },
+      "failed_permanent",
+    );
+    await fixture.stop();
+    const again = await fixture.observerPool.query(
+      "SELECT reason_code FROM occ.controller_work WHERE idempotency_key = $1",
+      [next.rows[0].idempotency_key],
+    );
+    assert.equal(again.rows[0].reason_code, "AUTHORIZATION_DENIED");
+    assert.deepEqual(stopped, []);
+    assert.equal((await fixture.currentAgent(owner)).activeRevisionId, candidate.id);
+  },
+);
+
+test(
   "an expired exhausted repository maintenance claim keeps the active runtime",
   requiresPostgres,
   async (context) => {

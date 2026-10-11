@@ -1,7 +1,7 @@
 ---
 created: 2026-08-28
 updated: 2026-10-11
-last_updated_session: 01a0fe72-58b2-7cc3-b770-7310f5401deb
+last_updated_session: authoring-run/32ecec6d-36a3-4a86-ae74-71b267876556
 ---
 
 # Controller Worker Flow
@@ -346,7 +346,11 @@ reconcile audit evidence, otherwise `LEGACY_OUTCOME_UNKNOWN`, with `NULL` `resul
 If Compute declares maintenance, activation schedules exact-revision observations.
 Incomplete observations, Compute bindings, and dependency retries or expired claims
 exhausting attempts close the item and schedule another while the revision stays
-active and running within its credential deadline; outages never retire it. Each
+active and running within its credential deadline; outages never retire it. A
+repository authority failure after that revision is already the running active
+revision does the same: the claim fails, the runtime stays, and the next
+maintenance pass rechecks authority before opening credential material. A denial
+before the active pointer is published still retires that candidate. Each
 claim reauthorizes its actor. Successor keys use strictly later time buckets despite clock skew.
 
 `worker.completed` reports the target, outcome, and code; polling continues.
@@ -417,6 +421,7 @@ a failed retry keeps the active runtime) or whose predecessor stop yielded
 
 ## Changelog
 
+- 2026-10-11 09:22: An authority failure of an already-active repository-credential revision keeps that runtime and schedules the next maintenance pass. (authoring-run/32ecec6d-36a3-4a86-ae74-71b267876556 - d2fe579cd51f53bb979f0cb0f9ad8785b5f4585a)
 - 2026-10-11 11:30: Predecessor stops yield their Gateway drain. (fix-1090)
 
 [Controller worker documentation history](controller-worker/history.md) preserves the older dated entries.
