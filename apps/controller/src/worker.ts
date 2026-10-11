@@ -384,10 +384,14 @@ interface RevisionDispatchResult extends DispatchResult {
   readonly expectedActiveRevisionId?: string;
   readonly context?: ComputeRevisionContext;
   /**
-   * The revision is already the active runtime. Fail this claim without the
-   * repository cleanup that would stop it, and keep its maintenance chain.
+   * An authorization denial for a revision that is already the active runtime.
+   * Fail this claim without the repository cleanup that would stop it.
    */
   readonly preserveActiveRuntime?: true;
+}
+
+function preservesActiveRuntime(code: string): boolean {
+  return code === "AUTHORIZATION_DENIED" || code === "ACTOR_REVOKED";
 }
 
 interface AgentStopDispatchResult extends DispatchResult {
@@ -3425,20 +3429,15 @@ export class ControllerWorker {
       if (denied !== undefined) {
         await this.finalizeRevision(
           claim,
-          revision.repositoryCredentials === undefined
-            ? denied
-            : { ...denied, preserveActiveRuntime: true },
+          revision.repositoryCredentials !== undefined && preservesActiveRuntime(denied.code)
+            ? { ...denied, preserveActiveRuntime: true }
+            : denied,
         );
         return;
       }
       const backend = await this.resolveRevisionBackend(revision);
       if (backend !== undefined) {
-        await this.finalizeRevision(
-          claim,
-          revision.repositoryCredentials === undefined
-            ? backend
-            : { ...backend, preserveActiveRuntime: true },
-        );
+        await this.finalizeRevision(claim, backend);
         return;
       }
       // Authorization and the backend are decided again above on every pass. Once a stored
@@ -3735,7 +3734,11 @@ export class ControllerWorker {
         ({ result, logFields: failureLogFields } = error.pending());
       } else {
         if (error instanceof RepositoryCredentialAuthorityError) {
-          result = { outcome: "permanent", code: error.code, preserveActiveRuntime: true };
+          result = {
+            outcome: "permanent",
+            code: error.code,
+            ...(preservesActiveRuntime(error.code) ? { preserveActiveRuntime: true as const } : {}),
+          };
         } else if (
           error instanceof SandboxRevisionUnsupportedError ||
           error instanceof CredentialSourceRevisionError ||
@@ -4400,7 +4403,13 @@ export class ControllerWorker {
         }
         resolved =
           error instanceof RepositoryCredentialAuthorityError
-            ? { outcome: "permanent", code: error.code, preserveActiveRuntime: true }
+            ? {
+                outcome: "permanent" as const,
+                code: error.code,
+                ...(preservesActiveRuntime(error.code)
+                  ? { preserveActiveRuntime: true as const }
+                  : {}),
+              }
             : { outcome: "retry", code: "DEPENDENCY_UNAVAILABLE" };
       }
     }
@@ -4411,9 +4420,9 @@ export class ControllerWorker {
     ) {
       return;
     }
-    // An authority failure before this revision is active still retires it.
+    // An authorization denial before this revision is active still retires it.
     // Once it is the running active revision, keep that runtime and its
-    // maintenance chain, as an exhausted dependency outage does.
+    // maintenance chain. Session and binding failures still retire it.
     if (
       resolved.outcome === "permanent" &&
       resolved.preserveActiveRuntime === true &&
@@ -4594,7 +4603,7 @@ export class ControllerWorker {
           await this.finalizeRevision(claim, {
             outcome: "permanent",
             code: error.code,
-            preserveActiveRuntime: true,
+            ...(preservesActiveRuntime(error.code) ? { preserveActiveRuntime: true as const } : {}),
           });
           return;
         }
@@ -5067,7 +5076,7 @@ export class ControllerWorker {
           await this.finalizeRevision(claim, {
             outcome: "permanent",
             code: error.code,
-            preserveActiveRuntime: true,
+            ...(preservesActiveRuntime(error.code) ? { preserveActiveRuntime: true as const } : {}),
           });
           return;
         }
@@ -5119,8 +5128,8 @@ export class ControllerWorker {
   // deadline, and the next pass re-checks authority before any new material.
   // The same holds for a deployment that already published the active pointer
   // (for example one recovered after its lease expired): its last retry fails
-  // the deployment without retiring the runtime it activated. An authority
-  // failure of that already-active runtime uses this same continuation.
+  // the deployment without retiring the runtime it activated. An authorization
+  // denial for that already-active runtime uses this same continuation.
   private async continueExhaustedActiveRevision(
     claim: ClaimedWork,
     code: string,

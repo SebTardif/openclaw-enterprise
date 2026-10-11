@@ -321,11 +321,8 @@ aborts the pass.
 
 Terminal rows store `reason_code` and optional `result_data`, shaped as the
 [terminal results reference](../reference/controller/reconciliation.md#terminal-results)
-and [deployment status](../reference/agents.md#deployment-status) define. For
-`runtimeFailure`, Compute reads cached startup results from its private status
-path, including unready Harnesses without plugins, and verifies runtime
-incarnation without repeating the model probe. Missing or invalid evidence
-leaves the cause unspecified.
+and [deployment status](../reference/agents.md#deployment-status) define. For `runtimeFailure`, Compute reads cached startup evidence and does not
+repeat the model probe. Missing or invalid evidence leaves the cause unspecified.
 
 `packages/occ/src/state/controller-work.ts:validateFailureData` validates reads
 and writes and rejects data for other failure reasons; the PostgreSQL constraint
@@ -335,10 +332,7 @@ live claim; [deployment status](../reference/agents.md#deployment-status) derive
 `error` and `warnings` from that result. Completion needs no acknowledgment or
 post-commit cleanup; maintenance cannot rewrite deployment warnings.
 
-Indexed `workId` scopes progress to work; maintenance and unbound history cannot
-supply it. `getDeploymentStatus` reads
-`findWorkAttempt` with the work row in one State snapshot and projects fixed
-public explanations. Memory State has no attempt.
+`getDeploymentStatus` reads the work attempt in one State snapshot.
 
 Legacy terminal rows derive `reason_code` from matching activation or terminal
 reconcile audit evidence, otherwise `LEGACY_OUTCOME_UNKNOWN`, with `NULL` `result_data`.
@@ -346,11 +340,8 @@ reconcile audit evidence, otherwise `LEGACY_OUTCOME_UNKNOWN`, with `NULL` `resul
 If Compute declares maintenance, activation schedules exact-revision observations.
 Incomplete observations, Compute bindings, and dependency retries or expired claims
 exhausting attempts close the item and schedule another while the revision stays
-active and running within its credential deadline; outages never retire it. A
-repository authority failure after that revision is already the running active
-revision does the same: the claim fails, the runtime stays, and the next
-maintenance pass rechecks authority before opening credential material. A denial
-before the active pointer is published still retires that candidate. Each
+active and running within its credential deadline; outages never retire it. Authorization denial for that already-active revision does the same. Session
+and binding failures still retire it. Each
 claim reauthorizes its actor. Successor keys use strictly later time buckets despite clock skew.
 
 `worker.completed` reports the target, outcome, and code; polling continues.
