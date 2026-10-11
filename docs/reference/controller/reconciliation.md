@@ -94,7 +94,11 @@ earlier runtimes before preparing the candidate and reuses the Harness-only RWO
 claim. This interrupts serving, including the gateway; a failed candidate needs
 retry or a new revision, not automatic rollback. A candidate the worker refuses,
 for example after revoked authority, is stopped before its failure is recorded,
-so it never serves in place of the stopped active revision. See the
+so it never serves in place of the stopped active revision. An already-running
+active revision that loses deploy authority (`AUTHORIZATION_DENIED` or
+`ACTOR_REVOKED`) keeps Compute, closes its open repository sessions, records
+the denial, and schedules maintenance. Session-recovery and binding failures
+still stop that runtime. See the
 [exclusive replacement contract](../drivers/compute.md#production-revision-stages).
 Pod termination does not fence independent processes during node partitions or
 manual replacement.

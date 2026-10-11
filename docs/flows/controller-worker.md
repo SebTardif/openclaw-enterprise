@@ -1,7 +1,7 @@
 ---
 created: 2026-08-28
 updated: 2026-10-11
-last_updated_session: authoring-run/32ecec6d-36a3-4a86-ae74-71b267876556
+last_updated_session: authoring-run/b5c3ba79-9c77-48b0-b7c7-9e21b35726ad
 ---
 
 # Controller Worker Flow
@@ -329,10 +329,7 @@ and writes and rejects data for other failure reasons; the PostgreSQL constraint
 enforces the persisted shape.
 `PostgresWorkQueue.complete` and `PostgresWorkQueue.fail` publish only under the
 live claim; [deployment status](../reference/agents.md#deployment-status) derives
-`error` and `warnings` from that result. Completion needs no acknowledgment or
-post-commit cleanup; maintenance cannot rewrite deployment warnings.
-
-`getDeploymentStatus` reads the work attempt in one State snapshot.
+`error` and `warnings` from that result. Maintenance cannot rewrite deployment warnings.
 
 Legacy terminal rows derive `reason_code` from matching activation or terminal
 reconcile audit evidence, otherwise `LEGACY_OUTCOME_UNKNOWN`, with `NULL` `result_data`.
@@ -340,8 +337,7 @@ reconcile audit evidence, otherwise `LEGACY_OUTCOME_UNKNOWN`, with `NULL` `resul
 If Compute declares maintenance, activation schedules exact-revision observations.
 Incomplete observations, Compute bindings, and dependency retries or expired claims
 exhausting attempts close the item and schedule another while the revision stays
-active and running within its credential deadline; outages never retire it. Authorization denial for that already-active revision does the same. Session
-and binding failures still retire it. Each
+active and running within its credential deadline; outages never retire it or write a denial audit. `AUTHORIZATION_DENIED` or `ACTOR_REVOKED` on that active revision, including after publish, keeps Compute, closes open repository sessions, records the denial, and schedules maintenance that rechecks IAM. Session-recovery and binding failures still retire it. Each
 claim reauthorizes its actor. Successor keys use strictly later time buckets despite clock skew.
 
 `worker.completed` reports the target, outcome, and code; polling continues.
@@ -412,7 +408,7 @@ a failed retry keeps the active runtime) or whose predecessor stop yielded
 
 ## Changelog
 
-- 2026-10-11 09:22: An authority failure of an already-active repository-credential revision keeps that runtime and schedules the next maintenance pass. (authoring-run/32ecec6d-36a3-4a86-ae74-71b267876556 - d2fe579cd51f53bb979f0cb0f9ad8785b5f4585a)
+- 2026-10-11 10:38: A published deploy denial keeps Compute, closes repository sessions, records the denial, and schedules maintenance. (authoring-run/b5c3ba79-9c77-48b0-b7c7-9e21b35726ad - 2d11065238c1a8c7b5aa5d3452c8eb784781db22)
 - 2026-10-11 11:30: Predecessor stops yield their Gateway drain. (fix-1090)
 
 [Controller worker documentation history](controller-worker/history.md) preserves the older dated entries.

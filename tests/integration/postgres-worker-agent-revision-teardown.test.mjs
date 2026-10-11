@@ -287,6 +287,21 @@ test(
       [outage.idempotencyKey],
     );
     assert.equal(failed.rows[0].reason_code, "DEPENDENCY_UNAVAILABLE");
+    const outageDenials = await fixture.observerPool.query(
+      `SELECT count(*)::int AS count FROM occ.audit_events
+       WHERE namespace_id = $1 AND kind = 'authorization_denial'`,
+      [fixture.namespace.id],
+    );
+    assert.equal(
+      outageDenials.rows[0].count,
+      0,
+      "a dependency outage is not an authorization denial",
+    );
+    assert.equal(
+      repository.calls.some((call) => call.operation === "close"),
+      false,
+      "a dependency outage must keep the repository session",
+    );
     const retirement = await fixture.observerPool.query(
       `SELECT idempotency_key FROM occ.controller_work
        WHERE revision_id = $1 AND idempotency_key LIKE $2`,
@@ -361,6 +376,23 @@ test(
     );
     assert.equal(retirement.rowCount, 0, "a lost deploy grant must not retire the active runtime");
     assert.deepEqual(stopped, []);
+    const denials = await fixture.observerPool.query(
+      `SELECT details->'__occAuditMetadata'->>'reasonCode' AS reason_code,
+              details->'__occAuditMetadata'->'authorization'->>'action' AS action
+       FROM occ.audit_events
+       WHERE namespace_id = $1 AND kind = 'authorization_denial' AND action = 'openclaw.agents.deploy'`,
+      [fixture.namespace.id],
+    );
+    assert.equal(denials.rowCount, 1);
+    assert.equal(denials.rows[0].reason_code, "AUTHORIZATION_DENIED");
+    assert.equal(denials.rows[0].action, "deploy");
+    assert.equal(
+      repository.calls.some((call) => call.operation === "close"),
+      true,
+    );
+    const attempts = await repositoryAttempts(fixture, candidate);
+    assert.ok(attempts.length > 0);
+    assert.ok(attempts.every((attempt) => attempt.phase !== "open" && attempt.phase !== "opening"));
     const agent = await fixture.currentAgent(owner);
     assert.equal(agent.activeRevisionId, candidate.id);
     assert.equal(agent.desiredRuntimeState, "running");
@@ -382,6 +414,134 @@ test(
     assert.equal(again.rows[0].reason_code, "AUTHORIZATION_DENIED");
     assert.deepEqual(stopped, []);
     assert.equal((await fixture.currentAgent(owner)).activeRevisionId, candidate.id);
+  },
+);
+
+test(
+  "a deploy denial after the active pointer is published keeps the runtime",
+  { ...requiresPostgres, timeout: 60_000 },
+  async (context) => {
+    const repository = repositoryBoundary();
+    const fixture = await setup(context, { repoDriver: repository.driver });
+    const { owner, candidate } = await fixture.admitInitialRevision(
+      "repository-published-authority",
+      { revision: { repositoryCredentials: repository.snapshot } },
+    );
+    const stopped = [];
+    const compute = {
+      ...fixture.compute,
+      // Development Compute activates before commit and skips the post-publish
+      // authority check. This hook is what makes that check run.
+      async activateRevision() {},
+      async stopRevision(revision) {
+        stopped.push(revision.id);
+        return fixture.compute.stopRevision(revision);
+      },
+    };
+    // The post-publish recheck is the first deploy decision that can see the
+    // active pointer. Insert the real restriction there, then let native IAM
+    // deny. Earlier checks in the same claim still see no active revision.
+    const denyAfterPublish = (drivers) => {
+      const createIAMDriver = drivers.createIAMDriver;
+      return {
+        ...drivers,
+        createIAMDriver(state) {
+          const iam = createIAMDriver(state);
+          return {
+            id: iam.id,
+            implementation: iam.implementation,
+            capability: iam.capability,
+            lookupIdentity: iam.lookupIdentity.bind(iam),
+            async authorize(request) {
+              if (request.action === "deploy" && request.resource.id === owner.id) {
+                const published = await fixture.observerPool.query(
+                  "SELECT active_revision_id FROM occ.agents WHERE id = $1",
+                  [owner.id],
+                );
+                if (published.rows[0]?.active_revision_id === candidate.id) {
+                  await fixture.observerPool.query(
+                    `INSERT INTO occ.iam_restrictions
+                       (id, namespace_id, action, resource_kind, resource_id, effect)
+                     VALUES ($1, $2, 'deploy', 'agent', $3, 'deny')
+                     ON CONFLICT (id) DO NOTHING`,
+                    [`restriction-${candidate.id}`, fixture.namespace.id, owner.id],
+                  );
+                }
+              }
+              return iam.authorize(request);
+            },
+          };
+        },
+      };
+    };
+    await fixture.start(compute, { transformDrivers: denyAfterPublish });
+    await fixture.work(candidate, "failed_permanent");
+    await fixture.stop();
+
+    const failed = await fixture.observerPool.query(
+      "SELECT reason_code FROM occ.controller_work WHERE idempotency_key = $1",
+      [candidate.idempotencyKey],
+    );
+    assert.equal(failed.rows[0].reason_code, "AUTHORIZATION_DENIED");
+    const agent = await fixture.currentAgent(owner);
+    assert.equal(agent.activeRevisionId, candidate.id);
+    assert.equal(agent.desiredRuntimeState, "running");
+    assert.deepEqual(stopped, []);
+    const retirement = await fixture.observerPool.query(
+      `SELECT idempotency_key FROM occ.controller_work
+       WHERE revision_id = $1 AND idempotency_key LIKE $2`,
+      [candidate.id, `agent_revision:${candidate.id}:repository_cleanup:retire:%`],
+    );
+    assert.equal(retirement.rowCount, 0, "a published deploy denial must not retire Compute");
+    assert.equal(
+      repository.calls.some((call) => call.operation === "close"),
+      true,
+    );
+    const attempts = await repositoryAttempts(fixture, candidate);
+    assert.ok(attempts.every((attempt) => attempt.phase !== "open" && attempt.phase !== "opening"));
+    const denials = await fixture.observerPool.query(
+      `SELECT details->'__occAuditMetadata'->>'reasonCode' AS reason_code,
+              details->'__occAuditMetadata'->>'decisionReason' AS decision_reason,
+              details->'__occAuditMetadata'->'authorization'->>'action' AS action
+       FROM occ.audit_events
+       WHERE namespace_id = $1 AND kind = 'authorization_denial' AND action = 'openclaw.agents.deploy'`,
+      [fixture.namespace.id],
+    );
+    assert.equal(denials.rowCount, 1);
+    assert.equal(denials.rows[0].reason_code, "AUTHORIZATION_DENIED");
+    assert.equal(denials.rows[0].action, "deploy");
+    assert.equal(typeof denials.rows[0].decision_reason, "string");
+    assert.ok(denials.rows[0].decision_reason.length > 0);
+
+    // The reconcile claim failed permanently. Its successor must still run, and
+    // that pass must not treat the preserved revision as a rejected deployment.
+    const scheduled = await fixture.advanceMaintenance(candidate);
+    assert.equal(scheduled.rowCount, 1);
+    assert.notEqual(scheduled.rows[0].idempotency_key, candidate.idempotencyKey);
+    await fixture.start(compute, {
+      pool: fixture.createWorkerPool(),
+      transformDrivers: denyAfterPublish,
+    });
+    await fixture.work(
+      { id: candidate.id, idempotencyKey: scheduled.rows[0].idempotency_key },
+      "failed_permanent",
+    );
+    await fixture.stop();
+    const again = await fixture.observerPool.query(
+      "SELECT reason_code FROM occ.controller_work WHERE idempotency_key = $1",
+      [scheduled.rows[0].idempotency_key],
+    );
+    assert.equal(again.rows[0].reason_code, "AUTHORIZATION_DENIED");
+    assert.deepEqual(stopped, []);
+    const stillActive = await fixture.currentAgent(owner);
+    assert.equal(stillActive.activeRevisionId, candidate.id);
+    assert.equal(stillActive.desiredRuntimeState, "running");
+    const retiredLater = await fixture.observerPool.query(
+      `SELECT idempotency_key FROM occ.controller_work
+       WHERE revision_id = $1 AND idempotency_key LIKE $2`,
+      [candidate.id, `agent_revision:${candidate.id}:repository_cleanup:retire:%`],
+    );
+    assert.equal(retiredLater.rowCount, 0);
   },
 );
 
