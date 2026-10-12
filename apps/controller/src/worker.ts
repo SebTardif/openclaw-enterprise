@@ -46,6 +46,7 @@ import {
   PostgresWorkQueue,
   OpenClawController,
   ActivationFailedError,
+  ComputePreparationFailedError,
   ActivationPendingError,
   CredentialSourceRevisionError,
   CredentialWithdrawalRefusedError,
@@ -362,6 +363,8 @@ interface DispatchResult {
 }
 
 interface RevisionDispatchResult extends DispatchResult {
+  /** Terminal preparation requires durable retirement of this exact revision. */
+  readonly cleanupFailedPreparation?: true;
   /** A transient dependency failure, retried until the convergence deadline. */
   readonly dependencyFailure?: TransientDependencyError;
   /**
@@ -1971,7 +1974,7 @@ export class ControllerWorker {
       namespaceId: claim.namespaceId,
       agentId: claim.agentId,
       outcome: this.passOutcome,
-      code: result.outcome === "succeeded" ? "PROVISIONING_HANDED_OFF" : result.code,
+      code: result.outcome === "succeeded" ? "PROVISIONING_COMPLETED" : result.code,
       ...(result.outcome === "succeeded" ? { revisionId: result.revisionId } : {}),
       // A Compute refusal's reason; status and the Collector export keep only the code.
       ...(result.outcome !== "succeeded" && result.reason !== undefined
@@ -3724,7 +3727,8 @@ export class ControllerWorker {
           if (
             error instanceof WorkClaimLostError ||
             error instanceof RepositoryCredentialAuthorityError ||
-            error instanceof ComputeStopYieldedError
+            error instanceof ComputeStopYieldedError ||
+            error instanceof ComputePreparationFailedError
           ) {
             throw error;
           }
@@ -3787,7 +3791,14 @@ export class ControllerWorker {
       if (error instanceof RefusedCandidateStopError) {
         ({ result, logFields: failureLogFields } = error.pending());
       } else {
-        if (error instanceof RepositoryCredentialAuthorityError) {
+        if (error instanceof ComputePreparationFailedError) {
+          result = {
+            outcome: "permanent",
+            code: error.code,
+            cleanupFailedPreparation: true,
+            ...(error.evidence === undefined ? {} : { data: { preparation: error.evidence } }),
+          };
+        } else if (error instanceof RepositoryCredentialAuthorityError) {
           result = repositoryAuthorityResult(error);
         } else if (
           error instanceof SandboxRevisionUnsupportedError ||
@@ -4491,6 +4502,7 @@ export class ControllerWorker {
       resolved.outcome === "permanent" &&
       heldFailureCode === undefined &&
       !expired &&
+      resolved.cleanupFailedPreparation !== true &&
       resolved.refusedCandidateStopped !== true
     ) {
       await this.stopRefusedCandidate(claim, resolved.code);
@@ -4597,6 +4609,19 @@ export class ControllerWorker {
               : {},
         );
       } else if (resolved.outcome === "permanent" || claim.attemptCount >= this.maxAttempts) {
+        if (resolved.cleanupFailedPreparation === true) {
+          // Register retirement while the source claim is still held. Both rows
+          // commit together, so cleanup survives a crash after deployment failure.
+          await queue.enqueueRepositoryCleanup(
+            claim,
+            {
+              namespaceId: claim.namespaceId,
+              agentId: claim.agentId!,
+              revisionId: claim.revisionId!,
+            },
+            "failed-preparation",
+          );
+        }
         await queue.fail(claim, {
           code: resolved.code,
           ...(resolved.data === undefined ? {} : { data: resolved.data }),
