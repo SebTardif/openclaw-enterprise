@@ -3458,14 +3458,16 @@ export class ControllerWorker {
           original.reasonCode === "REVISION_SUPERSEDED"
         ) {
           const keptAfterAuthorityDenial =
+            revision.repositoryCredentials !== undefined &&
             original.state === "failed_permanent" &&
             original.reasonCode !== undefined &&
             preservesActiveRuntime(original.reasonCode) &&
             agent.activeRevisionId === revision.id &&
             agent.desiredRuntimeState === "running";
           // Maintenance must never prepare or reactivate a terminally failed deployment.
-          // A deploy denial that kept this running revision is not that failure: the next
-          // pass rechecks IAM and must not retire the workload.
+          // A repository-credential revision kept running after a deploy denial is not
+          // that failure: the next pass rechecks IAM and must not retire the workload.
+          // A revision without repository credentials still finishes superseded.
           if (!keptAfterAuthorityDenial) {
             await this.finalizeRevision(claim, {
               outcome: "permanent",
@@ -5268,14 +5270,17 @@ export class ControllerWorker {
       return false;
     }
     this.passOutcome = "permanent";
+    // A dependency continuation is still a retry of the runtime. An authorization
+    // denial fails this claim permanently; "retry" would hide that in the log.
+    const loggedOutcome = preservesActiveRuntime(result.code) ? "permanent" : "retry";
     this.emit({
       event: "worker.completed",
       ...workLogFields(claim),
       namespaceId: claim.namespaceId,
       agentId: claim.agentId,
       revisionId,
-      result: "retry",
-      outcome: "retry",
+      result: loggedOutcome,
+      outcome: loggedOutcome,
       code: result.code,
       ...this.deployTimingFields(claim),
     });

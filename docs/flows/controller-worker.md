@@ -1,6 +1,6 @@
 ---
 created: 2026-08-28
-updated: 2026-10-11
+updated: 2026-10-12
 last_updated_session: authoring-run/b5c3ba79-9c77-48b0-b7c7-9e21b35726ad
 ---
 
@@ -321,15 +321,24 @@ aborts the pass.
 
 Terminal rows store `reason_code` and optional `result_data`, shaped as the
 [terminal results reference](../reference/controller/reconciliation.md#terminal-results)
-and [deployment status](../reference/agents.md#deployment-status) define. For `runtimeFailure`, Compute reads cached startup evidence and does not
-repeat the model probe. Missing or invalid evidence leaves the cause unspecified.
+and [deployment status](../reference/agents.md#deployment-status) define. For
+`runtimeFailure`, Compute reads cached startup results from its private status
+path, including unready Harnesses without plugins, and verifies runtime
+incarnation without repeating the model probe. Missing or invalid evidence
+leaves the cause unspecified.
 
 `packages/occ/src/state/controller-work.ts:validateFailureData` validates reads
 and writes and rejects data for other failure reasons; the PostgreSQL constraint
 enforces the persisted shape.
 `PostgresWorkQueue.complete` and `PostgresWorkQueue.fail` publish only under the
 live claim; [deployment status](../reference/agents.md#deployment-status) derives
-`error` and `warnings` from that result. Maintenance cannot rewrite deployment warnings.
+`error` and `warnings` from that result. Completion needs no acknowledgment or
+post-commit cleanup; maintenance cannot rewrite deployment warnings.
+
+Indexed `workId` scopes progress to work; maintenance and unbound history cannot
+supply it. `getDeploymentStatus` reads
+`findWorkAttempt` with the work row in one State snapshot and projects fixed
+public explanations. Memory State has no attempt.
 
 Legacy terminal rows derive `reason_code` from matching activation or terminal
 reconcile audit evidence, otherwise `LEGACY_OUTCOME_UNKNOWN`, with `NULL` `result_data`.
@@ -337,8 +346,9 @@ reconcile audit evidence, otherwise `LEGACY_OUTCOME_UNKNOWN`, with `NULL` `resul
 If Compute declares maintenance, activation schedules exact-revision observations.
 Incomplete observations, Compute bindings, and dependency retries or expired claims
 exhausting attempts close the item and schedule another while the revision stays
-active and running within its credential deadline; outages never retire it or write a denial audit. `AUTHORIZATION_DENIED` or `ACTOR_REVOKED` on that active revision, including after publish, keeps Compute, closes open repository sessions, records the denial, and schedules maintenance that rechecks IAM. Session-recovery and binding failures still retire it. Each
-claim reauthorizes its actor. Successor keys use strictly later time buckets despite clock skew.
+active and running within its credential deadline; outages never retire it. See
+[AgentRevision reconciliation](../reference/controller/reconciliation.md#agentrevision-lifecycle).
+Each claim reauthorizes its actor. Successor keys use strictly later time buckets despite clock skew.
 
 `worker.completed` reports the target, outcome, and code; polling continues.
 A Namespace pass that observes the same pending state this worker last audited,
@@ -408,7 +418,6 @@ a failed retry keeps the active runtime) or whose predecessor stop yielded
 
 ## Changelog
 
-- 2026-10-11 10:38: A published deploy denial keeps Compute, closes repository sessions, records the denial, and schedules maintenance. (authoring-run/b5c3ba79-9c77-48b0-b7c7-9e21b35726ad - 2d11065238c1a8c7b5aa5d3452c8eb784781db22)
 - 2026-10-11 11:30: Predecessor stops yield their Gateway drain. (fix-1090)
 
 [Controller worker documentation history](controller-worker/history.md) preserves the older dated entries.
