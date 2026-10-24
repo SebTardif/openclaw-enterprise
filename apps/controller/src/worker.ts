@@ -4350,7 +4350,12 @@ export class ControllerWorker {
       if (!expiredMaintenance) {
         const denied = await this.authorizeRevision(claim, agent, revision);
         if (denied !== undefined) {
-          await this.finalizeRevision(claim, denied);
+          await this.finalizeRevision(
+            claim,
+            revision.repositoryCredentials !== undefined && preservesActiveRuntime(denied.code)
+              ? { ...denied, preserveActiveRuntime: true }
+              : denied,
+          );
           return;
         }
         const backend = await this.resolveRevisionBackend(revision);
@@ -4732,8 +4737,9 @@ export class ControllerWorker {
           // A missing Workspace role fails the deployment at once; an identity the gateway
           // could not authenticate retries within the attempt budget first (finding 1694).
           result = { outcome: error.transient ? "retry" : "permanent", code: error.code };
+        } else if (error instanceof RepositoryCredentialAuthorityError) {
+          result = repositoryAuthorityResult(error);
         } else if (
-          error instanceof RepositoryCredentialAuthorityError ||
           // Finding 2199: a revision admitted before deploy refused an unqualified Git sender
           // can never enroll, so it fails now instead of at the convergence deadline.
           error instanceof RepositoryGitSenderUnqualifiedError ||
@@ -5878,7 +5884,7 @@ export class ControllerWorker {
           throw error;
         }
         if (error instanceof RepositoryCredentialAuthorityError) {
-          resolved = { outcome: "permanent", code: error.code };
+          resolved = repositoryAuthorityResult(error);
         } else {
           resolved = { outcome: "retry", code: "DEPENDENCY_UNAVAILABLE" };
           // Say why the check failed, as a failure in dispatch does (finding 2272).
@@ -6126,7 +6132,7 @@ export class ControllerWorker {
         if (error instanceof RepositoryCredentialAuthorityError) {
           await this.finalizeRevision(
             claim,
-            { outcome: "permanent", code: error.code },
+            repositoryAuthorityResult(error),
             computeCleanupLogFields(error),
           );
           return;
@@ -6688,9 +6694,10 @@ export class ControllerWorker {
   // record an authorization denial.
   private async continueExhaustedActiveRevision(
     claim: ClaimedWork,
-    code: string,
+    codeOrResult: string | Pick<RevisionDispatchResult, "code" | "authorization" | "decision">,
     failureLogFields?: Readonly<Record<string, string | number>>,
   ): Promise<boolean> {
+    const result = typeof codeOrResult === "string" ? { code: codeOrResult } : codeOrResult;
     const revisionId = claim.revisionId;
     if (
       claim.agentId === undefined ||
@@ -6762,9 +6769,9 @@ export class ControllerWorker {
       namespaceId: claim.namespaceId,
       agentId: claim.agentId,
       revisionId,
-      result: "retry",
-      outcome: "retry",
-      code,
+      result: loggedOutcome,
+      outcome: loggedOutcome,
+      code: result.code,
       // Like any other ended pass, say why the last attempt failed (finding 1743).
       ...failureLogFields,
       ...this.deployTimingFields(claim),

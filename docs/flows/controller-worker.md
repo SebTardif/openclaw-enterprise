@@ -1,7 +1,7 @@
 ---
 created: 2026-08-28
-updated: 2026-10-17
-last_updated_session: fix-1692
+updated: 2026-10-23
+last_updated_session: authoring-run/b5c3ba79-9c77-48b0-b7c7-9e21b35726ad
 ---
 
 # Controller Worker Flow
@@ -351,8 +351,9 @@ reconcile audit evidence, otherwise `LEGACY_OUTCOME_UNKNOWN`, with `NULL` `resul
 If Compute declares maintenance, activation schedules observations for this version.
 Incomplete observations, Compute bindings, and dependency retries or expired claims
 exhausting attempts close the item and schedule another while the version stays
-selected and running within its credential deadline; outages never retire it. Each
-claim reauthorizes its actor. Successor keys use strictly later time buckets despite clock skew.
+selected and running within its credential deadline; outages never retire it. See
+[AgentRevision reconciliation](../reference/controller/reconciliation.md#agentrevision-lifecycle).
+Each claim reauthorizes its actor. Successor keys use strictly later time buckets despite clock skew.
 
 `worker.completed` reports the target, outcome, and code; polling continues.
 A Namespace pass that observes the same pending state this worker last audited,
@@ -421,6 +422,8 @@ a failed retry keeps the active runtime) or whose predecessor stop yielded
 [keep this for the user to add notes. do not change between edits]
 
 ## Changelog
+
+- 2026-10-23 21:51: An authorization denial of an already-running repository-bearing Agent revision keeps Compute and requests repository-session closure. (authoring-run/b5c3ba79-9c77-48b0-b7c7-9e21b35726ad - b68ea1f795d6e8fcaa6c24921d75c8d1f5334e2b)
 
 - 2026-10-11 11:30: Predecessor stops yield their Gateway drain. (fix-1090)
 

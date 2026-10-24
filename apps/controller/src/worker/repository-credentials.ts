@@ -4,6 +4,8 @@ import { randomUUID } from "node:crypto";
 import type {
   AdmittedRepositoryBinding,
   AgentRevision,
+  AuthorizationDecision,
+  AuthorizationRequest,
   RepositoryPolicyDriver,
   NativeRepositorySender,
   RepositoryCredentialMaterialRef,
